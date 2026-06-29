@@ -1,0 +1,27 @@
+# Build
+bin/
+obj/
+publish/
+Output/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.csproj.user
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Inno Setup temp
+iscc_out.txt
+iscc_err.txt
+
+# Secrets
+.env
+
+# Claude
+.claude/

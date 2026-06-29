@@ -1,0 +1,77 @@
+<Window x:Class="ScreenForge.Windows.BackgroundChoiceDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Arkaplan Seçeneği" Width="320" SizeToContent="Height"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+        Background="Transparent" WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False" Topmost="True">
+    <Border Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16,14"
+            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect Color="Black" BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Icon circle -->
+            <Border Grid.RowSpan="2" Width="38" Height="38" CornerRadius="19"
+                    Background="{StaticResource AccentBrush}" Margin="0,0,12,0" VerticalAlignment="Top">
+                <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Path Data="{StaticResource IconLayers}" Stroke="White" StrokeThickness="2"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                          Fill="Transparent" Width="24" Height="24" Stretch="Uniform"/>
+                </Viewbox>
+            </Border>
+
+            <!-- Title -->
+            <TextBlock Grid.Column="1" Text="Arkaplan Seçeneği"
+                       Style="{StaticResource Label}" FontWeight="SemiBold"/>
+
+            <!-- Close button -->
+            <Button x:Name="BtnClose" Grid.Column="2" Grid.RowSpan="2" VerticalAlignment="Top"
+                    Width="24" Height="24" Cursor="Hand" Margin="6,0,0,0">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                Width="24" Height="24">
+                            <Viewbox Width="10" Height="10" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Path Data="{StaticResource IconClose}"
+                                      Stroke="{StaticResource TextMutedBrush}" StrokeThickness="2.5"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      Width="24" Height="24" Stretch="Uniform"/>
+                            </Viewbox>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource SurfaceHoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+
+            <!-- Description -->
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="PNG dosyası nasıl kaydedilsin?"
+                       Style="{StaticResource Muted}" Margin="0,4,0,0"/>
+
+            <!-- Buttons -->
+            <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Orientation="Horizontal"
+                        HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button x:Name="BtnOpaque" Content="Arkaplanlı"
+                        Style="{StaticResource SecondaryButton}" Padding="14,6" FontSize="12"/>
+                <Button x:Name="BtnTransparent" Content="Saydam"
+                        Style="{StaticResource PrimaryButton}" Padding="14,6" FontSize="12"
+                        Margin="8,0,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
