@@ -14,6 +14,10 @@ public sealed class StepItem : SceneItem
 
     public SKPoint Position { get; set; } // merkez
 
+    private static SKTypeface? _cachedTypeface;
+    private static SKTypeface StepTypeface =>
+        _cachedTypeface ??= SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold) ?? SKTypeface.Default;
+
     public void SyncBounds()
     {
         float r = Diameter / 2f;
@@ -63,8 +67,7 @@ public sealed class StepItem : SceneItem
         }
 
         // Numara
-        using var typeface = SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold) ?? SKTypeface.Default;
-        using var font = new SKFont(typeface, Diameter * 0.55f);
+        using var font = new SKFont(StepTypeface, Diameter * 0.55f);
         using var textPaint = new SKPaint { Color = NumberColor.WithAlpha(AlphaByte), IsAntialias = true };
         string s = Number.ToString();
         float tw = font.MeasureText(s);
@@ -168,7 +171,14 @@ public sealed class BlurItem : SceneItem
 // ===================== Resim (kolaj öğesi) =====================
 public sealed class ImageItem : SceneItem
 {
-    public SKBitmap Bitmap { get; set; } = null!;
+    private SKBitmap _bitmap = null!;
+    private SKImage? _cachedImage;
+
+    public SKBitmap Bitmap
+    {
+        get => _bitmap;
+        set { _bitmap = value; _cachedImage?.Dispose(); _cachedImage = null; }
+    }
 
     public ImageItem()
     {
@@ -182,11 +192,12 @@ public sealed class ImageItem : SceneItem
 
     public override void Render(SKCanvas canvas)
     {
-        if (Bitmap == null) return;
+        if (_bitmap == null) return;
         canvas.Save();
         ApplyRotation(canvas);
 
-        using var img = SKImage.FromBitmap(Bitmap);
+        _cachedImage ??= SKImage.FromBitmap(_bitmap);
+        var img = _cachedImage;
         using var paint = new SKPaint { IsAntialias = true, Color = SKColors.White.WithAlpha(AlphaByte) };
 
         var hq = new SKSamplingOptions(SKCubicResampler.Mitchell);

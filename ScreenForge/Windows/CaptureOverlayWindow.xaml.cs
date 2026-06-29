@@ -1362,10 +1362,9 @@ public partial class CaptureOverlayWindow : Window
         const double gap = 10;
         bool free = _mode == CaptureMode.Free;
 
-        Toolbar.UpdateLayout();
-        OptionBar.UpdateLayout();
-        ActionBar.UpdateLayout();
         double tbW = Toolbar.ActualWidth, tbH = Toolbar.ActualHeight;
+        if (tbW <= 0 || tbH <= 0) { Toolbar.UpdateLayout(); tbW = Toolbar.ActualWidth; tbH = Toolbar.ActualHeight; }
+        if (ActionBar.ActualWidth <= 0) ActionBar.UpdateLayout();
         bool hasOpt = OptionBar.Visibility == Visibility.Visible;
 
         // Üst aksiyon çubuğu: üst-orta (modlar gizliyken).
@@ -1400,8 +1399,9 @@ public partial class CaptureOverlayWindow : Window
     private void PositionOptionBar()
     {
         const double gap = 8;
-        OptionBar.UpdateLayout();
+        // UpdateLayout sadece boyut henüz ölçülmemişse zorla; sürükleme sırasında AtualWidth geçerli
         double obW = OptionBar.ActualWidth, obH = OptionBar.ActualHeight;
+        if (obW <= 0 || obH <= 0) { OptionBar.UpdateLayout(); obW = OptionBar.ActualWidth; obH = OptionBar.ActualHeight; }
 
         // Çapa dikdörtgeni: seçili öğe varsa onun ekran kutusu; yoksa serbest=alt-orta, bölge=seçim.
         WpfRect anchor;
@@ -1585,7 +1585,6 @@ public partial class CaptureOverlayWindow : Window
         _scene.ResetStepCounter();
         _canvas?.ClearSelection();
         _scene.RaiseChanged();
-        _canvas?.InvalidateVisual();
     }
 
     private bool? AskTransparentBackground()

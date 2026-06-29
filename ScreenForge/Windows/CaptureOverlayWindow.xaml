@@ -2,12 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ScreenForge" WindowStyle="None" ResizeMode="NoResize"
-        AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+        AllowsTransparency="False" Background="Black" ShowInTaskbar="False"
         Topmost="True" WindowStartupLocation="Manual"
+        UseLayoutRounding="True"
         Cursor="Cross">
     <Canvas x:Name="Root" ClipToBounds="True">
-        <!-- Yakalanan ekran (arka plan) -->
-        <Image x:Name="ScreenImage" Stretch="Fill" />
+        <!-- Yakalanan ekran (arka plan): selection sırasında LowQuality yeterli -->
+        <Image x:Name="ScreenImage" Stretch="Fill"
+               RenderOptions.BitmapScalingMode="LowQuality" />
 
         <!-- Karartma — 4 dikdörtgen (CombinedGeometry yerine performanslı) -->
         <Rectangle x:Name="DimTop"    Fill="#7A000000" />
@@ -21,11 +23,7 @@
         <!-- Seçim çerçevesi — kesik çizgi (EditHost üzerinde görünmesi için sonra) -->
         <Rectangle x:Name="SelectionBorder" Stroke="White" StrokeThickness="1.5"
                    StrokeDashArray="6 4" StrokeDashCap="Round"
-                   Visibility="Collapsed" IsHitTestVisible="False">
-            <Rectangle.Effect>
-                <DropShadowEffect Color="Black" BlurRadius="3" ShadowDepth="0" Opacity="0.8"/>
-            </Rectangle.Effect>
-        </Rectangle>
+                   Visibility="Collapsed" IsHitTestVisible="False" />
 
         <!-- Boyut etiketi -->
         <Border x:Name="SizeBadge" Background="#CC1F2430" CornerRadius="4" Padding="8,3"

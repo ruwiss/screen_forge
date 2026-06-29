@@ -37,7 +37,11 @@ public static class SceneRenderer
     private static readonly SKSamplingOptions QualitySampling = new(SKCubicResampler.Mitchell);
 
     /// <summary>Arka plan + tüm öğeleri çizer (seçim hariç).</summary>
-    public static void RenderContent(SKCanvas canvas, Scene scene, bool highQuality = false)
+    /// <param name="skipBlurSnapshot">
+    /// true = blur snapshot yeniden hesaplanmaz (sürükleme sırasında; blur görsel
+    /// önceki snapshot ile kalır, interaktivite için yeterli).
+    /// </param>
+    public static void RenderContent(SKCanvas canvas, Scene scene, bool highQuality = false, bool skipBlurSnapshot = false)
     {
         if (scene.BackgroundColor.Alpha > 0)
             canvas.Clear(scene.BackgroundColor);
@@ -49,9 +53,12 @@ public static class SceneRenderer
             canvas.DrawImage(bgImg, new SKRect(0, 0, scene.Background.Width, scene.Background.Height), sampling);
         }
 
-        bool hasBlur = false;
-        foreach (var item in scene.Items) { if (item is BlurItem) { hasBlur = true; break; } }
-        if (hasBlur) PrepareBlurSnapshots(scene, bgImg);
+        if (!skipBlurSnapshot)
+        {
+            bool hasBlur = false;
+            foreach (var item in scene.Items) { if (item is BlurItem) { hasBlur = true; break; } }
+            if (hasBlur) PrepareBlurSnapshots(scene, bgImg);
+        }
 
         foreach (var item in scene.Items)
         {

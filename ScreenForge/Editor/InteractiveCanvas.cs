@@ -161,6 +161,19 @@ public sealed class InteractiveCanvas : SKElement
         _crStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x40, 0x40, 0x40), StrokeWidth = 1.2f / scale, IsAntialias = true };
     }
 
+    // Frame limiter: dirty flag + CompositionTarget.Rendering → monitör refresh'e sync
+    private bool _dirty;
+
+    private new void InvalidateVisual()
+    {
+        _dirty = true;
+    }
+
+    private void OnRenderingTick(object? sender, EventArgs e)
+    {
+        if (_dirty) { _dirty = false; base.InvalidateVisual(); }
+    }
+
     public InteractiveCanvas(Scene scene, ToolStyleMemory style)
     {
         Scene = scene;
@@ -168,6 +181,23 @@ public sealed class InteractiveCanvas : SKElement
         Scene.Changed += () => InvalidateVisual();
         Focusable = true;
         ClipToBounds = true;
+        System.Windows.Media.CompositionTarget.Rendering += OnRenderingTick;
+    }
+
+    // Pencere kapanınca event'i temizle (aksi halde her zaman ateşlenir)
+    protected override void OnVisualParentChanged(System.Windows.DependencyObject oldParent)
+    {
+        base.OnVisualParentChanged(oldParent);
+        if (Parent == null)
+            System.Windows.Media.CompositionTarget.Rendering -= OnRenderingTick;
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        _dpiScale = newDpi.DpiScaleX;
+        _dpiScaleCached = true;
+        _lastPaintScale = -1f; // scale bağımlı paint'leri yeniden oluştur
     }
 
     // ===================== Çizim =====================
@@ -184,7 +214,8 @@ public sealed class InteractiveCanvas : SKElement
         canvas.Translate(offset.X, offset.Y);
         canvas.Scale(scale);
 
-        SceneRenderer.RenderContent(canvas, Scene);
+        bool dragging = _interacting && (_moving || _activeHandle >= 0 || _marqueeActive || _draftItem != null);
+        SceneRenderer.RenderContent(canvas, Scene, skipBlurSnapshot: dragging);
 
         // Taslak (oluşturulan) öğe
         _draftItem?.Render(canvas);
@@ -243,7 +274,21 @@ public sealed class InteractiveCanvas : SKElement
         return (scale, new SKPoint(ox, oy));
     }
 
-    private double DpiScale => VisualTreeHelper.GetDpi(this).DpiScaleX;
+    private double _dpiScale = 1.0;
+    private bool _dpiScaleCached;
+
+    private double DpiScale
+    {
+        get
+        {
+            if (!_dpiScaleCached)
+            {
+                _dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                _dpiScaleCached = true;
+            }
+            return _dpiScale;
+        }
+    }
 
     /// <summary>WPF fare noktası → sahne (içerik piksel) koordinatı.</summary>
     private SKPoint ToScene(Point wpf)
@@ -1143,36 +1188,51 @@ public sealed class InteractiveCanvas : SKElement
         _cropRect = new SKRect(Math.Min(left, right), Math.Min(top, bottom), Math.Max(left, right), Math.Max(top, bottom));
     }
 
+    private System.Windows.Input.Cursor? _lastCursor;
+
+    private void SetCursor(System.Windows.Input.Cursor c)
+    {
+        if (!ReferenceEquals(c, _lastCursor)) { Cursor = c; _lastCursor = c; }
+    }
+
     private void UpdateCursor(SKPoint p)
     {
-        if (_tool != EditorTool.Select) { Cursor = Cursors.Cross; return; }
+        if (_tool != EditorTool.Select) { SetCursor(Cursors.Cross); return; }
 
-        // Rotation tutamacı (handle 10)
         if (SelectedItem != null)
         {
-            float rotTol = 10f / _scale;
-            if (SKPoint.Distance(p, RotationHandlePos(SelectedItem, _scale)) <= rotTol)
-            { Cursor = Cursors.Hand; return; }
-        }
+            // Seçili öğe bounds'unun büyük ölçekte dışındaysa pahalı handle testlerini atla
+            var inflated = SelectedItem.Bounds;
+            float quickTol = 30f / _scale;
+            bool nearItem = p.X >= inflated.Left - quickTol && p.X <= inflated.Right + quickTol
+                         && p.Y >= inflated.Top - quickTol && p.Y <= inflated.Bottom + quickTol;
 
-        // Corner radius tutamacı (handle 9)
-        {
-            float crVal = -1f; SKRect crB = default;
-            if (SelectedItem is RectItem rc) { crVal = rc.CornerRadius; crB = rc.Bounds; }
-            else if (SelectedItem is TextItem tc && tc.Ribbon) { crVal = tc.RibbonRadius; crB = tc.Bounds; }
-            if (crVal >= 0)
+            if (nearItem || SelectedItem.Rotation != 0)
             {
-                float crTol = 9f / _scale;
-                float gap = 8f / _scale;
-                var crPt = new SKPoint(crB.Right + gap, crB.Top - gap);
-                if (SKPoint.Distance(p, crPt) <= crTol) { Cursor = Cursors.SizeAll; return; }
+                // Rotation tutamacı (handle 10)
+                float rotTol = 10f / _scale;
+                if (SKPoint.Distance(p, RotationHandlePos(SelectedItem, _scale)) <= rotTol)
+                { SetCursor(Cursors.Hand); return; }
+
+                // Corner radius tutamacı (handle 9)
+                float crVal = -1f; SKRect crB = default;
+                if (SelectedItem is RectItem rc) { crVal = rc.CornerRadius; crB = rc.Bounds; }
+                else if (SelectedItem is TextItem tc && tc.Ribbon) { crVal = tc.RibbonRadius; crB = tc.Bounds; }
+                if (crVal >= 0)
+                {
+                    float crTol = 9f / _scale;
+                    float gap = 8f / _scale;
+                    var crPt = new SKPoint(crB.Right + gap, crB.Top - gap);
+                    if (SKPoint.Distance(p, crPt) <= crTol) { SetCursor(Cursors.SizeAll); return; }
+                }
+
+                int h = HitHandle(p);
+                if (h >= 0) { SetCursor(h is 0 or 4 ? Cursors.SizeNWSE : h is 2 or 6 ? Cursors.SizeNESW : h is 1 or 5 ? Cursors.SizeNS : Cursors.SizeWE); return; }
+                if (SelectedItem.Bounds.Contains(p.X, p.Y)) { SetCursor(Cursors.SizeAll); return; }
             }
         }
 
-        int h = HitHandle(p);
-        if (h >= 0) { Cursor = h is 0 or 4 ? Cursors.SizeNWSE : h is 2 or 6 ? Cursors.SizeNESW : h is 1 or 5 ? Cursors.SizeNS : Cursors.SizeWE; return; }
-        if (SelectedItem != null && SelectedItem.Bounds.Contains(p.X, p.Y)) { Cursor = Cursors.SizeAll; return; }
-        Cursor = Scene.HitTest(p) != null ? Cursors.SizeAll : Cursors.Arrow;
+        SetCursor(Scene.HitTest(p) != null ? Cursors.SizeAll : Cursors.Arrow);
     }
 
     // ===================== Yardımcılar =====================
