@@ -47,6 +47,9 @@ public sealed class Scene
 
     public event Action? Changed;
 
+    /// <summary>Undo/Redo sonrası hangi öğelerin seçili olması gerektiğini bildirir (boş = seçimi temizle).</summary>
+    public event Action<IReadOnlyList<SceneItem>>? SelectionRestore;
+
     public void Apply(IUndoableAction action)
     {
         action.Do(this);
@@ -62,6 +65,7 @@ public sealed class Scene
         a.Undo(this);
         _redo.Push(a);
         Changed?.Invoke();
+        SelectionRestore?.Invoke(a.SelectAfterUndo(this));
     }
 
     public void Redo()
@@ -71,6 +75,7 @@ public sealed class Scene
         a.Do(this);
         _undo.Push(a);
         Changed?.Invoke();
+        SelectionRestore?.Invoke(a.SelectAfterDo(this));
     }
 
     public void RaiseChanged() => Changed?.Invoke();
@@ -110,6 +115,10 @@ public interface IUndoableAction
 {
     void Do(Scene scene);
     void Undo(Scene scene);
+    /// <summary>Redo (Do) sonrası seçilecek öğeler. Varsayılan: hiçbiri.</summary>
+    IReadOnlyList<SceneItem> SelectAfterDo(Scene scene) => System.Array.Empty<SceneItem>();
+    /// <summary>Undo sonrası seçilecek öğeler. Varsayılan: hiçbiri.</summary>
+    IReadOnlyList<SceneItem> SelectAfterUndo(Scene scene) => System.Array.Empty<SceneItem>();
 }
 
 /// <summary>Öğe ekleme.</summary>
@@ -119,6 +128,8 @@ public sealed class AddItemAction : IUndoableAction
     public AddItemAction(SceneItem item) => _item = item;
     public void Do(Scene s) => s.Items.Add(_item);
     public void Undo(Scene s) => s.Items.Remove(_item);
+    // Redo: öğe geri eklendi → seç. Undo: öğe gitti → seçim yok.
+    public IReadOnlyList<SceneItem> SelectAfterDo(Scene s) => new[] { _item };
 }
 
 /// <summary>Öğe silme (z-konumunu korur).</summary>
@@ -129,6 +140,8 @@ public sealed class RemoveItemAction : IUndoableAction
     public RemoveItemAction(SceneItem item) => _item = item;
     public void Do(Scene s) { _index = s.Items.IndexOf(_item); s.Items.Remove(_item); }
     public void Undo(Scene s) { if (_index < 0) _index = s.Items.Count; s.Items.Insert(Math.Min(_index, s.Items.Count), _item); }
+    // Undo: silinen öğe geri geldi → seç. Redo: silindi → seçim yok.
+    public IReadOnlyList<SceneItem> SelectAfterUndo(Scene s) => new[] { _item };
 }
 
 /// <summary>Öğe durumunu (taşıma/boyut/stil) eski→yeni değiştirir.</summary>
@@ -143,6 +156,9 @@ public sealed class ModifyItemAction : IUndoableAction
     }
     public void Do(Scene s) => _item.RestoreFrom(_after);
     public void Undo(Scene s) => _item.RestoreFrom(_before);
+    // Taşıma/boyut/stil değişimi: her iki yönde de öğe seçili kalsın.
+    public IReadOnlyList<SceneItem> SelectAfterDo(Scene s) => s.Items.Contains(_item) ? new[] { _item } : System.Array.Empty<SceneItem>();
+    public IReadOnlyList<SceneItem> SelectAfterUndo(Scene s) => SelectAfterDo(s);
 }
 
 /// <summary>Birden fazla eylemi tek geri-al adımında gruplar (çoklu seçim işlemleri).</summary>
@@ -152,6 +168,8 @@ public sealed class CompositeAction : IUndoableAction
     public CompositeAction(IEnumerable<IUndoableAction> actions) => _actions = actions.ToList();
     public void Do(Scene s) { foreach (var a in _actions) a.Do(s); }
     public void Undo(Scene s) { for (int i = _actions.Count - 1; i >= 0; i--) _actions[i].Undo(s); }
+    public IReadOnlyList<SceneItem> SelectAfterDo(Scene s) => _actions.SelectMany(a => a.SelectAfterDo(s)).Distinct().ToList();
+    public IReadOnlyList<SceneItem> SelectAfterUndo(Scene s) => _actions.SelectMany(a => a.SelectAfterUndo(s)).Distinct().ToList();
 }
 
 /// <summary>Z-sıra değişimi (snapshot tabanlı, basit ve güvenli).</summary>

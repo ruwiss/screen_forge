@@ -50,6 +50,8 @@ public partial class CaptureOverlayWindow : Window
     private readonly Dictionary<EditorTool, ToggleButton> _toolButtons = new();
     private bool _toolbarDragging;
     private WpfPoint _toolbarDragStart;
+    private bool _toolbarMoved;        // kullanıcı araç çubuğunu sürükledi mi (tam ekran/serbest)
+    private WpfPoint _toolbarPos;      // kullanıcının seçtiği konum
 
     public CaptureOverlayWindow(Bitmap screenshot, Rectangle virtualBounds, AppSettings settings, CaptureMode mode = CaptureMode.Region)
     {
@@ -89,8 +91,13 @@ public partial class CaptureOverlayWindow : Window
         var pos = e.GetPosition(Root);
         double dx = pos.X - _toolbarDragStart.X;
         double dy = pos.Y - _toolbarDragStart.Y;
-        Canvas.SetLeft(Toolbar, Canvas.GetLeft(Toolbar) + dx);
-        Canvas.SetTop(Toolbar, Canvas.GetTop(Toolbar) + dy);
+        double nx = Canvas.GetLeft(Toolbar) + dx;
+        double ny = Canvas.GetTop(Toolbar) + dy;
+        ClampToolbar(ref nx, ref ny);
+        Canvas.SetLeft(Toolbar, nx);
+        Canvas.SetTop(Toolbar, ny);
+        _toolbarMoved = true;
+        _toolbarPos = new WpfPoint(nx, ny);
         _toolbarDragStart = pos;
         e.Handled = true;
     }
@@ -174,7 +181,7 @@ public partial class CaptureOverlayWindow : Window
         });
         sp.Children.Add(new TextBlock { Text = label, Margin = new Thickness(7, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, FontSize = 13, Foreground = System.Windows.Media.Brushes.White });
         btn.Content = sp;
-        btn.Click += (_, _) => { _mode = mode; ApplyMode(); };
+        btn.Click += (_, _) => { _mode = mode; _toolbarMoved = false; ApplyMode(); };
         ModeStack.Children.Add(btn);
     }
 
@@ -186,6 +193,10 @@ public partial class CaptureOverlayWindow : Window
             b.IsChecked = (CaptureMode)i++ == _mode;
 
         ResetSelection();
+        // Sürükleme tutamağı sadece tam ekran/serbest modlarda.
+        ToolbarGrip.Visibility = _mode == CaptureMode.Region
+            ? System.Windows.Visibility.Collapsed
+            : System.Windows.Visibility.Visible;
         if (_mode == CaptureMode.FullScreen)
         {
             HintText.Text = "Tam ekran — düzenlemeye başlayın";
@@ -317,6 +328,8 @@ public partial class CaptureOverlayWindow : Window
                 UpdateDimRects(_selDip);
                 Toolbar.Visibility = Visibility.Visible;
                 ActionBar.Visibility = Visibility.Visible;
+                // Seçim bölgesi dışına tek tık: seçili öğe + option paneli korunsun.
+                BuildOptionBar();
                 PositionPanels();
                 return;
             }
@@ -1357,6 +1370,17 @@ public partial class CaptureOverlayWindow : Window
         }
     }
 
+    // Araç çubuğunu görünür alan içinde tutar.
+    private void ClampToolbar(ref double x, ref double y)
+    {
+        const double gap = 6;
+        double w = Toolbar.ActualWidth, h = Toolbar.ActualHeight;
+        double maxX = Math.Max(gap, ActualWidth - w - gap);
+        double maxY = Math.Max(gap, ActualHeight - h - gap);
+        x = Math.Clamp(x, gap, maxX);
+        y = Math.Clamp(y, gap, maxY);
+    }
+
     private void PositionPanels()
     {
         const double gap = 10;
@@ -1375,9 +1399,20 @@ public partial class CaptureOverlayWindow : Window
         bool fullLike = free || _mode == CaptureMode.FullScreen;
         if (fullLike)
         {
-            double y = ActualHeight - tbH - 24;
-            Canvas.SetLeft(Toolbar, Math.Round((ActualWidth - tbW) / 2));
-            Canvas.SetTop(Toolbar, y);
+            double tbX, tbY;
+            if (_toolbarMoved)
+            {
+                // Kullanıcının sürüklediği konumu koru (ekrana yeniden sığdır)
+                tbX = _toolbarPos.X; tbY = _toolbarPos.Y;
+            }
+            else
+            {
+                tbX = Math.Round((ActualWidth - tbW) / 2);
+                tbY = ActualHeight - tbH - 24;
+            }
+            ClampToolbar(ref tbX, ref tbY);
+            Canvas.SetLeft(Toolbar, tbX);
+            Canvas.SetTop(Toolbar, tbY);
         }
         else
         {

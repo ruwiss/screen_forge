@@ -178,7 +178,8 @@ public sealed class InteractiveCanvas : SKElement
     {
         Scene = scene;
         ToolStyle = style;
-        Scene.Changed += () => InvalidateVisual();
+        Scene.Changed += OnSceneChanged;
+        Scene.SelectionRestore += OnSelectionRestore;
         Focusable = true;
         ClipToBounds = true;
         System.Windows.Media.CompositionTarget.Rendering += OnRenderingTick;
@@ -189,7 +190,11 @@ public sealed class InteractiveCanvas : SKElement
     {
         base.OnVisualParentChanged(oldParent);
         if (Parent == null)
+        {
             System.Windows.Media.CompositionTarget.Rendering -= OnRenderingTick;
+            Scene.Changed -= OnSceneChanged;
+            Scene.SelectionRestore -= OnSelectionRestore;
+        }
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
@@ -561,7 +566,7 @@ public sealed class InteractiveCanvas : SKElement
                 return;
             }
 
-            // Boş alan → marquee başlat
+            // Boş alan → seçimi kaldır + marquee başlat (resize + panel gizlenir).
             ClearSelection();
             _marqueeActive = true;
             _marqueeCur = p;
@@ -1060,6 +1065,35 @@ public sealed class InteractiveCanvas : SKElement
     }
 
     // ===================== Seçim / silme =====================
+    // Sahne değişince (undo/redo dahil): artık var olmayan öğeleri seçimden düşür,
+    // aksi halde silinen objenin resize tutamaçları ekranda kalır.
+    private void OnSceneChanged()
+    {
+        PruneSelection();
+        InvalidateVisual();
+    }
+
+    // Undo/Redo sonrası ilgili öğeyi tekrar seç (ör. redo edilen resize işlemi).
+    private void OnSelectionRestore(IReadOnlyList<SceneItem> items)
+    {
+        var valid = items.Where(i => Scene.Items.Contains(i)).ToList();
+        if (valid.Count == 0) { ClearSelection(); return; }
+        _activeHandle = -1;
+        _groupResize = false;
+        SetSelection(valid);
+    }
+
+    private void PruneSelection()
+    {
+        int removed = Selection.RemoveAll(s => !Scene.Items.Contains(s));
+        if (removed > 0)
+        {
+            _activeHandle = -1;
+            _groupResize = false;
+            SelectionChanged?.Invoke();
+        }
+    }
+
     public void SetSelection(SceneItem? item)
     {
         Selection.Clear();
