@@ -273,12 +273,20 @@ public class FreehandItem : SceneItem
 {
     public List<SKPoint> Points { get; set; } = new();
 
+    // Path cache — Points değişince geçersiz kılınır.
+    private SKPath? _cachedPath;
+    private int _cachedPointCount;
+    private SKPoint _cachedLastPoint;
+
     public void AddPoint(SKPoint p)
     {
         if (Points.Count > 0 && SKPoint.Distance(Points[^1], p) < 3f) return;
         Points.Add(p);
         RecalcBounds();
+        InvalidatePathCache();
     }
+
+    protected void InvalidatePathCache() { _cachedPath?.Dispose(); _cachedPath = null; }
 
     protected virtual void RecalcBounds()
     {
@@ -297,10 +305,26 @@ public class FreehandItem : SceneItem
         for (int i = 0; i < Points.Count; i++)
             Points[i] = new SKPoint(Points[i].X + dx, Points[i].Y + dy);
         RecalcBounds();
+        InvalidatePathCache();
     }
 
-    /// <summary>Chaikin yumuşatma ile yol üretir (2 pass).</summary>
-    protected SKPath BuildPath()
+    /// <summary>Chaikin yumuşatma ile yol üretir (2 pass). Sonuç cache'lenir.</summary>
+    protected SKPath GetOrBuildPath()
+    {
+        // Çizim sırasında son nokta eklenince önce DrawingInProgress=true → cache yoksa yeniden yap.
+        // Count + son nokta aynıysa cache geçerli.
+        if (_cachedPath != null && _cachedPointCount == Points.Count
+            && (Points.Count == 0 || _cachedLastPoint == Points[^1]))
+            return _cachedPath;
+
+        _cachedPath?.Dispose();
+        _cachedPath = BuildPathInternal();
+        _cachedPointCount = Points.Count;
+        _cachedLastPoint = Points.Count > 0 ? Points[^1] : default;
+        return _cachedPath;
+    }
+
+    private SKPath BuildPathInternal()
     {
         var path = new SKPath();
         if (Points.Count == 0) return path;
@@ -336,7 +360,7 @@ public class FreehandItem : SceneItem
     {
         canvas.Save();
         ApplyRotation(canvas);
-        using var path = BuildPath();
+        var path = GetOrBuildPath();
         using var paint = new SKPaint { Style = SKPaintStyle.Stroke, Color = StrokeColor.WithAlpha(AlphaByte), StrokeWidth = StrokeWidth, IsAntialias = true, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
         canvas.DrawPath(path, paint);
         canvas.Restore();
@@ -380,7 +404,7 @@ public sealed class HighlightItem : FreehandItem
     {
         canvas.Save();
         ApplyRotation(canvas);
-        using var path = BuildPath();
+        var path = GetOrBuildPath();
         using var paint = new SKPaint
         {
             Style = SKPaintStyle.Stroke,

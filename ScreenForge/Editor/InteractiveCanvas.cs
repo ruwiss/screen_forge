@@ -87,6 +87,11 @@ public sealed class InteractiveCanvas : SKElement
     private SKPaint? _bendStrokePaint;
     private SKPaint? _marqueeFillPaint;
     private SKPaint? _marqueeStrokePaint;
+    private SKPaint? _rotLinePaint;
+    private SKPaint? _rotFillPaint;
+    private SKPaint? _rotStrokePaint;
+    private SKPaint? _crFillPaint;
+    private SKPaint? _crStrokePaint;
 
     private void EnsureScalePaints(float scale)
     {
@@ -139,6 +144,21 @@ public sealed class InteractiveCanvas : SKElement
             IsAntialias = true,
             PathEffect = SKPathEffect.CreateDash(new[] { 4f / scale, 3f / scale }, 0),
         };
+
+        _rotLinePaint?.Dispose();
+        _rotLinePaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x2F, 0x6F, 0xED), StrokeWidth = 1f / scale, IsAntialias = true };
+
+        _rotFillPaint?.Dispose();
+        _rotFillPaint = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(0xFF, 0xFF, 0xFF, 220), IsAntialias = true };
+
+        _rotStrokePaint?.Dispose();
+        _rotStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x2F, 0x6F, 0xED), StrokeWidth = 1.5f / scale, IsAntialias = true };
+
+        _crFillPaint?.Dispose();
+        _crFillPaint = new SKPaint { Style = SKPaintStyle.Fill, Color = SKColors.White, IsAntialias = true };
+
+        _crStrokePaint?.Dispose();
+        _crStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x40, 0x40, 0x40), StrokeWidth = 1.2f / scale, IsAntialias = true };
     }
 
     public InteractiveCanvas(Scene scene, ToolStyleMemory style)
@@ -280,12 +300,9 @@ public sealed class InteractiveCanvas : SKElement
             top = new SKPoint(c.X + dx * cos - dy * sin, c.Y + dx * sin + dy * cos);
         }
         float r = 5f / scale;
-        using var line = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x2F, 0x6F, 0xED), StrokeWidth = 1f / scale, IsAntialias = true };
-        using var fill = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(0xFF, 0xFF, 0xFF, 220), IsAntialias = true };
-        using var stroke = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x2F, 0x6F, 0xED), StrokeWidth = 1.5f / scale, IsAntialias = true };
-        canvas.DrawLine(top, pos, line);
-        canvas.DrawCircle(pos, r, fill);
-        canvas.DrawCircle(pos, r, stroke);
+        canvas.DrawLine(top, pos, _rotLinePaint!);
+        canvas.DrawCircle(pos, r, _rotFillPaint!);
+        canvas.DrawCircle(pos, r, _rotStrokePaint!);
     }
 
     private void DrawCornerRadiusHandle(SKCanvas canvas, SKRect bounds, float cornerRadius, float scale)
@@ -295,10 +312,8 @@ public sealed class InteractiveCanvas : SKElement
         float r = Math.Clamp(minDim / 30f, 3f, 5f) / scale;
         float gap = 8f / scale;
         var pos = new SKPoint(bounds.Right + gap, bounds.Top - gap);
-        using var fill = new SKPaint { Style = SKPaintStyle.Fill, Color = SKColors.White, IsAntialias = true };
-        using var stroke = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x40, 0x40, 0x40), StrokeWidth = 1.2f / scale, IsAntialias = true };
-        canvas.DrawCircle(pos, r, fill);
-        canvas.DrawCircle(pos, r, stroke);
+        canvas.DrawCircle(pos, r, _crFillPaint!);
+        canvas.DrawCircle(pos, r, _crStrokePaint!);
     }
 
     private void DrawBendHandle(SKCanvas canvas, SKPoint pos, float scale)
@@ -949,10 +964,20 @@ public sealed class InteractiveCanvas : SKElement
     {
         switch (item)
         {
+            case ArrowItem arrow:
+                var beforeArrow = beforeState as ArrowItem;
+                var startSrc = beforeArrow != null ? beforeArrow.Start : arrow.Start;
+                var endSrc = beforeArrow != null ? beforeArrow.End : arrow.End;
+                arrow.Start = MapPoint(startSrc, oldB, newB);
+                arrow.End = MapPoint(endSrc, oldB, newB);
+                if ((beforeArrow?.BendPoint ?? arrow.BendPoint) is { } bp)
+                    arrow.BendPoint = MapPoint(bp, oldB, newB);
+                arrow.SyncBounds();
+                break;
             case LineItem line:
-                // uçları orantılı taşı
-                line.Start = MapPoint(line.Start, oldB, newB);
-                line.End = MapPoint(line.End, oldB, newB);
+                var beforeLine = beforeState as LineItem;
+                line.Start = MapPoint(beforeLine != null ? beforeLine.Start : line.Start, oldB, newB);
+                line.End = MapPoint(beforeLine != null ? beforeLine.End : line.End, oldB, newB);
                 line.SyncBounds();
                 break;
             case FreehandItem fh:

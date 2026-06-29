@@ -43,6 +43,8 @@ public sealed class Scene
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
 
+    public void ClearHistory() { _undo.Clear(); _redo.Clear(); }
+
     public event Action? Changed;
 
     public void Apply(IUndoableAction action)

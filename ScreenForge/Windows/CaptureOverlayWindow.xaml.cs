@@ -1581,6 +1581,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if (_scene == null) return;
         _scene.Items.Clear();
+        _scene.ClearHistory();
         _scene.ResetStepCounter();
         _canvas?.ClearSelection();
         _scene.RaiseChanged();
