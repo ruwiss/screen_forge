@@ -1143,6 +1143,20 @@ public sealed class InteractiveCanvas : SKElement
         SetSelection((SceneItem?)null);
     }
 
+    /// <summary>Seçili öğeleri klavye yön tuşlarıyla kaydırır (undo destekli).</summary>
+    public void NudgeSelection(float dx, float dy)
+    {
+        if (Selection.Count == 0) return;
+        var befores = Selection.Select(s => s.Clone()).ToList();
+        foreach (var s in Selection) s.Move(dx, dy);
+        var actions = new List<IUndoableAction>();
+        for (int i = 0; i < Selection.Count; i++)
+            actions.Add(new ModifyItemAction(Selection[i], befores[i], Selection[i].Clone()));
+        Scene.Apply(actions.Count == 1 ? actions[0] : new CompositeAction(actions));
+        ItemMoved?.Invoke();
+        InvalidateVisual();
+    }
+
     /// <summary>Seçili öğelerin birleşik (union) sınırları.</summary>
     public SKRect SelectionBounds()
     {

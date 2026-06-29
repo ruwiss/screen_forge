@@ -1742,6 +1742,17 @@ public partial class CaptureOverlayWindow : Window
         if (ctrl && e.Key == Key.V) { TryPasteImage(); e.Handled = true; return; }
         if (e.Key is Key.Delete or Key.Back) { _canvas?.DeleteSelected(); e.Handled = true; return; }
 
+        // Yön tuşlarıyla seçili öğeleri kaydır. Ctrl = 1px ince ayar, normal = 10px.
+        if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down && _canvas?.SelectedItem != null)
+        {
+            float step = ctrl ? 1f : 10f;
+            float dx = e.Key == Key.Left ? -step : e.Key == Key.Right ? step : 0f;
+            float dy = e.Key == Key.Up ? -step : e.Key == Key.Down ? step : 0f;
+            _canvas.NudgeSelection(dx, dy);
+            e.Handled = true;
+            return;
+        }
+
         if (_canvas == null) return;
         EditorTool? t = e.Key switch
         {
