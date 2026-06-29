@@ -37,6 +37,7 @@ public partial class CaptureOverlayWindow : Window
     private Phase _phase = Phase.Select;
     private bool _dragging;
     private bool _pendingNewSelection;
+    private bool _newSelectionArmed;
     private WpfPoint _start;
 
     private WpfRect _selDip;
@@ -259,18 +260,15 @@ public partial class CaptureOverlayWindow : Window
                 e.Handled = true;
                 return;
             }
-            // Dim bölgesine tıklama → yeni seçim hazırlığı (sürüklenmezse geri dön)
+            // Dim bölgesine tıklama → yeni seçim HAZIRLIĞI. Mevcut bölgeyi henüz
+            // bozma; sadece gerçek bir sürükleme başlarsa (OnMouseMove) yeni seçime geç.
+            // Böylece bölge dışına tek tık mevcut seçimi yok etmez.
             if (!_selDip.Contains(pos))
             {
                 _pendingNewSelection = true;
+                _newSelectionArmed = false;
                 _dragging = true;
                 _start = pos;
-                Toolbar.Visibility = Visibility.Collapsed;
-                ActionBar.Visibility = Visibility.Collapsed;
-                OptionBar.Visibility = Visibility.Collapsed;
-                EditHost.Visibility = Visibility.Collapsed;
-                SelectionBorder.Visibility = Visibility.Collapsed;
-                UpdateDimRects(WpfRect.Empty);
                 CaptureMouse();
                 e.Handled = true;
                 return;
@@ -308,6 +306,20 @@ public partial class CaptureOverlayWindow : Window
         }
 
         if (!_dragging) return;
+
+        // Yeni seçim hazırlığı: ancak gerçek bir sürükleme başlayınca mevcut bölgeyi bırak.
+        if (_pendingNewSelection && !_newSelectionArmed)
+        {
+            if (Math.Abs(pos.X - _start.X) < 4 && Math.Abs(pos.Y - _start.Y) < 4) return;
+            _newSelectionArmed = true;
+            Toolbar.Visibility = Visibility.Collapsed;
+            ActionBar.Visibility = Visibility.Collapsed;
+            OptionBar.Visibility = Visibility.Collapsed;
+            EditHost.Visibility = Visibility.Collapsed;
+            SelectionBorder.Visibility = Visibility.Collapsed;
+            UpdateDimRects(WpfRect.Empty);
+        }
+
         if (_phase == Phase.Select || _pendingNewSelection)
             UpdateSelectionVisual(MakeRect(_start, pos));
     }
@@ -318,9 +330,11 @@ public partial class CaptureOverlayWindow : Window
         {
             _pendingNewSelection = false;
             _dragging = false;
+            bool armed = _newSelectionArmed;
+            _newSelectionArmed = false;
             ReleaseMouseCapture();
             var newRect = MakeRect(_start, e.GetPosition(Root));
-            if (newRect.Width < 50 || newRect.Height < 50)
+            if (!armed || newRect.Width < 50 || newRect.Height < 50)
             {
                 SizeBadge.Visibility = Visibility.Collapsed;
                 EditHost.Visibility = Visibility.Visible;
@@ -1745,7 +1759,7 @@ public partial class CaptureOverlayWindow : Window
         // Yön tuşlarıyla seçili öğeleri kaydır. Ctrl = 1px ince ayar, normal = 10px.
         if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down && _canvas?.SelectedItem != null)
         {
-            float step = ctrl ? 1f : 10f;
+            float step = ctrl ? 1f : shift ? 30f : 10f;
             float dx = e.Key == Key.Left ? -step : e.Key == Key.Right ? step : 0f;
             float dy = e.Key == Key.Up ? -step : e.Key == Key.Down ? step : 0f;
             _canvas.NudgeSelection(dx, dy);
