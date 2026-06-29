@@ -824,9 +824,9 @@ public sealed class InteractiveCanvas : SKElement
         {
             var item = _draftItem;
             Scene.Apply(new AddItemAction(item));
-            // araç seçili kalır (excalidraw varsayılanı: tek kullanım sonrası Select)
-            Tool = EditorTool.Select;
-            SetSelection(item);
+            // Araç aktif kalır → birden fazla kez çizim yapılabilir (Select'e düşme yok).
+            // Yeni çizimi seçili göstermeyiz; aksi halde Select davranışı karışır.
+            ClearSelection();
         }
         _draftItem = null;
         InvalidateVisual();
