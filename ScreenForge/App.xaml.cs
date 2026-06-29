@@ -1,3 +1,4 @@
+using System.IO;
 using System.Threading;
 using System.Windows;
 using ScreenForge.Hotkeys;
@@ -28,6 +29,7 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
+        LoadEnvFile();
 
         Settings = AppSettings.Load();
         ScreenForge.Settings.StartupManager.SetEnabled(Settings.LaunchAtStartup);
@@ -179,6 +181,31 @@ public partial class App : Application
     private void OnExit()
     {
         Shutdown();
+    }
+
+    private static void LoadEnvFile()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir != null)
+        {
+            var envPath = Path.Combine(dir, ".env");
+            if (File.Exists(envPath))
+            {
+                foreach (var line in File.ReadAllLines(envPath))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.Length == 0 || trimmed[0] == '#') continue;
+                    var eq = trimmed.IndexOf('=');
+                    if (eq <= 0) continue;
+                    var key = trimmed[..eq].Trim();
+                    var val = trimmed[(eq + 1)..].Trim();
+                    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+                        Environment.SetEnvironmentVariable(key, val);
+                }
+                return;
+            }
+            dir = Path.GetDirectoryName(dir);
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
