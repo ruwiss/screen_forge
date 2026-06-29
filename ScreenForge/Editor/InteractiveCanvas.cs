@@ -824,9 +824,17 @@ public sealed class InteractiveCanvas : SKElement
         {
             var item = _draftItem;
             Scene.Apply(new AddItemAction(item));
-            // Araç aktif kalır → birden fazla kez çizim yapılabilir (Select'e düşme yok).
-            // Yeni çizimi seçili göstermeyiz; aksi halde Select davranışı karışır.
-            ClearSelection();
+            // Dörtgen/Daire/Çizgi/Ok: Select'e geç + öğeyi seç (resize edilebilsin).
+            // Diğerleri (Kalem/Highlight/Blur): araç aktif kalır → çoklu kullanım.
+            if (_tool is EditorTool.Rectangle or EditorTool.Ellipse or EditorTool.Line or EditorTool.Arrow)
+            {
+                Tool = EditorTool.Select;
+                SetSelection(item);
+            }
+            else
+            {
+                ClearSelection();
+            }
         }
         _draftItem = null;
         InvalidateVisual();
@@ -867,7 +875,8 @@ public sealed class InteractiveCanvas : SKElement
         };
         s.SyncBounds();
         Scene.Apply(new AddItemAction(s));
-        SetSelection(s);
+        // Step araçı aktif kalır (çoklu kullanım); seçim yok.
+        ClearSelection();
         InvalidateVisual();
     }
 
