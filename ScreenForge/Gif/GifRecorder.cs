@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using ScreenForge.Gif.Encoder;
 using DrawingRect = System.Drawing.Rectangle;
+using QType = ScreenForge.Gif.Encoder.QuantizerType;
 
 namespace ScreenForge.Gif;
 
@@ -82,18 +83,25 @@ public sealed class GifRecorder : IDisposable
         => await SaveAsync(path, fpsOverride: null, colorCount: 256, framesOverride: null, progress: progress);
 
     public async Task SaveAsync(string path, int? fpsOverride, int colorCount, IList<byte[]>? framesOverride,
-        int? widthOverride = null, int? heightOverride = null, Action<double>? progress = null)
+        int? widthOverride = null, int? heightOverride = null, Action<double>? progress = null,
+        QType quantizerType = QType.Neural, int samplingFactor = 5)
     {
-        var frames = framesOverride != null ? framesOverride.ToList() : _frames.ToList();
-        int w = widthOverride  ?? _pixelRegion.Width;
-        int h = heightOverride ?? _pixelRegion.Height;
-        int fps = fpsOverride ?? Fps;
+        var frames  = framesOverride != null ? framesOverride.ToList() : _frames.ToList();
+        int w       = widthOverride  ?? _pixelRegion.Width;
+        int h       = heightOverride ?? _pixelRegion.Height;
+        int fps     = fpsOverride ?? Fps;
         int delayMs = (int)Math.Round(1000.0 / fps);
 
         await Task.Run(() =>
         {
-            using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
-            using var gif = new GifFile(fs) { MaximumNumberColor = colorCount, RepeatCount = 0 };
+            using var fs  = new FileStream(path, FileMode.Create, FileAccess.Write);
+            using var gif = new GifFile(fs)
+            {
+                MaximumNumberColor = colorCount,
+                RepeatCount        = 0,
+                QuantizerType      = quantizerType,
+                SamplingFactor     = samplingFactor,
+            };
 
             for (int i = 0; i < frames.Count; i++)
             {

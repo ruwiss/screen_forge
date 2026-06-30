@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using ScreenForge.Gif;
+using ScreenForge.Gif.Encoder;
 using DrawingBitmap       = System.Drawing.Bitmap;
 using DrawingRect         = System.Drawing.Rectangle;
 using DrawingPixelFormat  = System.Drawing.Imaging.PixelFormat;
@@ -35,6 +36,9 @@ public sealed class GifPreviewWindow
     private TextBlock?       _fpsLabel;
     private Slider?          _fpsSlider;
     private ComboBox?        _qualityCombo;
+    private ComboBox?        _quantizerCombo;
+    private Slider?          _samplingSlider;
+    private TextBlock?       _samplingLabel;
     private TextBox?         _widthBox;
     private TextBox?         _heightBox;
     private CheckBox?        _keepAspect;
@@ -359,13 +363,53 @@ public sealed class GifPreviewWindow
         panel.Children.Add(_fpsLabel);
 
         // Renk kalitesi
-        panel.Children.Add(MakeLabel("Renk Kalitesi"));
-        _qualityCombo = new ComboBox { Margin = new Thickness(0, 4, 0, 10) };
+        panel.Children.Add(MakeLabel("Renk Sayısı"));
+        _qualityCombo = new ComboBox { Margin = new Thickness(0, 4, 0, 6) };
         _qualityCombo.Items.Add(new ComboBoxItem { Content = "256 Renk (Yüksek)", Tag = 256 });
         _qualityCombo.Items.Add(new ComboBoxItem { Content = "128 Renk (Orta)",   Tag = 128 });
         _qualityCombo.Items.Add(new ComboBoxItem { Content = "64 Renk (Düşük)",   Tag = 64  });
         _qualityCombo.SelectedIndex = 0;
         panel.Children.Add(_qualityCombo);
+
+        // Quantizer seçimi
+        panel.Children.Add(MakeLabel("Quantizer"));
+        _quantizerCombo = new ComboBox { Margin = new Thickness(0, 4, 0, 6) };
+        _quantizerCombo.Items.Add(new ComboBoxItem { Content = "Neural (Yüksek Kalite)", Tag = QuantizerType.Neural });
+        _quantizerCombo.Items.Add(new ComboBoxItem { Content = "Octree (Hızlı)",         Tag = QuantizerType.Octree });
+        _quantizerCombo.SelectedIndex = 0;
+        panel.Children.Add(_quantizerCombo);
+
+        // Örnekleme faktörü (sadece Neural için anlamlı)
+        _samplingLabel = MakeLabel("Örnekleme: 5 (Dengeli)");
+        panel.Children.Add(_samplingLabel);
+        _samplingSlider = new Slider
+        {
+            Minimum             = 1,
+            Maximum             = 20,
+            Value               = 5,
+            TickFrequency       = 1,
+            IsSnapToTickEnabled = true,
+            Margin              = new Thickness(0, 4, 0, 10),
+        };
+        _samplingSlider.ValueChanged += (_, e) =>
+        {
+            int v = (int)e.NewValue;
+            _samplingLabel!.Text = v switch
+            {
+                1       => "Örnekleme: 1 (En Yüksek Kalite)",
+                <= 5    => $"Örnekleme: {v} (Yüksek Kalite)",
+                <= 10   => $"Örnekleme: {v} (Dengeli)",
+                <= 15   => $"Örnekleme: {v} (Hızlı)",
+                _       => $"Örnekleme: {v} (En Hızlı)",
+            };
+        };
+        _quantizerCombo.SelectionChanged += (_, _) =>
+        {
+            bool isNeural = GetQuantizerType() == QuantizerType.Neural;
+            _samplingSlider.IsEnabled = isNeural;
+            _samplingLabel!.Opacity   = isNeural ? 1.0 : 0.4;
+        };
+        panel.Children.Add(_samplingSlider);
 
         // Çıktı boyutu
         panel.Children.Add(MakeLabel("Çıktı Boyutu"));
@@ -664,7 +708,9 @@ public sealed class GifPreviewWindow
             {
                 _progressBar!.Value = p * 100;
                 _statusLabel!.Text  = $"Kaydediliyor... {(int)(p * 100)}%";
-            }));
+            }),
+            quantizerType  : GetQuantizerType(),
+            samplingFactor : GetSamplingFactor());
 
         _progressBar.Visibility = Visibility.Collapsed;
         _statusLabel!.Text = $"Kaydedildi → {Path.GetFileName(dlg.FileName)}";
@@ -675,6 +721,15 @@ public sealed class GifPreviewWindow
         if (_qualityCombo?.SelectedItem is ComboBoxItem ci && ci.Tag is int v) return v;
         return 256;
     }
+
+    private QuantizerType GetQuantizerType()
+    {
+        if (_quantizerCombo?.SelectedItem is ComboBoxItem ci && ci.Tag is QuantizerType qt) return qt;
+        return QuantizerType.Neural;
+    }
+
+    private int GetSamplingFactor()
+        => _samplingSlider != null ? Math.Max(1, Math.Min(20, (int)_samplingSlider.Value)) : 5;
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  YARDIMCILAR

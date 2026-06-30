@@ -16,6 +16,12 @@ internal sealed class GifFile : IDisposable
     public WpfColor? TransparentColor { get; set; }
     public int MaximumNumberColor { get; set; } = 256;
 
+    /// <summary>Neural=kaliteli (varsayılan), Octree=hızlı</summary>
+    public QuantizerType QuantizerType { get; set; } = QuantizerType.Neural;
+
+    /// <summary>Neural quantizer örnekleme faktörü: 1=en iyi kalite, 20=en hızlı. Varsayılan: 5.</summary>
+    public int SamplingFactor { get; set; } = 5;
+
     private readonly Stream _stream;
     private bool _isFirstFrame = true;
     private byte[] _indexedPixels = Array.Empty<byte>();
@@ -134,13 +140,15 @@ internal sealed class GifFile : IDisposable
 
     private void ReadPixels(byte[] pixels)
     {
-        var q = new OctreeQuantizer
-        {
-            MaxColors = MaximumNumberColor,
-            TransparentColor = (!_isFirstFrame || UseFullTransparency) ? TransparentColor : null,
-        };
+        Quantizer q = QuantizerType == QuantizerType.Octree
+            ? new OctreeQuantizer { MaxColors = MaximumNumberColor }
+            : new NeuralQuantizer(SamplingFactor, MaximumNumberColor);
+
+        q.MaxColors        = MaximumNumberColor;
+        q.TransparentColor = (!_isFirstFrame || UseFullTransparency) ? TransparentColor : null;
+
         _indexedPixels = q.Quantize(pixels);
-        _colorTable = q.ColorTable;
+        _colorTable    = q.ColorTable;
         _colorTableHasTransparency = TransparentColor.HasValue && _colorTable.Contains(TransparentColor.Value);
     }
 
