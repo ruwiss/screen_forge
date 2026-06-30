@@ -1067,11 +1067,13 @@ public partial class CaptureOverlayWindow : Window
     }
 
     // ---- Üst aksiyon çubuğu (Kopyala/Kaydet/Yükle) ----
+    private int _gifFps = 15;
+
     private void BuildActionBar()
     {
         ActionStack.Children.Clear();
         if (_mode == CaptureMode.Region)
-            ActionStack.Children.Add(MakeCmd("IconRecord", "GIF Kaydet", "Ekranı GIF olarak kaydet", OnGifRecord));
+            ActionStack.Children.Add(MakeGifSplitButton());
         ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala", "Kopyala (Ctrl+C)", DoCopy));
         ActionStack.Children.Add(MakeCmd("IconSave", "Kaydet", "Kaydet (Ctrl+S)", DoSave));
         ActionStack.Children.Add(MakeCmd("IconCloud", "Yükle", "Buluta Yükle", DoUpload, accent: true));
@@ -1079,6 +1081,87 @@ public partial class CaptureOverlayWindow : Window
             ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle", DoClearScene));
         ActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
         ActionBar.Visibility = Visibility.Visible;
+    }
+
+    private FrameworkElement MakeGifSplitButton()
+    {
+        // Ana buton — GIF Kaydet
+        var mainBtn = new Button
+        {
+            Cursor = Cursors.Hand, Height = 34,
+            Padding = new Thickness(10, 0, 6, 0), Margin = new Thickness(0),
+            Foreground = System.Windows.Media.Brushes.White,
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Style = TryFindResource("ActionChip") as Style,
+        };
+        var mainSp = new StackPanel { Orientation = Orientation.Horizontal };
+        mainSp.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = (Geometry)FindResource("IconRecord"),
+            Stroke = System.Windows.Media.Brushes.White, StrokeThickness = 1.8,
+            Width = 17, Height = 17, Stretch = Stretch.Uniform,
+            VerticalAlignment = VerticalAlignment.Center,
+            StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+        });
+        var mainLabel = new TextBlock
+        {
+            Margin = new Thickness(7, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 13, Foreground = System.Windows.Media.Brushes.White,
+        };
+        mainLabel.Text = $"GIF  {_gifFps}fps";
+        mainSp.Children.Add(mainLabel);
+        mainBtn.Content = mainSp;
+        mainBtn.Click += (_, _) => OnGifRecord();
+        AttachHint(mainBtn, "GIF kaydını başlat");
+
+        // Ok butonu — FPS seç
+        var arrowBtn = new Button
+        {
+            Cursor = Cursors.Hand, Height = 34, Width = 22,
+            Padding = new Thickness(0), Margin = new Thickness(0),
+            Foreground = System.Windows.Media.Brushes.White,
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Style = TryFindResource("ActionChip") as Style,
+            Content = new TextBlock { Text = "▾", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center },
+        };
+        AttachHint(arrowBtn, "FPS seç");
+
+        // FPS context menu
+        void ShowFpsMenu()
+        {
+            var menu = new ContextMenu();
+            foreach (int fps in new[] { 5, 10, 12, 15, 20, 24, 30 })
+            {
+                int f = fps;
+                var item = new MenuItem
+                {
+                    Header = $"{fps} FPS",
+                    IsChecked = _gifFps == fps,
+                };
+                item.Click += (_, _) =>
+                {
+                    _gifFps = f;
+                    mainLabel.Text = $"GIF  {_gifFps}fps";
+                };
+                menu.Items.Add(item);
+            }
+            menu.PlacementTarget = arrowBtn;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+        arrowBtn.Click += (_, _) => ShowFpsMenu();
+
+        // Birleştir — sol main, sağ arrow
+        var grid = new Grid { Margin = new Thickness(1) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(mainBtn, 0);
+        Grid.SetColumn(arrowBtn, 1);
+        grid.Children.Add(mainBtn);
+        grid.Children.Add(arrowBtn);
+        return grid;
     }
 
     private void OnGifRecord()
@@ -1089,7 +1172,7 @@ public partial class CaptureOverlayWindow : Window
 
         var recorder = new Gif.GifRecorder(
             new System.Drawing.Rectangle(pixelRegion.X, pixelRegion.Y, pixelRegion.Width, pixelRegion.Height),
-            fps: 10);
+            fps: _gifFps);
         var overlay = new GifRecordingOverlayWindow(recorder, dipRegion);
         overlay.Stopped += OnGifStopped;
         overlay.Show();
