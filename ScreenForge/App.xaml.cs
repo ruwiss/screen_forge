@@ -40,6 +40,7 @@ public partial class App : Application
         _tray.CaptureFullScreenRequested += OnCaptureFullScreen;
         _tray.CollageRequested += OnCollage;
         _tray.ColorPickerRequested += OnColorPicker;
+        _tray.TrayUploadRequested += OnTrayUpload;
         _tray.SettingsRequested += OnSettings;
         _tray.AboutRequested += OnAbout;
         _tray.ExitRequested += OnExit;
@@ -108,6 +109,12 @@ public partial class App : Application
     {
         var picker = new Windows.ColorPickerOverlayWindow();
         picker.Show();
+    }
+
+    private void OnTrayUpload()
+    {
+        var uploader = new Windows.FileDropUploadWindow();
+        uploader.Show();
     }
 
     /// <summary>

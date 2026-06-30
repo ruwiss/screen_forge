@@ -18,6 +18,7 @@ public sealed class TrayIconService : IDisposable
     public event Action? CaptureFullScreenRequested;
     public event Action? CollageRequested;
     public event Action? ColorPickerRequested;
+    public event Action? TrayUploadRequested;
     public event Action? SettingsRequested;
     public event Action? AboutRequested;
     public event Action? ExitRequested;
@@ -51,6 +52,7 @@ public sealed class TrayIconService : IDisposable
         menu.Items.Add(MenuItem("Tam Ekran Yakala", () => CaptureFullScreenRequested?.Invoke()));
         menu.Items.Add(MenuItem("Serbest / Yerleştirme", () => CollageRequested?.Invoke()));
         menu.Items.Add(MenuItem("Renk Seçici", () => ColorPickerRequested?.Invoke()));
+        menu.Items.Add(MenuItem("Yükleme Yap", () => TrayUploadRequested?.Invoke()));
         menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Ayarlar", () => SettingsRequested?.Invoke()));
         menu.Items.Add(MenuItem("Hakkında", () => AboutRequested?.Invoke()));
