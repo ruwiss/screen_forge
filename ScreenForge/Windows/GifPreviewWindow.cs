@@ -39,6 +39,8 @@ public sealed class GifPreviewWindow
     private ComboBox?        _quantizerCombo;
     private Slider?          _samplingSlider;
     private TextBlock?       _samplingLabel;
+    private CheckBox?        _ditheringCheck;
+    private CheckBox?        _globalPaletteCheck;
     private TextBox?         _widthBox;
     private TextBox?         _heightBox;
     private CheckBox?        _keepAspect;
@@ -46,15 +48,28 @@ public sealed class GifPreviewWindow
     private TextBlock?       _frameCountLabel;
     private System.Windows.Controls.ProgressBar? _progressBar;
 
+    // Playback controls (for enable/disable)
+    private Button?          _playBtn;
+    private Button?          _pauseBtn;
+    private Button?          _stopBtn;
+    private Button?          _delFrameBtn;
+    private Button?          _dupFrameBtn;
+    private Button?          _dupRemBtn;
+    private Button?          _saveBtn;
+
     // Playback
     private DispatcherTimer? _playTimer;
     private bool             _playing;
 
+    // Per-frame delays
+    private List<int> _frameDelays;
+
     public GifPreviewWindow(GifRecorder recorder)
     {
-        _recorder  = recorder;
-        _frames    = recorder.Frames.Select(f => f.ToArray()).ToList();
-        _keyEvents = recorder.KeyEvents.ToList();
+        _recorder    = recorder;
+        _frames      = recorder.Frames.Select(f => f.ToArray()).ToList();
+        _frameDelays = recorder.FrameDelays.ToList();
+        _keyEvents   = recorder.KeyEvents.ToList();
     }
 
     public void Show()
@@ -276,13 +291,13 @@ public sealed class GifPreviewWindow
 
     private StackPanel BuildPlaybackBar()
     {
-        var playBtn  = MakeIconBtn("▶");
-        var pauseBtn = MakeIconBtn("⏸");
-        var stopBtn2 = MakeIconBtn("⏹");
+        _playBtn  = MakeIconBtn("▶");
+        _pauseBtn = MakeIconBtn("⏸");
+        _stopBtn  = MakeIconBtn("⏹");
 
-        playBtn.Click  += (_, _) => StartPlayback();
-        pauseBtn.Click += (_, _) => PausePlayback();
-        stopBtn2.Click += (_, _) => StopPlayback();
+        _playBtn.Click  += (_, _) => StartPlayback();
+        _pauseBtn.Click += (_, _) => PausePlayback();
+        _stopBtn.Click  += (_, _) => StopPlayback();
 
         var bar = new StackPanel
         {
@@ -290,10 +305,30 @@ public sealed class GifPreviewWindow
             Background  = new SolidColorBrush(Color.FromRgb(0x11, 0x15, 0x1F)),
             Height      = 28,
         };
-        bar.Children.Add(playBtn);
-        bar.Children.Add(pauseBtn);
-        bar.Children.Add(stopBtn2);
+        bar.Children.Add(_playBtn);
+        bar.Children.Add(_pauseBtn);
+        bar.Children.Add(_stopBtn);
         return bar;
+    }
+
+    private void SetEditingEnabled(bool enabled)
+    {
+        if (_delFrameBtn   != null) _delFrameBtn.IsEnabled   = enabled;
+        if (_dupFrameBtn   != null) _dupFrameBtn.IsEnabled   = enabled;
+        if (_dupRemBtn     != null) _dupRemBtn.IsEnabled     = enabled;
+        if (_fpsSlider     != null) _fpsSlider.IsEnabled     = enabled;
+        if (_qualityCombo  != null) _qualityCombo.IsEnabled  = enabled;
+        if (_quantizerCombo!= null) _quantizerCombo.IsEnabled= enabled;
+        if (_widthBox      != null) _widthBox.IsEnabled      = enabled;
+        if (_heightBox     != null) _heightBox.IsEnabled     = enabled;
+        if (_keepAspect    != null) _keepAspect.IsEnabled    = enabled;
+    }
+
+    private void SetPlaybackEnabled(bool enabled)
+    {
+        if (_playBtn  != null) _playBtn.IsEnabled  = enabled;
+        if (_pauseBtn != null) _pauseBtn.IsEnabled = enabled;
+        if (_stopBtn  != null) _stopBtn.IsEnabled  = enabled;
     }
 
     private void StartPlayback()
@@ -313,12 +348,16 @@ public sealed class GifPreviewWindow
         int fps = _fpsSlider != null ? Math.Max(1, (int)_fpsSlider.Value) : _recorder.Fps;
         _playTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / fps);
         _playTimer.Start();
+        SetEditingEnabled(false);
+        if (_saveBtn != null) _saveBtn.IsEnabled = false;
     }
 
     private void PausePlayback()
     {
         _playing = false;
         _playTimer?.Stop();
+        SetEditingEnabled(true);
+        if (_saveBtn != null) _saveBtn.IsEnabled = true;
     }
 
     private void StopPlayback()
@@ -326,6 +365,8 @@ public sealed class GifPreviewWindow
         _playing = false;
         _playTimer?.Stop();
         if (_frames.Count > 0) SelectFrame(0);
+        SetEditingEnabled(true);
+        if (_saveBtn != null) _saveBtn.IsEnabled = true;
     }
 
     private void TogglePlayback()
@@ -455,6 +496,12 @@ public sealed class GifPreviewWindow
         };
         advContent.Children.Add(MakeInlineRow("Örnekleme", _samplingLabel, _samplingSlider));
 
+        _ditheringCheck = MakeCheckRow("Dithering (Floyd-Steinberg)");
+        advContent.Children.Add(_ditheringCheck);
+
+        _globalPaletteCheck = MakeCheckRow("Global Palette  (dosya boyutu ↓)");
+        advContent.Children.Add(_globalPaletteCheck);
+
         var advSection = MakeCollapsible("▸ Gelişmiş", advContent);
         panel.Children.Add(advSection);
 
@@ -466,30 +513,30 @@ public sealed class GifPreviewWindow
         frameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
         frameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var delBtn = MakeBtn("🗑 Kare Sil", Color.FromRgb(0x5A, 0x20, 0x20));
-        delBtn.Click += (_, _) => DeleteCurrentFrame();
-        var dupBtn2 = MakeBtn("⧉ Çoğalt", Color.FromRgb(0x20, 0x2E, 0x45));
-        dupBtn2.Click += (_, _) => DuplicateCurrentFrame();
+        _delFrameBtn = MakeBtn("🗑 Kare Sil", Color.FromRgb(0x5A, 0x20, 0x20));
+        _delFrameBtn.Click += (_, _) => DeleteCurrentFrame();
+        _dupFrameBtn = MakeBtn("⧉ Çoğalt", Color.FromRgb(0x20, 0x2E, 0x45));
+        _dupFrameBtn.Click += (_, _) => DuplicateCurrentFrame();
 
-        Grid.SetColumn(delBtn,  0);
-        Grid.SetColumn(dupBtn2, 2);
-        frameRow.Children.Add(delBtn);
-        frameRow.Children.Add(dupBtn2);
+        Grid.SetColumn(_delFrameBtn, 0);
+        Grid.SetColumn(_dupFrameBtn, 2);
+        frameRow.Children.Add(_delFrameBtn);
+        frameRow.Children.Add(_dupFrameBtn);
         panel.Children.Add(frameRow);
 
-        var dupRemBtn = MakeBtn("Tekrarlananları Sil", Color.FromRgb(0x20, 0x2E, 0x45));
-        dupRemBtn.Click += (_, _) => RemoveDuplicates();
-        panel.Children.Add(dupRemBtn);
+        _dupRemBtn = MakeBtn("Tekrarlananları Sil", Color.FromRgb(0x20, 0x2E, 0x45));
+        _dupRemBtn.Click += (_, _) => RemoveDuplicates();
+        panel.Children.Add(_dupRemBtn);
 
         panel.Children.Add(MakeSep());
 
         // ── Kaydet ────────────────────────────────────────────────────────────
-        var saveBtn = MakeBtn("GIF Kaydet", Color.FromRgb(0xEA, 0x6F, 0x12));
-        saveBtn.FontWeight = FontWeights.SemiBold;
-        saveBtn.FontSize   = 13;
-        saveBtn.Height     = 34;
-        saveBtn.Click += async (_, _) => await SaveGifAsync();
-        panel.Children.Add(saveBtn);
+        _saveBtn = MakeBtn("GIF Kaydet", Color.FromRgb(0xEA, 0x6F, 0x12));
+        _saveBtn.FontWeight = FontWeights.SemiBold;
+        _saveBtn.FontSize   = 13;
+        _saveBtn.Height     = 34;
+        _saveBtn.Click += async (_, _) => await SaveGifAsync();
+        panel.Children.Add(_saveBtn);
 
         return panel;
     }
@@ -773,12 +820,16 @@ public sealed class GifPreviewWindow
         int outH   = ParseOrDefault(_heightBox?.Text, _recorder.Height);
         bool resize= outW != _recorder.Width || outH != _recorder.Height;
 
+        // Export sırasında tüm butonları pasifleştir
         PausePlayback();
+        SetEditingEnabled(false);
+        SetPlaybackEnabled(false);
+        if (_saveBtn != null) _saveBtn.IsEnabled = false;
+
         _statusLabel!.Text    = resize ? "Yeniden boyutlandırılıyor..." : "Kaydediliyor...";
         _progressBar!.Value   = 0;
         _progressBar.Visibility = Visibility.Visible;
 
-        // Resize CPU-yoğun — Task.Run içinde yap
         List<byte[]> toSave;
         if (resize)
         {
@@ -793,23 +844,40 @@ public sealed class GifPreviewWindow
             toSave = _frames;
         }
 
+        // FPS override varsa delay'leri yeniden hesapla, yoksa per-frame delays kullan
+        List<int>? delaysToUse = null;
+        if (_frameDelays.Count == toSave.Count)
+        {
+            int defaultMs = (int)Math.Round(1000.0 / fps);
+            // Eğer fps değişmediyse orijinal delays korunur, değişmişse uniform kullan
+            delaysToUse = _frameDelays.Select(_ => defaultMs).ToList();
+        }
+
         await _recorder.SaveAsync(
             dlg.FileName,
-            fpsOverride    : fps,
-            colorCount     : colors,
-            framesOverride : toSave,
-            widthOverride  : outW,
-            heightOverride : outH,
-            progress       : p => Application.Current?.Dispatcher.Invoke(() =>
+            fpsOverride          : fps,
+            colorCount           : colors,
+            framesOverride       : toSave,
+            widthOverride        : outW,
+            heightOverride       : outH,
+            progress             : p => Application.Current?.Dispatcher.Invoke(() =>
             {
                 _progressBar!.Value = p * 100;
                 _statusLabel!.Text  = $"Kaydediliyor... {(int)(p * 100)}%";
             }),
-            quantizerType  : GetQuantizerType(),
-            samplingFactor : GetSamplingFactor());
+            quantizerType        : GetQuantizerType(),
+            samplingFactor       : GetSamplingFactor(),
+            frameDelaysOverride  : delaysToUse,
+            useGlobalPalette     : _globalPaletteCheck?.IsChecked == true,
+            dithering            : _ditheringCheck?.IsChecked == true);
 
         _progressBar.Visibility = Visibility.Collapsed;
-        _statusLabel!.Text = $"Kaydedildi → {Path.GetFileName(dlg.FileName)}";
+        _statusLabel!.Text      = $"Kaydedildi → {Path.GetFileName(dlg.FileName)}";
+
+        // Butonları geri aç
+        SetEditingEnabled(true);
+        SetPlaybackEnabled(true);
+        if (_saveBtn != null) _saveBtn.IsEnabled = true;
     }
 
     private int GetColorCount()
@@ -902,6 +970,19 @@ public sealed class GifPreviewWindow
         Margin          = new Thickness(2, 2, 2, 2),
         VerticalContentAlignment   = VerticalAlignment.Center,
         HorizontalContentAlignment = HorizontalAlignment.Center,
+    };
+
+    private static CheckBox MakeCheckRow(string text) => new()
+    {
+        Content = new TextBlock
+        {
+            Text       = text,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0x84, 0xA4)),
+            FontSize   = 10,
+            FontFamily = new WpfFontFamily("Segoe UI"),
+        },
+        Margin    = new Thickness(0, 3, 0, 3),
+        IsChecked = false,
     };
 
     private static TextBox MakeNumBox(string val) => new()

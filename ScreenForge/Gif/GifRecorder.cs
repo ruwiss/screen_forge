@@ -38,8 +38,11 @@ public sealed class GifRecorder : IDisposable
     // ─── State ────────────────────────────────────────────────────────────────
     private readonly DrawingRect _pixelRegion;
     private readonly List<byte[]> _frames = new();
+    private readonly List<int>    _frameDelays = new(); // ms per frame (for skipped frames)
     private readonly DispatcherTimer _timer;
     private readonly System.Diagnostics.Stopwatch _stopwatch = new();
+    private byte[]? _lastFrame;
+    private int _pendingDelayMs;
 
     public int Fps { get; }
     public int FrameCount => _frames.Count;
@@ -47,6 +50,7 @@ public sealed class GifRecorder : IDisposable
     public int Width => _pixelRegion.Width;
     public int Height => _pixelRegion.Height;
     public List<byte[]> Frames => _frames;
+    public List<int> FrameDelays => _frameDelays;
     public List<(int frameIndex, string keys)> KeyEvents { get; } = new();
 
     // Overlay gizleme hook'ları — GifRecordingOverlayWindow tarafından set edilir
@@ -69,6 +73,8 @@ public sealed class GifRecorder : IDisposable
 
     public void Start()
     {
+        _lastFrame       = null;
+        _pendingDelayMs  = 0;
         _stopwatch.Restart();
         _timer.Start();
     }
@@ -77,6 +83,10 @@ public sealed class GifRecorder : IDisposable
     {
         _timer.Stop();
         _stopwatch.Stop();
+        // Son bekleyen delay varsa son frame'e yaz
+        if (_frameDelays.Count > 0 && _pendingDelayMs > 0)
+            _frameDelays[^1] += _pendingDelayMs;
+        _pendingDelayMs = 0;
     }
 
     public async Task SaveAsync(string path, Action<double>? progress = null)
@@ -84,13 +94,15 @@ public sealed class GifRecorder : IDisposable
 
     public async Task SaveAsync(string path, int? fpsOverride, int colorCount, IList<byte[]>? framesOverride,
         int? widthOverride = null, int? heightOverride = null, Action<double>? progress = null,
-        QType quantizerType = QType.Neural, int samplingFactor = 5)
+        QType quantizerType = QType.Neural, int samplingFactor = 5,
+        IList<int>? frameDelaysOverride = null, bool useGlobalPalette = false, bool dithering = false)
     {
-        var frames  = framesOverride != null ? framesOverride.ToList() : _frames.ToList();
+        var frames  = framesOverride   != null ? framesOverride.ToList()   : _frames.ToList();
+        var delays  = frameDelaysOverride != null ? frameDelaysOverride.ToList() : _frameDelays.ToList();
         int w       = widthOverride  ?? _pixelRegion.Width;
         int h       = heightOverride ?? _pixelRegion.Height;
         int fps     = fpsOverride ?? Fps;
-        int delayMs = (int)Math.Round(1000.0 / fps);
+        int defaultDelayMs = (int)Math.Round(1000.0 / fps);
 
         await Task.Run(() =>
         {
@@ -101,12 +113,15 @@ public sealed class GifRecorder : IDisposable
                 RepeatCount        = 0,
                 QuantizerType      = quantizerType,
                 SamplingFactor     = samplingFactor,
+                UseGlobalPalette   = useGlobalPalette,
+                UseDithering       = dithering,
             };
 
             for (int i = 0; i < frames.Count; i++)
             {
+                int delay = (delays.Count > i) ? delays[i] : defaultDelayMs;
                 gif.AddFrame(frames[i], new Int32Rect(0, 0, w, h),
-                    delayMs: delayMs, isLastFrame: i == frames.Count - 1);
+                    delayMs: delay, isLastFrame: i == frames.Count - 1);
                 progress?.Invoke((double)(i + 1) / frames.Count);
             }
         });
@@ -146,15 +161,39 @@ public sealed class GifRecorder : IDisposable
         // GDI returns alpha=0 for screen pixels; fix so quantizer doesn't treat all as transparent
         for (int i = 3; i < buf.Length; i += 4) buf[i] = 255;
 
-        _frames.Add(buf);
+        int frameDelayMs = (int)Math.Round(1000.0 / Fps);
+
+        // Frame skip: aynı kare gelirse kaydetme, öncekinin delay'ini artır
+        if (_lastFrame != null && AreIdentical(buf, _lastFrame))
+        {
+            _pendingDelayMs += frameDelayMs;
+        }
+        else
+        {
+            if (_frames.Count > 0 && _pendingDelayMs > 0)
+                _frameDelays[^1] += _pendingDelayMs;
+            _pendingDelayMs = 0;
+            _frames.Add(buf);
+            _frameDelays.Add(frameDelayMs);
+            _lastFrame = buf;
+        }
 
         // Overlay'i geri göster
         ShowAfterCapture?.Invoke();
+    }
+
+    private static bool AreIdentical(byte[] a, byte[] b)
+    {
+        if (a.Length != b.Length) return false;
+        var sa = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, long>(a.AsSpan());
+        var sb = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, long>(b.AsSpan());
+        return sa.SequenceEqual(sb);
     }
 
     public void Dispose()
     {
         _timer.Stop();
         _frames.Clear();
+        _frameDelays.Clear();
     }
 }

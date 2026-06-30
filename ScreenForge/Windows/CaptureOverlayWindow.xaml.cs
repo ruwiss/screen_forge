@@ -1166,13 +1166,17 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnGifRecord()
     {
-        var pixelRegion = ToPixelRegion(_selDip);
+        // ToPixelRegion screenshot oranı kullanır; GIF için DPI-aware piksel koordinatı lazım
+        double dpiScale = System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var gifPixelRegion = new System.Drawing.Rectangle(
+            (int)Math.Round(_selDip.X      * dpiScale) + _virtualBounds.X,
+            (int)Math.Round(_selDip.Y      * dpiScale) + _virtualBounds.Y,
+            (int)Math.Round(_selDip.Width  * dpiScale),
+            (int)Math.Round(_selDip.Height * dpiScale));
         var dipRegion = _selDip;
         Close();
 
-        var recorder = new Gif.GifRecorder(
-            new System.Drawing.Rectangle(pixelRegion.X, pixelRegion.Y, pixelRegion.Width, pixelRegion.Height),
-            fps: _gifFps);
+        var recorder = new Gif.GifRecorder(gifPixelRegion, fps: _gifFps);
         var overlay = new GifRecordingOverlayWindow(recorder, dipRegion);
         overlay.Stopped += OnGifStopped;
         overlay.Show();
