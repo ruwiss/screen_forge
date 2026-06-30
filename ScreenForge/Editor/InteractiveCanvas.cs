@@ -55,10 +55,19 @@ public sealed class InteractiveCanvas : SKElement
     public event Action<TextItem>? TextEditRequested;
     public event Action<ImageItem>? CropRequested;
 
-    // Crop modu
+    // Crop modu (tekil resim kırpma)
     private ImageItem? _cropTarget;
     private SKRect _cropRect; // tuval (içerik) uzayında geçici crop dikdörtgeni
     public bool IsCropping => _cropTarget != null;
+
+    // Sahne-düzeyi kırpma (serbest mod)
+    private bool _sceneCropping;
+    private SKRect _sceneCropRect;
+    private bool _sceneCropDragging;
+    private int _sceneCropHandle = -1;   // -1=yeni çiz, 0-7=handle resize, 8=içten taşı
+    private SKPoint _sceneCropMoveOrigin;
+    public bool IsSceneCropping => _sceneCropping;
+    public event Action? SceneCropCommitted;
 
     // Etkileşim durumu
     private bool _interacting;
@@ -228,6 +237,10 @@ public sealed class InteractiveCanvas : SKElement
         if (IsCropping)
         {
             DrawCropOverlay(canvas, scale);
+        }
+        else if (_sceneCropping)
+        {
+            DrawSceneCropOverlay(canvas, scale);
         }
         else if (_tool == EditorTool.Select)
         {
@@ -469,6 +482,41 @@ public sealed class InteractiveCanvas : SKElement
         _interacting = true;
         CaptureMouse();
 
+        // Sahne kırpma modu
+        if (_sceneCropping)
+        {
+            _sceneCropDragging = true;
+            bool hasRect = _sceneCropRect.Width >= 4 && _sceneCropRect.Height >= 4;
+            if (hasRect)
+            {
+                int h = HitSceneCropHandle(p);
+                if (h == 8)
+                {
+                    // İçten taşıma
+                    _sceneCropHandle = 8;
+                    _sceneCropMoveOrigin = p;
+                }
+                else if (h >= 0)
+                {
+                    // Handle resize
+                    _sceneCropHandle = h;
+                }
+                else
+                {
+                    // Dışına tıklama → yeni rect çiz
+                    _sceneCropHandle = -1;
+                    _sceneCropRect = new SKRect(p.X, p.Y, p.X, p.Y);
+                }
+            }
+            else
+            {
+                _sceneCropHandle = -1;
+                _sceneCropRect = new SKRect(p.X, p.Y, p.X, p.Y);
+            }
+            InvalidateVisual();
+            return;
+        }
+
         // Crop modu: tutamaç sürükleme veya commit
         if (IsCropping)
         {
@@ -585,6 +633,36 @@ public sealed class InteractiveCanvas : SKElement
         if (!_interacting) { UpdateCursor(ToScene(e.GetPosition(this))); return; }
         var p = ToScene(e.GetPosition(this));
 
+        if (_sceneCropping && _sceneCropDragging)
+        {
+            if (_sceneCropHandle == 8)
+            {
+                // Taşıma
+                float dx = p.X - _sceneCropMoveOrigin.X, dy = p.Y - _sceneCropMoveOrigin.Y;
+                _sceneCropMoveOrigin = p;
+                var sw = Scene.Width; var sh = Scene.Height;
+                float nl = Math.Clamp(_sceneCropRect.Left + dx, 0, sw - _sceneCropRect.Width);
+                float nt = Math.Clamp(_sceneCropRect.Top + dy, 0, sh - _sceneCropRect.Height);
+                _sceneCropRect = new SKRect(nl, nt, nl + _sceneCropRect.Width, nt + _sceneCropRect.Height);
+            }
+            else if (_sceneCropHandle >= 0)
+            {
+                // Handle resize
+                ResizeSceneCropRect(p);
+            }
+            else
+            {
+                // Yeni çizim
+                _sceneCropRect = new SKRect(
+                    Math.Clamp(Math.Min(_dragStart.X, p.X), 0, Scene.Width),
+                    Math.Clamp(Math.Min(_dragStart.Y, p.Y), 0, Scene.Height),
+                    Math.Clamp(Math.Max(_dragStart.X, p.X), 0, Scene.Width),
+                    Math.Clamp(Math.Max(_dragStart.Y, p.Y), 0, Scene.Height));
+            }
+            InvalidateVisual();
+            return;
+        }
+
         if (IsCropping)
         {
             if (_activeHandle >= 0) ResizeCropRect(p);
@@ -659,6 +737,14 @@ public sealed class InteractiveCanvas : SKElement
         _interacting = false;
         ReleaseMouseCapture();
         var p = ToScene(e.GetPosition(this));
+
+        if (_sceneCropping && _sceneCropDragging)
+        {
+            _sceneCropDragging = false;
+            _sceneCropHandle = -1;
+            InvalidateVisual();
+            return;
+        }
 
         if (IsCropping) { _activeHandle = -1; return; }
 
@@ -1166,6 +1252,123 @@ public sealed class InteractiveCanvas : SKElement
         return r;
     }
 
+    // ===================== Sahne kırpma (serbest mod) =====================
+    public void BeginSceneCrop()
+    {
+        _sceneCropping = true;
+        _sceneCropDragging = false;
+        _sceneCropHandle = -1;
+        _sceneCropRect = SKRect.Empty;   // kullanıcı sürükleyince oluşur
+        ClearSelection();
+        InvalidateVisual();
+    }
+
+    public void CommitSceneCrop()
+    {
+        if (!_sceneCropping) return;
+        var cr = _sceneCropRect;
+        if (cr.Width >= 4 && cr.Height >= 4)
+            Scene.Apply(new SceneCropAction(Scene, cr));
+        _sceneCropping = false;
+        _sceneCropDragging = false;
+        InvalidateVisual();
+        SceneCropCommitted?.Invoke();
+    }
+
+    public void CancelSceneCrop()
+    {
+        _sceneCropping = false;
+        _sceneCropDragging = false;
+        _sceneCropHandle = -1;
+        InvalidateVisual();
+    }
+
+    // h=0..7 handle index (HandlePoints sırasıyla), h=8 içten taşıma, -1 dışarı
+    private int HitSceneCropHandle(SKPoint p)
+    {
+        if (_sceneCropRect.Width < 4 || _sceneCropRect.Height < 4) return -1;
+        float tol = (HandleSize + 6f) / _scale;
+        var pts = HandlePoints(_sceneCropRect);
+        for (int i = 0; i < pts.Length; i++)
+            if (Math.Abs(p.X - pts[i].X) <= tol && Math.Abs(p.Y - pts[i].Y) <= tol) return i;
+        if (_sceneCropRect.Contains(p)) return 8;
+        return -1;
+    }
+
+    private void ResizeSceneCropRect(SKPoint p)
+    {
+        float sw = Scene.Width, sh = Scene.Height;
+        float l = _sceneCropRect.Left, t = _sceneCropRect.Top, r = _sceneCropRect.Right, b = _sceneCropRect.Bottom;
+        float minSize = 8f;
+        // HandlePoints: 0=TL,1=TC,2=TR,3=CR,4=BR,5=BC,6=BL,7=CL
+        switch (_sceneCropHandle)
+        {
+            case 0: l = Math.Clamp(p.X, 0, r - minSize); t = Math.Clamp(p.Y, 0, b - minSize); break;
+            case 1: t = Math.Clamp(p.Y, 0, b - minSize); break;
+            case 2: r = Math.Clamp(p.X, l + minSize, sw); t = Math.Clamp(p.Y, 0, b - minSize); break;
+            case 3: r = Math.Clamp(p.X, l + minSize, sw); break;
+            case 4: r = Math.Clamp(p.X, l + minSize, sw); b = Math.Clamp(p.Y, t + minSize, sh); break;
+            case 5: b = Math.Clamp(p.Y, t + minSize, sh); break;
+            case 6: l = Math.Clamp(p.X, 0, r - minSize); b = Math.Clamp(p.Y, t + minSize, sh); break;
+            case 7: l = Math.Clamp(p.X, 0, r - minSize); break;
+        }
+        _sceneCropRect = new SKRect(l, t, r, b);
+    }
+
+    private void DrawSceneCropOverlay(SKCanvas canvas, float scale)
+    {
+        bool hasRect = _sceneCropRect.Width >= 4 && _sceneCropRect.Height >= 4;
+        var sceneBounds = new SKRect(0, 0, Scene.Width, Scene.Height);
+        using var dim = new SKPaint { Color = new SKColor(0, 0, 0, 140), Style = SKPaintStyle.Fill };
+
+        if (hasRect)
+        {
+            canvas.Save();
+            canvas.ClipRect(_sceneCropRect, SKClipOperation.Difference);
+            canvas.DrawRect(sceneBounds, dim);
+            canvas.Restore();
+        }
+        else
+        {
+            canvas.DrawRect(sceneBounds, dim);
+        }
+
+        if (!hasRect) return;
+
+        using var border = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = new SKColor(0xFF, 0xD7, 0x00),
+            StrokeWidth = 1.5f / scale,
+            IsAntialias = true,
+        };
+        canvas.DrawRect(_sceneCropRect, border);
+
+        // Üçte-bir kılavuz çizgileri
+        float gx1 = _sceneCropRect.Left + _sceneCropRect.Width / 3f;
+        float gx2 = _sceneCropRect.Left + _sceneCropRect.Width * 2f / 3f;
+        float gy1 = _sceneCropRect.Top + _sceneCropRect.Height / 3f;
+        float gy2 = _sceneCropRect.Top + _sceneCropRect.Height * 2f / 3f;
+        using var guide = new SKPaint { Color = new SKColor(0xFF, 0xD7, 0x00, 60), StrokeWidth = 0.7f / scale, Style = SKPaintStyle.Stroke };
+        canvas.DrawLine(gx1, _sceneCropRect.Top, gx1, _sceneCropRect.Bottom, guide);
+        canvas.DrawLine(gx2, _sceneCropRect.Top, gx2, _sceneCropRect.Bottom, guide);
+        canvas.DrawLine(_sceneCropRect.Left, gy1, _sceneCropRect.Right, gy1, guide);
+        canvas.DrawLine(_sceneCropRect.Left, gy2, _sceneCropRect.Right, gy2, guide);
+
+        // 8 handle
+        float hs = HandleSize / scale;
+        using var hFill = new SKPaint { Style = SKPaintStyle.Fill, Color = SKColors.White, IsAntialias = true };
+        using var hBorder = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0xFF, 0xD7, 0x00), StrokeWidth = 1.5f / scale, IsAntialias = true };
+        var allPts = HandlePoints(_sceneCropRect);
+        for (int i = 0; i < allPts.Length; i++)
+        {
+            var h = allPts[i];
+            var hr = new SKRect(h.X - hs / 2, h.Y - hs / 2, h.X + hs / 2, h.Y + hs / 2);
+            canvas.DrawRect(hr, hFill);
+            canvas.DrawRect(hr, hBorder);
+        }
+    }
+
     // ===================== Crop modu =====================
     /// <summary>Bir resmi kırpma moduna alır (kenarlardan sürüklenebilir).</summary>
     public void BeginCrop(ImageItem img)
@@ -1254,6 +1457,28 @@ public sealed class InteractiveCanvas : SKElement
 
     private void UpdateCursor(SKPoint p)
     {
+        if (_sceneCropping)
+        {
+            if (_sceneCropRect.Width >= 4 && _sceneCropRect.Height >= 4)
+            {
+                int h = HitSceneCropHandle(p);
+                SetCursor(h switch
+                {
+                    0 or 4 => Cursors.SizeNWSE,
+                    2 or 6 => Cursors.SizeNESW,
+                    1 or 5 => Cursors.SizeNS,
+                    3 or 7 => Cursors.SizeWE,
+                    8 => Cursors.SizeAll,
+                    _ => Cursors.Cross,
+                });
+            }
+            else
+            {
+                SetCursor(Cursors.Cross);
+            }
+            return;
+        }
+
         if (_tool != EditorTool.Select) { SetCursor(Cursors.Cross); return; }
 
         if (SelectedItem != null)

@@ -172,6 +172,35 @@ public sealed class CompositeAction : IUndoableAction
     public IReadOnlyList<SceneItem> SelectAfterUndo(Scene s) => _actions.SelectMany(a => a.SelectAfterUndo(s)).Distinct().ToList();
 }
 
+/// <summary>Tüm sahneyi bir dikdörtgene kırpar: öğeleri ötelir, CanvasSize küçülür. Undo destekli.</summary>
+public sealed class SceneCropAction : IUndoableAction
+{
+    private readonly SKRect _cropRect;
+    private readonly SKSize _oldSize;
+    private readonly List<SceneItem> _clonesBefore;
+
+    public SceneCropAction(Scene scene, SKRect cropRect)
+    {
+        _cropRect = cropRect;
+        _oldSize = scene.CanvasSize;
+        _clonesBefore = scene.Items.Select(i => i.Clone()).ToList();
+    }
+
+    public void Do(Scene scene)
+    {
+        float dx = -_cropRect.Left, dy = -_cropRect.Top;
+        scene.CanvasSize = new SKSize(_cropRect.Width, _cropRect.Height);
+        foreach (var item in scene.Items) item.Move(dx, dy);
+    }
+
+    public void Undo(Scene scene)
+    {
+        scene.CanvasSize = _oldSize;
+        for (int i = 0; i < scene.Items.Count && i < _clonesBefore.Count; i++)
+            scene.Items[i].RestoreFrom(_clonesBefore[i]);
+    }
+}
+
 /// <summary>Z-sıra değişimi (snapshot tabanlı, basit ve güvenli).</summary>
 public sealed class ReorderAction : IUndoableAction
 {

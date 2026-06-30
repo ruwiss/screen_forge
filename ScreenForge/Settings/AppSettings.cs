@@ -46,8 +46,9 @@ public sealed class AppSettings
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
-    public static AppSettings Load()
+    public static AppSettings Load(out bool isFirstRun)
     {
+        isFirstRun = false;
         try
         {
             if (File.Exists(SettingsPath))
@@ -67,6 +68,7 @@ public sealed class AppSettings
         {
             // Bozuk dosya: varsayılanlara dön.
         }
+        isFirstRun = true;
         return new AppSettings();
     }
 

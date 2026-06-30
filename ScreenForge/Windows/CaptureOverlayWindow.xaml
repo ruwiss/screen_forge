@@ -25,6 +25,12 @@
                    StrokeDashArray="6 4" StrokeDashCap="Round"
                    Visibility="Collapsed" IsHitTestVisible="False" />
 
+        <!-- Pencere algılama çerçevesi — hover sırasında aktif pencereyi gösterir -->
+        <Rectangle x:Name="WinHoverBorder"
+                   Stroke="#FFAA33" StrokeThickness="2"
+                   StrokeDashArray="5 3" StrokeDashCap="Round"
+                   Visibility="Collapsed" IsHitTestVisible="False" />
+
         <!-- Boyut etiketi -->
         <Border x:Name="SizeBadge" Background="#CC1F2430" CornerRadius="4" Padding="8,3"
                 Visibility="Collapsed" IsHitTestVisible="False">

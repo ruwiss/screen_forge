@@ -19,6 +19,7 @@ public static class SceneRenderer
         var bmp = new SKBitmap(w, h, SKColorType.Bgra8888, SKAlphaType.Premul);
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.Transparent);
+        canvas.ClipRect(new SKRect(0, 0, w, h));
         RenderContent(canvas, scene, highQuality: true);
         return bmp;
     }

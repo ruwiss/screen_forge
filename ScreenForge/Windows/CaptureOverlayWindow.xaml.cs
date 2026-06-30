@@ -27,6 +27,20 @@ public partial class CaptureOverlayWindow : Window
 {
     [DllImport("user32.dll")] private static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
 
+    // Pencere algılama (bölge seçimi öncesi hover)
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out WinRect lpRect);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr hWnd);
+    // DWM extended frame bounds — gölge hariç görünür çerçeve (Windows 10+)
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out WinRect pvAttribute, int cbAttribute);
+    private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct WinRect { public int Left, Top, Right, Bottom; }
+
     private enum Phase { Select, Edit }
 
     private readonly Bitmap _screenshot;
@@ -45,6 +59,14 @@ public partial class CaptureOverlayWindow : Window
     private Scene? _scene;
     private InteractiveCanvas? _canvas;
     private bool _textEditing;   // inline metin düzenleme açıkken araç kısayollarını engelle
+
+    // Pencere algılama — sadece ilk Region+Select fazında aktif
+    private bool _windowHoverActive = true;
+    private List<(IntPtr hwnd, WpfRect dip)> _visibleWindows = new();
+    private WpfRect _hoveredWindowDip = WpfRect.Empty;
+    // Pencere tıklandı ama henüz commit edilmedi (sürüklemeye başlarsa iptal)
+    private bool _windowClickPending;
+    private WpfRect _windowClickBounds;
     private bool _selResizing;
     private int _selResizeEdge = -1; // 0=top,1=right,2=bottom,3=left,4=TL,5=TR,6=BR,7=BL
 
@@ -113,6 +135,23 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Sahne kırpma klavye işleme
+        if (_canvas != null && _canvas.IsSceneCropping)
+        {
+            if (e.Key == Key.Return || e.Key == Key.Enter)
+            {
+                _canvas.CommitSceneCrop();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Escape)
+            {
+                _canvas.CancelSceneCrop();
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key != Key.Escape) return;
         if (_canvas != null && _canvas.IsCropping)
         {
@@ -137,6 +176,81 @@ public partial class CaptureOverlayWindow : Window
         }
     }
 
+    // ===================== Pencere algılama =====================
+    private void BuildWindowList()
+    {
+        if (_mode != CaptureMode.Region) return;
+        var hwndSelf = new WindowInteropHelper(this).Handle;
+        var hwndShell = GetShellWindow();
+        double dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var list = new List<(IntPtr, WpfRect)>();
+
+        EnumWindows((hwnd, _) =>
+        {
+            if (!IsWindowVisible(hwnd)) return true;
+            if (hwnd == hwndSelf || hwnd == hwndShell) return true;
+            if (IsIconic(hwnd)) return true;
+            if (GetWindowTextLength(hwnd) == 0) return true;
+            // DWM extended frame = gölge hariç görünür kenar (DWMWA_EXTENDED_FRAME_BOUNDS)
+            // DWM başarısız olursa GetWindowRect ile fall-back
+            WinRect r;
+            if (DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf<WinRect>()) != 0)
+            {
+                if (!GetWindowRect(hwnd, out r)) return true;
+            }
+            int pw = r.Right - r.Left, ph = r.Bottom - r.Top;
+            if (pw <= 0 || ph <= 0) return true;
+            double dipX = (r.Left - _virtualBounds.X) / dpi;
+            double dipY = (r.Top - _virtualBounds.Y) / dpi;
+            double dipW = pw / dpi;
+            double dipH = ph / dpi;
+            list.Add((hwnd, new WpfRect(dipX, dipY, dipW, dipH)));
+            return true;
+        }, IntPtr.Zero);
+
+        // Küçük pencereler önce: üstte olan pencereler (daha küçük alan) önce bulunur
+        list.Sort((a, b) => (a.Item2.Width * a.Item2.Height).CompareTo(b.Item2.Width * b.Item2.Height));
+        _visibleWindows = list;
+    }
+
+    private void UpdateWindowHover(WpfPoint pos)
+    {
+        if (_visibleWindows.Count == 0) return;
+        WpfRect found = WpfRect.Empty;
+        var overlayBounds = new WpfRect(0, 0, ActualWidth, ActualHeight);
+        foreach (var (_, rect) in _visibleWindows)
+        {
+            if (rect.Contains(pos))
+            {
+                var clamped = WpfRect.Intersect(rect, overlayBounds);
+                if (!clamped.IsEmpty && clamped.Width > 0 && clamped.Height > 0)
+                { found = clamped; break; }
+            }
+        }
+
+        if (found == _hoveredWindowDip) return;
+        _hoveredWindowDip = found;
+
+        if (found.IsEmpty || found.Width < 1 || found.Height < 1)
+        {
+            WinHoverBorder.Visibility = Visibility.Collapsed;
+            return;
+        }
+        WinHoverBorder.Visibility = Visibility.Visible;
+        WinHoverBorder.Width = found.Width;
+        WinHoverBorder.Height = found.Height;
+        Canvas.SetLeft(WinHoverBorder, found.X);
+        Canvas.SetTop(WinHoverBorder, found.Y);
+    }
+
+    private void DisableWindowHover()
+    {
+        _windowHoverActive = false;
+        _visibleWindows = null!;
+        WinHoverBorder.Visibility = Visibility.Collapsed;
+        _hoveredWindowDip = WpfRect.Empty;
+    }
+
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
@@ -152,6 +266,7 @@ public partial class CaptureOverlayWindow : Window
         ApplyMode();
         Activate();
         Focus();
+        BuildWindowList();
     }
 
     // ===================== Mod çubuğu =====================
@@ -192,6 +307,10 @@ public partial class CaptureOverlayWindow : Window
         int i = 0;
         foreach (ToggleButton b in ModeStack.Children.OfType<ToggleButton>())
             b.IsChecked = (CaptureMode)i++ == _mode;
+
+        // Pencere algılama sadece Region modunda geçerli
+        if (_mode != CaptureMode.Region && _windowHoverActive)
+            DisableWindowHover();
 
         ResetSelection();
         // Sürükleme tutamağı sadece tam ekran/serbest modlarda.
@@ -242,6 +361,26 @@ public partial class CaptureOverlayWindow : Window
 
         var pos = e.GetPosition(Root);
 
+        // Pencere algılama: ilk tıklamada hover'ı kapat
+        // Hover'da pencere varsa önce onu seç; ama kullanıcı sürüklemeye başlarsa
+        // serbest seçime geç (OnMouseMove 4px eşiğinde _windowClickPending → false)
+        if (_windowHoverActive && _phase == Phase.Select)
+        {
+            var hovered = _hoveredWindowDip;
+            DisableWindowHover();
+            if (!hovered.IsEmpty && hovered.Width >= 50 && hovered.Height >= 50)
+            {
+                // Hemen commit etme — fare bırakıldığında commit olacak
+                _windowClickPending = true;
+                _windowClickBounds = hovered;
+                _dragging = true;
+                _start = pos;
+                CaptureMouse();
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Edit fazında: kenar resize veya yeni seçim
         if (_phase == Phase.Edit)
         {
@@ -286,6 +425,9 @@ public partial class CaptureOverlayWindow : Window
     {
         var pos = e.GetPosition(Root);
 
+        if (_windowHoverActive && _mode == CaptureMode.Region && _phase == Phase.Select && !_dragging)
+            UpdateWindowHover(pos);
+
         if (_selResizing)
         {
             ResizeSelection(pos);
@@ -307,6 +449,14 @@ public partial class CaptureOverlayWindow : Window
 
         if (!_dragging) return;
 
+        // Pencere click pending: sürükleme başladıysa serbest seçime geç
+        if (_windowClickPending)
+        {
+            if (Math.Abs(pos.X - _start.X) < 4 && Math.Abs(pos.Y - _start.Y) < 4) return;
+            _windowClickPending = false;
+            _windowClickBounds = WpfRect.Empty;
+        }
+
         // Yeni seçim hazırlığı: ancak gerçek bir sürükleme başlayınca mevcut bölgeyi bırak.
         if (_pendingNewSelection && !_newSelectionArmed)
         {
@@ -326,6 +476,23 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        // Pencere tıklama — sürükleme olmadıysa window bounds'u seç
+        if (_windowClickPending)
+        {
+            _windowClickPending = false;
+            _dragging = false;
+            ReleaseMouseCapture();
+            var bounds = _windowClickBounds;
+            _windowClickBounds = WpfRect.Empty;
+            if (!bounds.IsEmpty)
+            {
+                _selDip = bounds;
+                _pixelRegion = ToPixelRegion(bounds);
+                EnterEditPhase(useScreenshotBackground: true);
+            }
+            return;
+        }
+
         if (_pendingNewSelection)
         {
             _pendingNewSelection = false;
@@ -666,6 +833,28 @@ public partial class CaptureOverlayWindow : Window
             _toolButtons[tool] = btn;
             ToolStack.Children.Add(btn);
         }
+        // Serbest modda sahne kırpma butonu
+        if (_mode == CaptureMode.Free)
+        {
+            // Horizontal toolbar → dikey çizgi; Vertical → yatay çizgi
+            bool horiz = ToolStack.Orientation == Orientation.Horizontal;
+            var sep = new Border
+            {
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x4A, 0x52, 0x66)),
+            };
+            if (horiz) { sep.Width = 1; sep.Height = 22; sep.Margin = new Thickness(4, 0, 4, 0); }
+            else        { sep.Height = 1; sep.Margin = new Thickness(4, 4, 4, 4); }
+            ToolStack.Children.Add(sep);
+
+            var cropBtn = new Button { Style = TryFindResource("IconCmdButton") as Style };
+            cropBtn.Tag = TryFindResource("IconCrop");
+            // IconToolButton ile aynı 32×32
+            cropBtn.Width = 32; cropBtn.Height = 32; cropBtn.Margin = new Thickness(2);
+            AttachHint(cropBtn, "Sahneyi Kırp  [C]");
+            cropBtn.Click += (_, _) => _canvas?.BeginSceneCrop();
+            ToolStack.Children.Add(cropBtn);
+        }
+
         Toolbar.Visibility = Visibility.Visible;
     }
 
@@ -1646,6 +1835,10 @@ public partial class CaptureOverlayWindow : Window
 
     private SKBitmap RenderWithBackground(bool transparent)
     {
+        // Crop seçimi devam ediyorsa export öncesi otomatik commit et
+        if (_canvas != null && _canvas.IsSceneCropping)
+            _canvas.CommitSceneCrop();
+
         var savedBg = _scene!.BackgroundColor;
         if (transparent)
             _scene.BackgroundColor = SkiaSharp.SKColors.Transparent;
@@ -1763,6 +1956,14 @@ public partial class CaptureOverlayWindow : Window
             float dx = e.Key == Key.Left ? -step : e.Key == Key.Right ? step : 0f;
             float dy = e.Key == Key.Up ? -step : e.Key == Key.Down ? step : 0f;
             _canvas.NudgeSelection(dx, dy);
+            e.Handled = true;
+            return;
+        }
+
+        // Serbest modda C tuşu: sahne kırpma
+        if (_mode == CaptureMode.Free && e.Key == Key.C && !ctrl)
+        {
+            _canvas?.BeginSceneCrop();
             e.Handled = true;
             return;
         }

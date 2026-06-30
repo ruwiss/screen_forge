@@ -31,7 +31,7 @@ public partial class App : Application
         base.OnStartup(e);
         LoadEnvFile();
 
-        Settings = AppSettings.Load();
+        Settings = AppSettings.Load(out bool isFirstRun);
         ScreenForge.Settings.StartupManager.SetEnabled(Settings.LaunchAtStartup);
 
         // ---- Tepsi ikonu ----
@@ -39,6 +39,7 @@ public partial class App : Application
         _tray.CaptureRegionRequested += OnCaptureRegion;
         _tray.CaptureFullScreenRequested += OnCaptureFullScreen;
         _tray.CollageRequested += OnCollage;
+        _tray.ColorPickerRequested += OnColorPicker;
         _tray.SettingsRequested += OnSettings;
         _tray.AboutRequested += OnAbout;
         _tray.ExitRequested += OnExit;
@@ -46,6 +47,14 @@ public partial class App : Application
         // ---- Global kısayollar ----
         _hotkeys = new HotkeyService();
         RegisterHotkeys();
+
+        // İlk açılışta bölge yakalama kısayolunu bildir
+        if (isFirstRun)
+        {
+            var regionKey = Settings.RegionHotkey.ToString();
+            _tray.ShowMessage("ScreenForge'a Hoş Geldiniz",
+                $"Bölge yakalamak için {regionKey} kısayolunu kullanabilirsiniz.");
+        }
     }
 
     /// <summary>Ayarlardaki tüm kısayolları (yeniden) kaydeder.</summary>
@@ -94,6 +103,12 @@ public partial class App : Application
     private void OnCaptureFullScreen() => OpenCaptureOverlay(ScreenForge.Windows.CaptureMode.FullScreen);
 
     private void OnCollage() => OpenCaptureOverlay(ScreenForge.Windows.CaptureMode.Free);
+
+    private void OnColorPicker()
+    {
+        var picker = new Windows.ColorPickerOverlayWindow();
+        picker.Show();
+    }
 
     /// <summary>
     /// Lightshot tarzı birleşik ekran-üstü yakalama katmanını açar. Mod seçim çubuğundan da
