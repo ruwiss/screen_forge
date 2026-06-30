@@ -18,6 +18,7 @@
     <Geometry x:Key="IconBlur">M12 3 C12 3 5 11 5 15 A7 7 0 0 0 19 15 C19 11 12 3 12 3 Z</Geometry>
 
     <!-- Aksiyonlar -->
+    <Geometry x:Key="IconRecord">M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z</Geometry>
     <Geometry x:Key="IconCopy">M9 9 H20 V20 H9 Z M5 15 H4 V4 H15 V5</Geometry>
     <!-- Kopyala ikonu (renk seçici paneli için, iki katmanlı) -->
     <Geometry x:Key="IconCopyFront">M6 11C6 8.17 6 6.76 6.88 5.88C7.76 5 9.17 5 12 5H15C17.83 5 19.24 5 20.12 5.88C21 6.76 21 8.17 21 11V16C21 18.83 21 20.24 20.12 21.12C19.24 22 17.83 22 15 22H12C9.17 22 7.76 22 6.88 21.12C6 20.24 6 18.83 6 16Z</Geometry>

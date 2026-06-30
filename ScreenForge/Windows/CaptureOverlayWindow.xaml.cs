@@ -1070,6 +1070,8 @@ public partial class CaptureOverlayWindow : Window
     private void BuildActionBar()
     {
         ActionStack.Children.Clear();
+        if (_mode == CaptureMode.Region)
+            ActionStack.Children.Add(MakeCmd("IconRecord", "GIF Kaydet", "Ekranı GIF olarak kaydet", OnGifRecord));
         ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala", "Kopyala (Ctrl+C)", DoCopy));
         ActionStack.Children.Add(MakeCmd("IconSave", "Kaydet", "Kaydet (Ctrl+S)", DoSave));
         ActionStack.Children.Add(MakeCmd("IconCloud", "Yükle", "Buluta Yükle", DoUpload, accent: true));
@@ -1077,6 +1079,34 @@ public partial class CaptureOverlayWindow : Window
             ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle", DoClearScene));
         ActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
         ActionBar.Visibility = Visibility.Visible;
+    }
+
+    private void OnGifRecord()
+    {
+        var pixelRegion = ToPixelRegion(_selDip);
+        var dipRegion = _selDip;
+        Close();
+
+        var recorder = new Gif.GifRecorder(
+            new System.Drawing.Rectangle(pixelRegion.X, pixelRegion.Y, pixelRegion.Width, pixelRegion.Height),
+            fps: 10);
+        var overlay = new GifRecordingOverlayWindow(recorder, dipRegion);
+        overlay.Stopped += OnGifStopped;
+        overlay.Show();
+        recorder.Start();
+    }
+
+    private static async void OnGifStopped(Gif.GifRecorder recorder)
+    {
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "Animasyonlu GIF|*.gif",
+            DefaultExt = ".gif",
+            FileName = "kayit",
+        };
+        if (dlg.ShowDialog() != true) { recorder.Dispose(); return; }
+        await recorder.SaveAsync(dlg.FileName);
+        recorder.Dispose();
     }
 
     // Temel 6 renk
