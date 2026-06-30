@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shell;
 using System.Windows.Threading;
 using ScreenForge.Gif;
 using WpfFontFamily = System.Windows.Media.FontFamily;
@@ -173,6 +174,14 @@ public sealed class GifRecordingOverlayWindow
         {
             var hwnd = new WindowInteropHelper(barWin).Handle;
             SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+            // Non-client frame sıfırla (beyaz şerit gider)
+            WindowChrome.SetWindowChrome(barWin, new WindowChrome
+            {
+                GlassFrameThickness   = new Thickness(0),
+                CaptionHeight         = 0,
+                ResizeBorderThickness = new Thickness(0),
+                UseAeroCaptionButtons = false,
+            });
         };
 
         // ─── HideForCapture artık gerekmiyor — WDA_EXCLUDEFROMCAPTURE halleder

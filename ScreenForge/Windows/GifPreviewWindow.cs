@@ -242,6 +242,16 @@ public sealed class GifPreviewWindow
             Content        = root,
         };
 
+        // WindowChrome: non-client frame'i sıfırla (beyaz şerit gider)
+        win.SourceInitialized += (_, _) =>
+            System.Windows.Shell.WindowChrome.SetWindowChrome(win, new System.Windows.Shell.WindowChrome
+            {
+                GlassFrameThickness   = new Thickness(0),
+                CaptionHeight         = 0,
+                ResizeBorderThickness = new Thickness(4),
+                UseAeroCaptionButtons = false,
+            });
+
         titleBar.MouseLeftButtonDown += (_, _) => win.DragMove();
         closeBtn.Click += (_, _) => { StopPlayback(); win.Close(); };
         win.Closed     += (_, _) => StopPlayback();
