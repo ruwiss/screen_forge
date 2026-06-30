@@ -313,22 +313,31 @@ public sealed class GifPreviewWindow
 
     private void SetEditingEnabled(bool enabled)
     {
-        if (_delFrameBtn   != null) _delFrameBtn.IsEnabled   = enabled;
-        if (_dupFrameBtn   != null) _dupFrameBtn.IsEnabled   = enabled;
-        if (_dupRemBtn     != null) _dupRemBtn.IsEnabled     = enabled;
-        if (_fpsSlider     != null) _fpsSlider.IsEnabled     = enabled;
-        if (_qualityCombo  != null) _qualityCombo.IsEnabled  = enabled;
-        if (_quantizerCombo!= null) _quantizerCombo.IsEnabled= enabled;
-        if (_widthBox      != null) _widthBox.IsEnabled      = enabled;
-        if (_heightBox     != null) _heightBox.IsEnabled     = enabled;
-        if (_keepAspect    != null) _keepAspect.IsEnabled    = enabled;
+        SetFaded(_delFrameBtn,    enabled);
+        SetFaded(_dupFrameBtn,    enabled);
+        SetFaded(_dupRemBtn,      enabled);
+        SetFaded(_fpsSlider,      enabled);
+        SetFaded(_qualityCombo,   enabled);
+        SetFaded(_quantizerCombo, enabled);
+        SetFaded(_widthBox,       enabled);
+        SetFaded(_heightBox,      enabled);
+        SetFaded(_keepAspect,     enabled);
     }
 
     private void SetPlaybackEnabled(bool enabled)
     {
-        if (_playBtn  != null) _playBtn.IsEnabled  = enabled;
-        if (_pauseBtn != null) _pauseBtn.IsEnabled = enabled;
-        if (_stopBtn  != null) _stopBtn.IsEnabled  = enabled;
+        SetFaded(_playBtn,  enabled);
+        SetFaded(_pauseBtn, enabled);
+        SetFaded(_stopBtn,  enabled);
+    }
+
+    // IsEnabled=false WPF'in beyaz disabled style'ını tetikler.
+    // Bunun yerine IsHitTestVisible + Opacity ile görsel pasifleştirme.
+    private static void SetFaded(UIElement? el, bool enabled)
+    {
+        if (el == null) return;
+        el.IsHitTestVisible = enabled;
+        el.Opacity          = enabled ? 1.0 : 0.3;
     }
 
     private void StartPlayback()
@@ -349,7 +358,7 @@ public sealed class GifPreviewWindow
         _playTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / fps);
         _playTimer.Start();
         SetEditingEnabled(false);
-        if (_saveBtn != null) _saveBtn.IsEnabled = false;
+        SetFaded(_saveBtn, false);
     }
 
     private void PausePlayback()
@@ -357,7 +366,7 @@ public sealed class GifPreviewWindow
         _playing = false;
         _playTimer?.Stop();
         SetEditingEnabled(true);
-        if (_saveBtn != null) _saveBtn.IsEnabled = true;
+        SetFaded(_saveBtn, true);
     }
 
     private void StopPlayback()
@@ -366,7 +375,7 @@ public sealed class GifPreviewWindow
         _playTimer?.Stop();
         if (_frames.Count > 0) SelectFrame(0);
         SetEditingEnabled(true);
-        if (_saveBtn != null) _saveBtn.IsEnabled = true;
+        SetFaded(_saveBtn, true);
     }
 
     private void TogglePlayback()
@@ -824,7 +833,7 @@ public sealed class GifPreviewWindow
         PausePlayback();
         SetEditingEnabled(false);
         SetPlaybackEnabled(false);
-        if (_saveBtn != null) _saveBtn.IsEnabled = false;
+        SetFaded(_saveBtn, false);
 
         _statusLabel!.Text    = resize ? "Yeniden boyutlandırılıyor..." : "Kaydediliyor...";
         _progressBar!.Value   = 0;
@@ -877,7 +886,7 @@ public sealed class GifPreviewWindow
         // Butonları geri aç
         SetEditingEnabled(true);
         SetPlaybackEnabled(true);
-        if (_saveBtn != null) _saveBtn.IsEnabled = true;
+        SetFaded(_saveBtn, true);
     }
 
     private int GetColorCount()
