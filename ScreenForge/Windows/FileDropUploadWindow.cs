@@ -19,8 +19,6 @@ public sealed class FileDropUploadWindow
     public void Show()
     {
         Window? win = null;
-        bool dragging = false;
-        Point dragOffset = default;
 
         var dropIcon = new TextBlock
         {
@@ -186,43 +184,44 @@ public sealed class FileDropUploadWindow
         win.Drop += (_, e) =>
         {
             SetDropHighlight(false);
-            if (!IsValidDrop(e)) { e.Handled = true; return; }
+            e.Handled = true;
 
-            var files = (string[])e.Data.GetData(WpfDataFormats.FileDrop);
-            if (files == null || files.Length == 0) { e.Handled = true; return; }
+            var files = e.Data.GetData(WpfDataFormats.FileDrop) as string[];
+            if (files == null || files.Length != 1) return;
 
             var path = files[0];
+            if (!AllowedExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant())) return;
+
+            try
+            {
+                if (new FileInfo(path).Length > MaxFileSizeBytes)
+                {
+                    MessageBox.Show("Dosya boyutu 4 MB sınırını aşıyor.", "ScreenForge",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+            }
+            catch { return; }
+
             win!.Close();
             StartUpload(path);
-            e.Handled = true;
         };
 
-        panelBorder.MouseLeftButtonDown += (_, e) =>
-        {
-            if (e.OriginalSource is Button) return;
-            dragging = true;
-            dragOffset = e.GetPosition(win);
-            panelBorder.CaptureMouse();
-        };
-        panelBorder.MouseMove += (_, e) =>
-        {
-            if (!dragging) return;
-            var sp = win!.PointToScreen(e.GetPosition(win));
-            win.Left = sp.X - dragOffset.X;
-            win.Top = sp.Y - dragOffset.Y;
-        };
-        panelBorder.MouseLeftButtonUp += (_, _) => { dragging = false; panelBorder.ReleaseMouseCapture(); };
 
         win.KeyDown += (_, e) => { if (e.Key == Key.Escape) win.Close(); };
         win.Show();
     }
+
+    private const long MaxFileSizeBytes = 4 * 1024 * 1024; // 4 MB
 
     private static bool IsValidDrop(DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(WpfDataFormats.FileDrop)) return false;
         var files = e.Data.GetData(WpfDataFormats.FileDrop) as string[];
         if (files == null || files.Length != 1) return false;
-        return AllowedExtensions.Contains(System.IO.Path.GetExtension(files[0]).ToLowerInvariant());
+        var path = files[0];
+        if (!AllowedExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant())) return false;
+        try { return new FileInfo(path).Length <= MaxFileSizeBytes; } catch { return false; }
     }
 
     private static async void StartUpload(string path)

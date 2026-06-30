@@ -193,8 +193,6 @@ public sealed class ColorPickerOverlayWindow
         string hsl = $"hsl({hDeg}, {sPct}%, {lPct}%)";
 
         Window? panel = null;
-        bool dragging = false;
-        Point dragOffset = default;
 
         // Başlık satırı: küçük swatch + HEX büyük + sağda X
         var swatch = new Border
@@ -310,21 +308,6 @@ public sealed class ColorPickerOverlayWindow
             panel.Top = w.Bottom - panel.ActualHeight;
         };
 
-        panelBorder.MouseLeftButtonDown += (_, e) =>
-        {
-            if (e.OriginalSource is Button) return;
-            dragging = true;
-            dragOffset = e.GetPosition(panel);
-            panelBorder.CaptureMouse();
-        };
-        panelBorder.MouseMove += (_, e) =>
-        {
-            if (!dragging) return;
-            var sp = panel!.PointToScreen(e.GetPosition(panel));
-            panel.Left = sp.X - dragOffset.X;
-            panel.Top = sp.Y - dragOffset.Y;
-        };
-        panelBorder.MouseLeftButtonUp += (_, _) => { dragging = false; panelBorder.ReleaseMouseCapture(); };
         panel.KeyDown += (_, e) => { if (e.Key == Key.Escape) panel.Close(); };
         panel.Show();
     }
