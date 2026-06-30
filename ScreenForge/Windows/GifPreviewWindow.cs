@@ -169,7 +169,7 @@ public sealed class GifPreviewWindow
         var contentGrid = new Grid();
         contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Pixel) }); // ayırıcı
-        contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
+        contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(205) });
         var divider = new Border { Background = new SolidColorBrush(Color.FromRgb(0x22, 0x2A, 0x3A)) };
         Grid.SetColumn(previewContainer, 0);
         Grid.SetColumn(divider, 1);
@@ -328,160 +328,246 @@ public sealed class GifPreviewWindow
 
     private StackPanel BuildSettingsPanel()
     {
-        var panel = new StackPanel { Margin = new Thickness(12, 10, 12, 10) };
+        var panel = new StackPanel { Margin = new Thickness(10, 8, 10, 8) };
 
-        // FPS
-        panel.Children.Add(MakeLabel("FPS"));
-        _fpsSlider = new Slider
-        {
-            Minimum          = 1,
-            Maximum          = 30,
-            Value            = _recorder.Fps,
-            TickFrequency    = 1,
-            IsSnapToTickEnabled = true,
-            Margin           = new Thickness(0, 4, 0, 0),
-        };
+        // ── FPS satırı: label + değer + slider tek satır ──────────────────────
         _fpsLabel = new TextBlock
         {
             Text       = $"{_recorder.Fps} fps",
             Foreground = new SolidColorBrush(Color.FromRgb(0xEA, 0x6F, 0x12)),
-            FontSize   = 12,
+            FontSize   = 11,
             FontWeight = FontWeights.SemiBold,
             FontFamily = new WpfFontFamily("Segoe UI"),
-            Margin     = new Thickness(0, 2, 0, 10),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth   = 40,
+        };
+        _fpsSlider = new Slider
+        {
+            Minimum             = 1,
+            Maximum             = 30,
+            Value               = _recorder.Fps,
+            TickFrequency       = 1,
+            IsSnapToTickEnabled = true,
+            VerticalAlignment   = VerticalAlignment.Center,
         };
         _fpsSlider.ValueChanged += (_, e) =>
         {
             int v = (int)e.NewValue;
             _fpsLabel!.Text = $"{v} fps";
-            if (_playing)
-            {
-                _playTimer!.Interval = TimeSpan.FromMilliseconds(1000.0 / v);
-            }
+            if (_playing) _playTimer!.Interval = TimeSpan.FromMilliseconds(1000.0 / v);
         };
-        panel.Children.Add(_fpsSlider);
-        panel.Children.Add(_fpsLabel);
+        panel.Children.Add(MakeInlineRow("FPS", _fpsLabel, _fpsSlider));
 
-        // Renk kalitesi
-        panel.Children.Add(MakeLabel("Renk Sayısı"));
-        _qualityCombo = new ComboBox { Margin = new Thickness(0, 4, 0, 6) };
-        _qualityCombo.Items.Add(new ComboBoxItem { Content = "256 Renk (Yüksek)", Tag = 256 });
-        _qualityCombo.Items.Add(new ComboBoxItem { Content = "128 Renk (Orta)",   Tag = 128 });
-        _qualityCombo.Items.Add(new ComboBoxItem { Content = "64 Renk (Düşük)",   Tag = 64  });
+        panel.Children.Add(MakeSep());
+
+        // ── Renk Sayısı satırı ────────────────────────────────────────────────
+        _qualityCombo = new ComboBox { Height = 24, FontSize = 11 };
+        _qualityCombo.Items.Add(new ComboBoxItem { Content = "256  (Yüksek)", Tag = 256 });
+        _qualityCombo.Items.Add(new ComboBoxItem { Content = "128  (Orta)",   Tag = 128 });
+        _qualityCombo.Items.Add(new ComboBoxItem { Content = "64   (Düşük)",  Tag = 64  });
         _qualityCombo.SelectedIndex = 0;
-        panel.Children.Add(_qualityCombo);
+        panel.Children.Add(MakeInlineComboRow("Renk", _qualityCombo));
 
-        // Quantizer seçimi
-        panel.Children.Add(MakeLabel("Quantizer"));
-        _quantizerCombo = new ComboBox { Margin = new Thickness(0, 4, 0, 6) };
-        _quantizerCombo.Items.Add(new ComboBoxItem { Content = "Neural (Yüksek Kalite)", Tag = QuantizerType.Neural });
-        _quantizerCombo.Items.Add(new ComboBoxItem { Content = "Octree (Hızlı)",         Tag = QuantizerType.Octree });
-        _quantizerCombo.SelectedIndex = 0;
-        panel.Children.Add(_quantizerCombo);
-
-        // Örnekleme faktörü (sadece Neural için anlamlı)
-        _samplingLabel = MakeLabel("Örnekleme: 5 (Dengeli)");
-        panel.Children.Add(_samplingLabel);
-        _samplingSlider = new Slider
-        {
-            Minimum             = 1,
-            Maximum             = 20,
-            Value               = 5,
-            TickFrequency       = 1,
-            IsSnapToTickEnabled = true,
-            Margin              = new Thickness(0, 4, 0, 10),
-        };
-        _samplingSlider.ValueChanged += (_, e) =>
-        {
-            int v = (int)e.NewValue;
-            _samplingLabel!.Text = v switch
-            {
-                1       => "Örnekleme: 1 (En Yüksek Kalite)",
-                <= 5    => $"Örnekleme: {v} (Yüksek Kalite)",
-                <= 10   => $"Örnekleme: {v} (Dengeli)",
-                <= 15   => $"Örnekleme: {v} (Hızlı)",
-                _       => $"Örnekleme: {v} (En Hızlı)",
-            };
-        };
-        _quantizerCombo.SelectionChanged += (_, _) =>
-        {
-            bool isNeural = GetQuantizerType() == QuantizerType.Neural;
-            _samplingSlider.IsEnabled = isNeural;
-            _samplingLabel!.Opacity   = isNeural ? 1.0 : 0.4;
-        };
-        panel.Children.Add(_samplingSlider);
-
-        // Çıktı boyutu
-        panel.Children.Add(MakeLabel("Çıktı Boyutu"));
-        var sizeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+        // ── Boyut satırı: W × H + oranı koru ─────────────────────────────────
         _widthBox  = MakeNumBox(_recorder.Width.ToString());
         _heightBox = MakeNumBox(_recorder.Height.ToString());
-        sizeRow.Children.Add(_widthBox);
-        sizeRow.Children.Add(new TextBlock { Text = " × ", Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x68, 0x88)), VerticalAlignment = VerticalAlignment.Center });
-        sizeRow.Children.Add(_heightBox);
-        panel.Children.Add(sizeRow);
-
         _keepAspect = new CheckBox
         {
-            IsChecked = true,
-            Margin    = new Thickness(0, 0, 0, 12),
-            Content   = new TextBlock { Text = "Oranı koru", Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0x84, 0xA4)), FontSize = 11 },
+            IsChecked         = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin            = new Thickness(4, 0, 0, 0),
+            ToolTip           = "Oranı koru",
         };
-        panel.Children.Add(_keepAspect);
+        var sizeInner = new StackPanel { Orientation = Orientation.Horizontal };
+        sizeInner.Children.Add(_widthBox);
+        sizeInner.Children.Add(new TextBlock
+        {
+            Text = "×", Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x68, 0x88)),
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0), FontSize = 11,
+        });
+        sizeInner.Children.Add(_heightBox);
+        sizeInner.Children.Add(_keepAspect);
+        panel.Children.Add(MakeInlineRow("Boyut", sizeInner));
 
         double ar = _recorder.Height > 0 ? (double)_recorder.Width / _recorder.Height : 1.0;
-        bool _updatingSize = false;
+        bool updatingSize = false;
         _widthBox.TextChanged += (_, _) =>
         {
-            if (_updatingSize) return;
+            if (updatingSize) return;
             if (_keepAspect.IsChecked == true && int.TryParse(_widthBox.Text, out int w) && w > 0)
             {
                 int h = (int)Math.Round(w / ar);
-                if (_heightBox!.Text != h.ToString()) { _updatingSize = true; _heightBox.Text = h.ToString(); _updatingSize = false; }
+                if (_heightBox!.Text != h.ToString()) { updatingSize = true; _heightBox.Text = h.ToString(); updatingSize = false; }
             }
         };
         _heightBox.TextChanged += (_, _) =>
         {
-            if (_updatingSize) return;
+            if (updatingSize) return;
             if (_keepAspect.IsChecked == true && int.TryParse(_heightBox.Text, out int h) && h > 0)
             {
                 int w = (int)Math.Round(h * ar);
-                if (_widthBox!.Text != w.ToString()) { _updatingSize = true; _widthBox.Text = w.ToString(); _updatingSize = false; }
+                if (_widthBox!.Text != w.ToString()) { updatingSize = true; _widthBox.Text = w.ToString(); updatingSize = false; }
             }
         };
 
         panel.Children.Add(MakeSep());
 
-        // Tekrarlananları sil
-        var dupBtn = MakeBtn("Tekrarlananları Sil", Color.FromRgb(0x2A, 0x35, 0x4D));
-        dupBtn.Click += (_, _) => RemoveDuplicates();
-        panel.Children.Add(dupBtn);
+        // ── Gelişmiş (collapsible) ────────────────────────────────────────────
+        var advContent = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+
+        _quantizerCombo = new ComboBox { Height = 24, FontSize = 11 };
+        _quantizerCombo.Items.Add(new ComboBoxItem { Content = "Neural (Kaliteli)", Tag = QuantizerType.Neural });
+        _quantizerCombo.Items.Add(new ComboBoxItem { Content = "Octree (Hızlı)",    Tag = QuantizerType.Octree });
+        _quantizerCombo.SelectedIndex = 0;
+        advContent.Children.Add(MakeInlineComboRow("Quantizer", _quantizerCombo));
+
+        _samplingLabel = new TextBlock
+        {
+            Text       = "5",
+            Foreground = new SolidColorBrush(Color.FromRgb(0xEA, 0x6F, 0x12)),
+            FontSize   = 11, FontWeight = FontWeights.SemiBold,
+            FontFamily = new WpfFontFamily("Segoe UI"),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth   = 20,
+        };
+        _samplingSlider = new Slider
+        {
+            Minimum = 1, Maximum = 20, Value = 5,
+            TickFrequency = 1, IsSnapToTickEnabled = true,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _samplingSlider.ValueChanged += (_, e) => _samplingLabel!.Text = ((int)e.NewValue).ToString();
+        _quantizerCombo.SelectionChanged += (_, _) =>
+        {
+            bool isNeural = GetQuantizerType() == QuantizerType.Neural;
+            _samplingSlider.IsEnabled = isNeural;
+            _samplingLabel!.Opacity   = isNeural ? 1.0 : 0.35;
+        };
+        advContent.Children.Add(MakeInlineRow("Örnekleme", _samplingLabel, _samplingSlider));
+
+        var advSection = MakeCollapsible("▸ Gelişmiş", advContent);
+        panel.Children.Add(advSection);
 
         panel.Children.Add(MakeSep());
 
-        // Kare Sil / Çoğalt
-        var frameRow = new StackPanel { Orientation = Orientation.Horizontal };
-        var delBtn = MakeBtn("Kare Sil", Color.FromRgb(0x6B, 0x25, 0x25));
-        delBtn.Width  = 100;
-        delBtn.Margin = new Thickness(0, 0, 6, 4);
+        // ── Kare işlemleri ────────────────────────────────────────────────────
+        var frameRow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        frameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        frameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+        frameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var delBtn = MakeBtn("🗑 Kare Sil", Color.FromRgb(0x5A, 0x20, 0x20));
         delBtn.Click += (_, _) => DeleteCurrentFrame();
-        var dupF = MakeBtn("Çoğalt", Color.FromRgb(0x2A, 0x35, 0x4D));
-        dupF.Width = 100;
-        dupF.Click += (_, _) => DuplicateCurrentFrame();
+        var dupBtn2 = MakeBtn("⧉ Çoğalt", Color.FromRgb(0x20, 0x2E, 0x45));
+        dupBtn2.Click += (_, _) => DuplicateCurrentFrame();
+
+        Grid.SetColumn(delBtn,  0);
+        Grid.SetColumn(dupBtn2, 2);
         frameRow.Children.Add(delBtn);
-        frameRow.Children.Add(dupF);
+        frameRow.Children.Add(dupBtn2);
         panel.Children.Add(frameRow);
 
+        var dupRemBtn = MakeBtn("Tekrarlananları Sil", Color.FromRgb(0x20, 0x2E, 0x45));
+        dupRemBtn.Click += (_, _) => RemoveDuplicates();
+        panel.Children.Add(dupRemBtn);
+
         panel.Children.Add(MakeSep());
 
+        // ── Kaydet ────────────────────────────────────────────────────────────
         var saveBtn = MakeBtn("GIF Kaydet", Color.FromRgb(0xEA, 0x6F, 0x12));
         saveBtn.FontWeight = FontWeights.SemiBold;
         saveBtn.FontSize   = 13;
-        saveBtn.Height     = 36;
+        saveBtn.Height     = 34;
         saveBtn.Click += async (_, _) => await SaveGifAsync();
         panel.Children.Add(saveBtn);
 
         return panel;
+    }
+
+    // ─── Collapsible section ──────────────────────────────────────────────────
+
+    private static StackPanel MakeCollapsible(string headerText, UIElement content)
+    {
+        var headerBtn = new Button
+        {
+            Content         = headerText,
+            Background      = Brushes.Transparent,
+            Foreground      = new SolidColorBrush(Color.FromRgb(0x70, 0x84, 0xA4)),
+            BorderThickness = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            FontSize   = 10,
+            FontFamily = new WpfFontFamily("Segoe UI"),
+            Padding    = new Thickness(0, 2, 0, 2),
+            Cursor     = Cursors.Hand,
+        };
+
+        bool expanded = false;
+        content.Visibility = Visibility.Collapsed;
+
+        headerBtn.Click += (_, _) =>
+        {
+            expanded = !expanded;
+            content.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            headerBtn.Content  = (expanded ? "▾ " : "▸ ") + headerText.TrimStart('▸', '▾', ' ');
+        };
+
+        var wrap = new StackPanel();
+        wrap.Children.Add(headerBtn);
+        wrap.Children.Add(content);
+        return wrap;
+    }
+
+    // ─── Inline row helpers ───────────────────────────────────────────────────
+
+    private static Grid MakeInlineRow(string label, UIElement value, UIElement? control = null)
+    {
+        var g = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (control != null)
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var lbl = new TextBlock
+        {
+            Text      = label,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0x84, 0xA4)),
+            FontSize   = 10,
+            FontFamily = new WpfFontFamily("Segoe UI"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(lbl,   0);
+        Grid.SetColumn(value, 1);
+        g.Children.Add(lbl);
+        g.Children.Add(value);
+
+        if (control != null)
+        {
+            Grid.SetColumn(control, 2);
+            ((FrameworkElement)control).Margin = new Thickness(6, 0, 0, 0);
+            g.Children.Add(control);
+        }
+        return g;
+    }
+
+    private static Grid MakeInlineComboRow(string label, ComboBox combo)
+    {
+        var g = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var lbl = new TextBlock
+        {
+            Text      = label,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0x84, 0xA4)),
+            FontSize   = 10,
+            FontFamily = new WpfFontFamily("Segoe UI"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(lbl,   0);
+        Grid.SetColumn(combo, 1);
+        g.Children.Add(lbl);
+        g.Children.Add(combo);
+        return g;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
