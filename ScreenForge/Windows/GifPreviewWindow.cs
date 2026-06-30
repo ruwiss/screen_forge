@@ -40,6 +40,7 @@ public sealed class GifPreviewWindow
     private CheckBox?        _keepAspect;
     private TextBlock?       _statusLabel;
     private TextBlock?       _frameCountLabel;
+    private System.Windows.Controls.ProgressBar? _progressBar;
 
     // Playback
     private DispatcherTimer? _playTimer;
@@ -173,19 +174,38 @@ public sealed class GifPreviewWindow
         contentGrid.Children.Add(divider);
         contentGrid.Children.Add(settingsPanel);
 
-        // ── Status bar ────────────────────────────────────────────────────────
+        // ── Status bar + progress ─────────────────────────────────────────────
         _statusLabel = new TextBlock
         {
             Text       = "",
             Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x68, 0x88)),
             FontSize   = 10,
             FontFamily = new WpfFontFamily("Segoe UI"),
-            Margin     = new Thickness(10, 3, 10, 3),
+            Margin     = new Thickness(10, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
         };
+        _progressBar = new System.Windows.Controls.ProgressBar
+        {
+            Minimum   = 0,
+            Maximum   = 100,
+            Value     = 0,
+            Height    = 3,
+            Visibility= Visibility.Collapsed,
+            Foreground= new SolidColorBrush(Color.FromRgb(0xEA, 0x6F, 0x12)),
+            Background= new SolidColorBrush(Color.FromRgb(0x22, 0x2A, 0x3A)),
+            BorderThickness = new Thickness(0),
+        };
+        var statusInner = new Grid { Height = 24 };
+        statusInner.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        statusInner.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(_statusLabel,  0);
+        Grid.SetRow(_progressBar,  1);
+        statusInner.Children.Add(_statusLabel);
+        statusInner.Children.Add(_progressBar);
         var statusBar = new Border
         {
             Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x12, 0x1C)),
-            Child      = _statusLabel,
+            Child      = statusInner,
         };
 
         // ── Ana grid ──────────────────────────────────────────────────────────
@@ -601,33 +621,52 @@ public sealed class GifPreviewWindow
     {
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
-            Filter      = "Animasyonlu GIF|*.gif",
-            DefaultExt  = ".gif",
-            FileName    = "kayit",
+            Filter     = "Animasyonlu GIF|*.gif",
+            DefaultExt = ".gif",
+            FileName   = "kayit",
         };
         if (dlg.ShowDialog() != true) return;
 
-        int fps       = _fpsSlider != null ? Math.Max(1, (int)_fpsSlider.Value) : _recorder.Fps;
-        int colors    = GetColorCount();
-        int outW      = ParseOrDefault(_widthBox?.Text,  _recorder.Width);
-        int outH      = ParseOrDefault(_heightBox?.Text, _recorder.Height);
-        bool needSize = outW != _recorder.Width || outH != _recorder.Height;
+        int fps    = _fpsSlider != null ? Math.Max(1, (int)_fpsSlider.Value) : _recorder.Fps;
+        int colors = GetColorCount();
+        int outW   = ParseOrDefault(_widthBox?.Text,  _recorder.Width);
+        int outH   = ParseOrDefault(_heightBox?.Text, _recorder.Height);
+        bool resize= outW != _recorder.Width || outH != _recorder.Height;
 
-        _statusLabel!.Text = "Kaydediliyor...";
         PausePlayback();
+        _statusLabel!.Text    = resize ? "Yeniden boyutlandırılıyor..." : "Kaydediliyor...";
+        _progressBar!.Value   = 0;
+        _progressBar.Visibility = Visibility.Visible;
 
-        var toSave = needSize
-            ? _frames.Select(f => ResizeFrame(f, _recorder.Width, _recorder.Height, outW, outH)).ToList()
-            : _frames;
+        // Resize CPU-yoğun — Task.Run içinde yap
+        List<byte[]> toSave;
+        if (resize)
+        {
+            int srcW = _recorder.Width, srcH = _recorder.Height;
+            toSave = await System.Threading.Tasks.Task.Run(() =>
+                _frames.Select(f => ResizeFrame(f, srcW, srcH, outW, outH)).ToList());
+            _statusLabel!.Text = "Kaydediliyor...";
+            _progressBar.Value = 0;
+        }
+        else
+        {
+            toSave = _frames;
+        }
 
         await _recorder.SaveAsync(
             dlg.FileName,
             fpsOverride    : fps,
             colorCount     : colors,
             framesOverride : toSave,
+            widthOverride  : outW,
+            heightOverride : outH,
             progress       : p => Application.Current?.Dispatcher.Invoke(() =>
-                _statusLabel!.Text = $"Kaydediliyor... %{(int)(p * 100)}"));
+            {
+                _progressBar!.Value = p * 100;
+                _statusLabel!.Text  = $"Kaydediliyor... {(int)(p * 100)}%";
+            }));
 
+        _progressBar.Visibility = Visibility.Collapsed;
         _statusLabel!.Text = $"Kaydedildi → {Path.GetFileName(dlg.FileName)}";
     }
 

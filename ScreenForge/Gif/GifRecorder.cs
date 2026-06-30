@@ -81,10 +81,12 @@ public sealed class GifRecorder : IDisposable
     public async Task SaveAsync(string path, Action<double>? progress = null)
         => await SaveAsync(path, fpsOverride: null, colorCount: 256, framesOverride: null, progress: progress);
 
-    public async Task SaveAsync(string path, int? fpsOverride, int colorCount, IList<byte[]>? framesOverride, Action<double>? progress = null)
+    public async Task SaveAsync(string path, int? fpsOverride, int colorCount, IList<byte[]>? framesOverride,
+        int? widthOverride = null, int? heightOverride = null, Action<double>? progress = null)
     {
         var frames = framesOverride != null ? framesOverride.ToList() : _frames.ToList();
-        int w = _pixelRegion.Width, h = _pixelRegion.Height;
+        int w = widthOverride  ?? _pixelRegion.Width;
+        int h = heightOverride ?? _pixelRegion.Height;
         int fps = fpsOverride ?? Fps;
         int delayMs = (int)Math.Round(1000.0 / fps);
 
