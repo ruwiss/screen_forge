@@ -352,10 +352,10 @@ public sealed class GifPreviewWindow
                 if (!_playing) { _playTimer.Stop(); return; }
                 int next = (_selectedIndex + 1) % _frames.Count;
                 SelectFrame(next);
+                _playTimer.Interval = TimeSpan.FromMilliseconds(GetPlaybackDelayMs(next));
             };
         }
-        int fps = _fpsSlider != null ? Math.Max(1, (int)_fpsSlider.Value) : _recorder.Fps;
-        _playTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / fps);
+        _playTimer.Interval = TimeSpan.FromMilliseconds(GetPlaybackDelayMs(_selectedIndex));
         _playTimer.Start();
         SetEditingEnabled(false);
         SetFaded(_saveBtn, false);
@@ -414,7 +414,7 @@ public sealed class GifPreviewWindow
         {
             int v = (int)e.NewValue;
             _fpsLabel!.Text = $"{v} fps";
-            if (_playing) _playTimer!.Interval = TimeSpan.FromMilliseconds(1000.0 / v);
+            if (_playing) _playTimer!.Interval = TimeSpan.FromMilliseconds(GetPlaybackDelayMs(_selectedIndex));
         };
         panel.Children.Add(MakeInlineRow("FPS", _fpsLabel, _fpsSlider));
 
@@ -654,6 +654,9 @@ public sealed class GifPreviewWindow
     {
         if (_frames.Count <= 1 || _selectedIndex >= _frames.Count) return;
         _frames.RemoveAt(_selectedIndex);
+        if (_frameDelays.Count > _selectedIndex)
+            _frameDelays.RemoveAt(_selectedIndex);
+        RemoveKeyEventsForDeletedFrame(_selectedIndex);
         if (_selectedIndex >= _frames.Count) _selectedIndex = _frames.Count - 1;
         RefreshThumbnails();
         SelectFrame(_selectedIndex);
@@ -663,6 +666,9 @@ public sealed class GifPreviewWindow
     {
         if (_selectedIndex >= _frames.Count) return;
         _frames.Insert(_selectedIndex + 1, _frames[_selectedIndex].ToArray());
+        if (_frameDelays.Count > _selectedIndex)
+            _frameDelays.Insert(_selectedIndex + 1, _frameDelays[_selectedIndex]);
+        ShiftKeyEventsAfterInsert(_selectedIndex + 1);
         RefreshThumbnails();
         SelectFrame(_selectedIndex + 1);
     }
@@ -676,22 +682,88 @@ public sealed class GifPreviewWindow
     {
         if (_frames.Count < 2) { _statusLabel!.Text = "0 tekrarlanan kare silindi"; return; }
 
-        var result  = new List<byte[]> { _frames[0] };
+        var result       = new List<byte[]> { _frames[0] };
+        var resultDelays = new List<int> { GetDelayAt(0) };
+        var indexMap     = new Dictionary<int, int> { [0] = 0 };
         int removed = 0;
 
         for (int i = 1; i < _frames.Count; i++)
         {
             if (!AreFramesIdentical(_frames[i], _frames[i - 1]))
+            {
+                indexMap[i] = result.Count;
                 result.Add(_frames[i]);
+                resultDelays.Add(GetDelayAt(i));
+            }
             else
+            {
+                resultDelays[^1] += GetDelayAt(i);
+                indexMap[i] = result.Count - 1;
                 removed++;
+            }
         }
 
         _frames = result;
+        _frameDelays = resultDelays;
+        RemapKeyEvents(indexMap);
         if (_selectedIndex >= _frames.Count) _selectedIndex = _frames.Count - 1;
         RefreshThumbnails();
         SelectFrame(_selectedIndex);
         _statusLabel!.Text = $"{removed} tekrarlanan kare silindi";
+    }
+
+    private int GetDelayAt(int index)
+    {
+        if (_frameDelays.Count > index && _frameDelays[index] > 0)
+            return _frameDelays[index];
+
+        return (int)Math.Round(1000.0 / Math.Max(1, _recorder.Fps));
+    }
+
+    private int GetPlaybackDelayMs(int index)
+    {
+        int fps = _fpsSlider != null ? Math.Max(1, (int)_fpsSlider.Value) : _recorder.Fps;
+        if (fps == _recorder.Fps)
+            return GetDelayAt(index);
+
+        return (int)Math.Round(1000.0 / fps);
+    }
+
+    private void RemoveKeyEventsForDeletedFrame(int removedIndex)
+    {
+        for (int i = _keyEvents.Count - 1; i >= 0; i--)
+        {
+            var evt = _keyEvents[i];
+            if (evt.frameIndex == removedIndex)
+                _keyEvents.RemoveAt(i);
+            else if (evt.frameIndex > removedIndex)
+                _keyEvents[i] = (evt.frameIndex - 1, evt.key);
+        }
+    }
+
+    private void ShiftKeyEventsAfterInsert(int insertedIndex)
+    {
+        for (int i = 0; i < _keyEvents.Count; i++)
+        {
+            var evt = _keyEvents[i];
+            if (evt.frameIndex >= insertedIndex)
+                _keyEvents[i] = (evt.frameIndex + 1, evt.key);
+        }
+    }
+
+    private void RemapKeyEvents(Dictionary<int, int> indexMap)
+    {
+        for (int i = _keyEvents.Count - 1; i >= 0; i--)
+        {
+            var evt = _keyEvents[i];
+            if (!indexMap.TryGetValue(evt.frameIndex, out int mappedIndex))
+            {
+                _keyEvents.RemoveAt(i);
+                continue;
+            }
+
+            _keyEvents[i] = (mappedIndex, evt.key);
+        }
     }
 
     /// <summary>
@@ -858,8 +930,9 @@ public sealed class GifPreviewWindow
         if (_frameDelays.Count == toSave.Count)
         {
             int defaultMs = (int)Math.Round(1000.0 / fps);
-            // Eğer fps değişmediyse orijinal delays korunur, değişmişse uniform kullan
-            delaysToUse = _frameDelays.Select(_ => defaultMs).ToList();
+            delaysToUse = fps == _recorder.Fps
+                ? _frameDelays.ToList()
+                : Enumerable.Repeat(defaultMs, toSave.Count).ToList();
         }
 
         await _recorder.SaveAsync(

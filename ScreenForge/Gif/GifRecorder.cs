@@ -95,7 +95,8 @@ public sealed class GifRecorder : IDisposable
     public async Task SaveAsync(string path, int? fpsOverride, int colorCount, IList<byte[]>? framesOverride,
         int? widthOverride = null, int? heightOverride = null, Action<double>? progress = null,
         QType quantizerType = QType.Neural, int samplingFactor = 5,
-        IList<int>? frameDelaysOverride = null, bool useGlobalPalette = false, bool dithering = false)
+        IList<int>? frameDelaysOverride = null, bool useGlobalPalette = false, bool dithering = false,
+        bool optimizeUnchangedPixels = true)
     {
         var frames  = framesOverride   != null ? framesOverride.ToList()   : _frames.ToList();
         var delays  = frameDelaysOverride != null ? frameDelaysOverride.ToList() : _frameDelays.ToList();
@@ -106,6 +107,10 @@ public sealed class GifRecorder : IDisposable
 
         await Task.Run(() =>
         {
+            var framesToWrite = BuildFramesForExport(frames, delays, w, h, defaultDelayMs, optimizeUnchangedPixels);
+            if (framesToWrite.Count == 0)
+                return;
+
             using var fs  = new FileStream(path, FileMode.Create, FileAccess.Write);
             using var gif = new GifFile(fs)
             {
@@ -117,77 +122,183 @@ public sealed class GifRecorder : IDisposable
                 UseDithering       = dithering,
             };
 
-            for (int i = 0; i < frames.Count; i++)
+            for (int i = 0; i < framesToWrite.Count; i++)
             {
-                int delay = (delays.Count > i) ? delays[i] : defaultDelayMs;
-                gif.AddFrame(frames[i], new Int32Rect(0, 0, w, h),
-                    delayMs: delay, isLastFrame: i == frames.Count - 1);
-                progress?.Invoke((double)(i + 1) / frames.Count);
+                var frame = framesToWrite[i];
+                gif.AddFrame(frame.Pixels, frame.Rect,
+                    delayMs: frame.Delay, isLastFrame: i == framesToWrite.Count - 1);
+                progress?.Invoke((double)(i + 1) / framesToWrite.Count);
             }
         });
+    }
+
+    private sealed class ExportFrame
+    {
+        public required byte[] Pixels { get; init; }
+        public required Int32Rect Rect { get; init; }
+        public int Delay { get; set; }
+    }
+
+    private static List<ExportFrame> BuildFramesForExport(
+        List<byte[]> frames, List<int> delays, int width, int height, int defaultDelayMs, bool optimize)
+    {
+        var output = new List<ExportFrame>(frames.Count);
+        if (frames.Count == 0)
+            return output;
+
+        byte[]? previous = null;
+        for (int i = 0; i < frames.Count; i++)
+        {
+            int delay = delays.Count > i && delays[i] > 0 ? delays[i] : defaultDelayMs;
+            var current = frames[i];
+
+            if (!optimize || previous == null)
+            {
+                output.Add(new ExportFrame
+                {
+                    Pixels = current,
+                    Rect = new Int32Rect(0, 0, width, height),
+                    Delay = delay,
+                });
+                previous = current;
+                continue;
+            }
+
+            var changed = FindChangedBounds(previous, current, width, height);
+            if (changed.IsEmpty)
+            {
+                output[^1].Delay += delay;
+                previous = current;
+                continue;
+            }
+
+            output.Add(new ExportFrame
+            {
+                Pixels = CropFrame(current, width, changed),
+                Rect = changed,
+                Delay = delay,
+            });
+            previous = current;
+        }
+
+        return output;
+    }
+
+    private static Int32Rect FindChangedBounds(byte[] previous, byte[] current, int width, int height)
+    {
+        if (previous.Length != current.Length)
+            return new Int32Rect(0, 0, width, height);
+
+        var a = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, int>(previous.AsSpan());
+        var b = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, int>(current.AsSpan());
+        int minX = width, minY = height, maxX = -1, maxY = -1;
+
+        for (int i = 0; i < a.Length; i++)
+        {
+            if (a[i] == b[i])
+                continue;
+
+            int y = i / width;
+            int x = i - y * width;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+
+        return maxX < minX || maxY < minY
+            ? Int32Rect.Empty
+            : new Int32Rect(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
+    private static byte[] CropFrame(byte[] source, int sourceWidth, Int32Rect rect)
+    {
+        var output = new byte[rect.Width * rect.Height * 4];
+        int targetStride = rect.Width * 4;
+
+        for (int y = 0; y < rect.Height; y++)
+        {
+            int sourceOffset = ((rect.Y + y) * sourceWidth + rect.X) * 4;
+            Buffer.BlockCopy(source, sourceOffset, output, y * targetStride, targetStride);
+        }
+
+        return output;
     }
 
     // ─── Frame capture ────────────────────────────────────────────────────────
 
     private void CaptureFrame()
     {
-        // Overlay'i gizle — BitBlt'ye girmesin
         HideForCapture?.Invoke();
 
-        int w = _pixelRegion.Width, h = _pixelRegion.Height;
-        int x = _pixelRegion.X, y = _pixelRegion.Y;
+        IntPtr hScr = IntPtr.Zero;
+        IntPtr hMem = IntPtr.Zero;
+        IntPtr hBmp = IntPtr.Zero;
+        IntPtr hOld = IntPtr.Zero;
 
-        IntPtr hScr = GetDC(IntPtr.Zero);
-        IntPtr hMem = CreateCompatibleDC(hScr);
-        IntPtr hBmp = CreateCompatibleBitmap(hScr, w, h);
-        IntPtr hOld = SelectObject(hMem, hBmp);
-        BitBlt(hMem, 0, 0, w, h, hScr, x, y, SRCCOPY);
-        SelectObject(hMem, hOld);
-
-        var bmi = new BITMAPINFO();
-        bmi.bmiHeader.biSize = Marshal.SizeOf<BITMAPINFOHEADER>();
-        bmi.bmiHeader.biWidth = w;
-        bmi.bmiHeader.biHeight = -h; // top-down
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-
-        var buf = new byte[w * h * 4];
-        GetDIBits(hMem, hBmp, 0, (uint)h, buf, ref bmi, 0);
-
-        DeleteObject(hBmp);
-        DeleteDC(hMem);
-        ReleaseDC(IntPtr.Zero, hScr);
-
-        // GDI returns alpha=0 for screen pixels; fix so quantizer doesn't treat all as transparent
-        for (int i = 3; i < buf.Length; i += 4) buf[i] = 255;
-
-        int frameDelayMs = (int)Math.Round(1000.0 / Fps);
-
-        // Frame skip: aynı kare gelirse kaydetme, öncekinin delay'ini artır
-        if (_lastFrame != null && AreIdentical(buf, _lastFrame))
+        try
         {
-            _pendingDelayMs += frameDelayMs;
-        }
-        else
-        {
-            if (_frames.Count > 0 && _pendingDelayMs > 0)
-                _frameDelays[^1] += _pendingDelayMs;
-            _pendingDelayMs = 0;
-            _frames.Add(buf);
-            _frameDelays.Add(frameDelayMs);
-            _lastFrame = buf;
-        }
+            int w = _pixelRegion.Width, h = _pixelRegion.Height;
+            int x = _pixelRegion.X, y = _pixelRegion.Y;
 
-        // Overlay'i geri göster
-        ShowAfterCapture?.Invoke();
+            hScr = GetDC(IntPtr.Zero);
+            hMem = CreateCompatibleDC(hScr);
+            hBmp = CreateCompatibleBitmap(hScr, w, h);
+            hOld = SelectObject(hMem, hBmp);
+
+            if (!BitBlt(hMem, 0, 0, w, h, hScr, x, y, SRCCOPY))
+                return;
+
+            var bmi = new BITMAPINFO();
+            bmi.bmiHeader.biSize = Marshal.SizeOf<BITMAPINFOHEADER>();
+            bmi.bmiHeader.biWidth = w;
+            bmi.bmiHeader.biHeight = -h; // top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+
+            var buf = new byte[w * h * 4];
+            if (GetDIBits(hMem, hBmp, 0, (uint)h, buf, ref bmi, 0) == 0)
+                return;
+
+            for (int i = 3; i < buf.Length; i += 4) buf[i] = 255;
+
+            int frameDelayMs = (int)Math.Round(1000.0 / Fps);
+
+            if (_lastFrame != null && AreIdentical(buf, _lastFrame))
+            {
+                _pendingDelayMs += frameDelayMs;
+            }
+            else
+            {
+                if (_frames.Count > 0 && _pendingDelayMs > 0)
+                    _frameDelays[^1] += _pendingDelayMs;
+                _pendingDelayMs = 0;
+                _frames.Add(buf);
+                _frameDelays.Add(frameDelayMs);
+                _lastFrame = buf;
+            }
+        }
+        finally
+        {
+            if (hMem != IntPtr.Zero && hOld != IntPtr.Zero)
+                SelectObject(hMem, hOld);
+            if (hBmp != IntPtr.Zero)
+                DeleteObject(hBmp);
+            if (hMem != IntPtr.Zero)
+                DeleteDC(hMem);
+            if (hScr != IntPtr.Zero)
+                ReleaseDC(IntPtr.Zero, hScr);
+
+            ShowAfterCapture?.Invoke();
+        }
     }
 
     private static bool AreIdentical(byte[] a, byte[] b)
     {
         if (a.Length != b.Length) return false;
-        var sa = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, long>(a.AsSpan());
-        var sb = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, long>(b.AsSpan());
-        return sa.SequenceEqual(sb);
+        var ia = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, int>(a.AsSpan());
+        var ib = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, int>(b.AsSpan());
+        return ia.SequenceEqual(ib);
     }
 
     public void Dispose()

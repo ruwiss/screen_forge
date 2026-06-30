@@ -51,6 +51,7 @@ internal sealed class GifFile : IDisposable
         if (_isFirstFrame)
         {
             WriteLogicalScreenDescriptor(rect);
+            if (UseGlobalPalette) WritePalette();
             if (RepeatCount > -1) WriteApplicationExtension();
         }
 
@@ -71,11 +72,12 @@ internal sealed class GifFile : IDisposable
         WriteShort(rect.Height);
 
         var bitArray = new BitArray(8);
-        bitArray.Set(0, false); // no global color table
+        bitArray.Set(0, UseGlobalPalette);
         var pixelBits = ToBitValues(ColorTableSize());
         bitArray.Set(1, pixelBits[0]); bitArray.Set(2, pixelBits[1]); bitArray.Set(3, pixelBits[2]);
         bitArray.Set(4, true);
-        bitArray.Set(5, false); bitArray.Set(6, false); bitArray.Set(7, false); // no global ct size
+        var globalBits = ToBitValues(UseGlobalPalette ? _colorTableSize : 0);
+        bitArray.Set(5, globalBits[0]); bitArray.Set(6, globalBits[1]); bitArray.Set(7, globalBits[2]);
 
         WriteByte(ConvertToByte(bitArray));
         WriteByte(UseFullTransparency ? FindTransparentColorIndex() : 0);
@@ -129,6 +131,12 @@ internal sealed class GifFile : IDisposable
         WriteByte(0x2c);
         WriteShort(rect.X); WriteShort(rect.Y);
         WriteShort(rect.Width); WriteShort(rect.Height);
+
+        if (UseGlobalPalette)
+        {
+            WriteByte(0);
+            return;
+        }
 
         // Always local color table
         var b = new BitArray(8);

@@ -1167,12 +1167,12 @@ public partial class CaptureOverlayWindow : Window
     private void OnGifRecord()
     {
         // ToPixelRegion screenshot oranı kullanır; GIF için DPI-aware piksel koordinatı lazım
-        double dpiScale = System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
         var gifPixelRegion = new System.Drawing.Rectangle(
-            (int)Math.Round(_selDip.X      * dpiScale) + _virtualBounds.X,
-            (int)Math.Round(_selDip.Y      * dpiScale) + _virtualBounds.Y,
-            (int)Math.Round(_selDip.Width  * dpiScale),
-            (int)Math.Round(_selDip.Height * dpiScale));
+            (int)Math.Round(_selDip.X      * dpi.DpiScaleX) + _virtualBounds.X,
+            (int)Math.Round(_selDip.Y      * dpi.DpiScaleY) + _virtualBounds.Y,
+            (int)Math.Round(_selDip.Width  * dpi.DpiScaleX),
+            (int)Math.Round(_selDip.Height * dpi.DpiScaleY));
         var dipRegion = _selDip;
         Close();
 
