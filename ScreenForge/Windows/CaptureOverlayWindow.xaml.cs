@@ -1096,17 +1096,10 @@ public partial class CaptureOverlayWindow : Window
         recorder.Start();
     }
 
-    private static async void OnGifStopped(Gif.GifRecorder recorder)
+    private static void OnGifStopped(Gif.GifRecorder recorder)
     {
-        var dlg = new Microsoft.Win32.SaveFileDialog
-        {
-            Filter = "Animasyonlu GIF|*.gif",
-            DefaultExt = ".gif",
-            FileName = "kayit",
-        };
-        if (dlg.ShowDialog() != true) { recorder.Dispose(); return; }
-        await recorder.SaveAsync(dlg.FileName);
-        recorder.Dispose();
+        var preview = new GifPreviewWindow(recorder);
+        preview.Show();
     }
 
     // Temel 6 renk

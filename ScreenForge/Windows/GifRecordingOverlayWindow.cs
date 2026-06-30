@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -16,6 +17,20 @@ namespace ScreenForge.Windows;
 /// </summary>
 public sealed class GifRecordingOverlayWindow
 {
+    // ─── Global Keyboard Hook (WH_KEYBOARD_LL = 13) ──────────────────────────
+    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string? lpModuleName);
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_SYSKEYDOWN = 0x0104;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr dwExtraInfo; }
+
     public event Action<GifRecorder>? Stopped;
 
     private readonly GifRecorder _recorder;
@@ -33,11 +48,13 @@ public sealed class GifRecordingOverlayWindow
         TextBlock? elapsedText = null;
         TextBlock? frameText = null;
         TextBlock? recDot = null;
+        IntPtr keyboardHook = IntPtr.Zero;
+        LowLevelKeyboardProc? hookProc = null;
 
-        // ─── Dashed border ───────────────────────────────────────────────────
+        // ─── Dashed border (hit-test off — sadece görsel) ────────────────────
         var borderRect = new WpfRectangle
         {
-            Stroke = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)),
+            Stroke = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)),
             StrokeThickness = 2,
             StrokeDashArray = new DoubleCollection { 5, 3 },
             StrokeDashCap = PenLineCap.Round,
@@ -91,11 +108,7 @@ public sealed class GifRecordingOverlayWindow
             VerticalContentAlignment = VerticalAlignment.Center,
         };
 
-        var barStack = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        var barStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         barStack.Children.Add(recDot);
         barStack.Children.Add(elapsedText);
         barStack.Children.Add(frameText);
@@ -109,23 +122,17 @@ public sealed class GifRecordingOverlayWindow
             Child = barStack,
         };
 
-        // ─── Full-screen canvas ───────────────────────────────────────────────
-        var rootCanvas = new Canvas
-        {
-            IsHitTestVisible = false,
-            Background = Brushes.Transparent,
-        };
+        // ─── Canvas — Canvas kendisi IsHitTestVisible=true kalır ─────────────
+        // borderRect.IsHitTestVisible=false (ayarlandı), controlBar default true
+        var rootCanvas = new Canvas { Background = Brushes.Transparent };
         rootCanvas.Children.Add(borderRect);
         rootCanvas.Children.Add(controlBar);
 
         Canvas.SetLeft(borderRect, _dipRegion.Left);
         Canvas.SetTop(borderRect, _dipRegion.Top);
-
-        // control bar positioned above region; will adjust after measure
         Canvas.SetLeft(controlBar, _dipRegion.Left);
         Canvas.SetTop(controlBar, Math.Max(0, _dipRegion.Top - 44));
 
-        // stopBtn needs a reference to win so set after win creation
         win = new Window
         {
             WindowStyle = WindowStyle.None,
@@ -133,7 +140,6 @@ public sealed class GifRecordingOverlayWindow
             Background = Brushes.Transparent,
             Topmost = true,
             ShowInTaskbar = false,
-            IsHitTestVisible = false,
             Left = SystemParameters.VirtualScreenLeft,
             Top = SystemParameters.VirtualScreenTop,
             Width = SystemParameters.VirtualScreenWidth,
@@ -141,16 +147,26 @@ public sealed class GifRecordingOverlayWindow
             Content = rootCanvas,
         };
 
-        // control bar must accept clicks — override canvas hit-test for it
-        controlBar.IsHitTestVisible = true;
-        win.IsHitTestVisible = true;
+        // ─── Hide/Show hook — overlay BitBlt karesine girmesin ───────────────
+        _recorder.HideForCapture = () => win!.Dispatcher.Invoke(() =>
+        {
+            win.Visibility = Visibility.Hidden;
+        });
+        _recorder.ShowAfterCapture = () => win!.Dispatcher.Invoke(() =>
+        {
+            win.Visibility = Visibility.Visible;
+        });
 
-        stopBtn.Click += (_, _) =>
+        // ─── Stop ─────────────────────────────────────────────────────────────
+        void DoStop()
         {
             _recorder.Stop();
+            if (keyboardHook != IntPtr.Zero) { UnhookWindowsHookEx(keyboardHook); keyboardHook = IntPtr.Zero; }
             win!.Close();
             Stopped?.Invoke(_recorder);
-        };
+        }
+
+        stopBtn.Click += (_, _) => DoStop();
 
         // ─── Timers ───────────────────────────────────────────────────────────
         var uiTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -163,21 +179,65 @@ public sealed class GifRecordingOverlayWindow
 
         var blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         bool blinkOn = true;
-        blinkTimer.Tick += (_, _) =>
-        {
-            blinkOn = !blinkOn;
-            recDot!.Opacity = blinkOn ? 1.0 : 0.2;
-        };
+        blinkTimer.Tick += (_, _) => { blinkOn = !blinkOn; recDot!.Opacity = blinkOn ? 1.0 : 0.2; };
 
         win.Loaded += (_, _) =>
         {
             uiTimer.Start();
             blinkTimer.Start();
+
+            // Global klavye hook — kayıt sırasında basılan tuşları kaydet
+            hookProc = (code, wp, lp) =>
+            {
+                if (code >= 0 && (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN))
+                {
+                    var kbs = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lp);
+                    var key = KeyInterop.KeyFromVirtualKey((int)kbs.vkCode);
+                    var label = GetKeyLabel(key);
+                    if (label != null) _recorder.RecordKey(label);
+                }
+                return CallNextHookEx(keyboardHook, code, wp, lp);
+            };
+
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            using var mod = proc.MainModule!;
+            keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, hookProc, GetModuleHandle(mod.ModuleName), 0);
         };
 
-        win.Closed += (_, _) => { uiTimer.Stop(); blinkTimer.Stop(); };
-        win.KeyDown += (_, e) => { if (e.Key == Key.Escape) stopBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); };
+        win.Closed += (_, _) =>
+        {
+            uiTimer.Stop();
+            blinkTimer.Stop();
+            if (keyboardHook != IntPtr.Zero) { UnhookWindowsHookEx(keyboardHook); keyboardHook = IntPtr.Zero; }
+        };
+
+        win.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape) DoStop();
+        };
 
         win.Show();
     }
+
+    private static string? GetKeyLabel(Key key) => key switch
+    {
+        Key.LeftCtrl or Key.RightCtrl => "Ctrl",
+        Key.LeftShift or Key.RightShift => "Shift",
+        Key.LeftAlt or Key.RightAlt => "Alt",
+        Key.LWin or Key.RWin => "Win",
+        Key.Return => "Enter",
+        Key.Back => "Backspace",
+        Key.Delete => "Del",
+        Key.Tab => "Tab",
+        Key.Escape => null, // Esc durdurur, kaydetme
+        Key.Space => "Space",
+        Key.Left => "←",
+        Key.Right => "→",
+        Key.Up => "↑",
+        Key.Down => "↓",
+        >= Key.A and <= Key.Z => key.ToString(),
+        >= Key.D0 and <= Key.D9 => key.ToString().TrimStart('D'),
+        >= Key.F1 and <= Key.F12 => key.ToString(),
+        _ => null,
+    };
 }

@@ -43,6 +43,16 @@ public sealed class GifRecorder : IDisposable
     public int Fps { get; }
     public int FrameCount => _frames.Count;
     public TimeSpan Elapsed => _stopwatch.Elapsed;
+    public int Width => _pixelRegion.Width;
+    public int Height => _pixelRegion.Height;
+    public List<byte[]> Frames => _frames;
+    public List<(int frameIndex, string keys)> KeyEvents { get; } = new();
+
+    // Overlay gizleme hook'ları — GifRecordingOverlayWindow tarafından set edilir
+    public Action? HideForCapture { get; set; }
+    public Action? ShowAfterCapture { get; set; }
+
+    public void RecordKey(string label) => KeyEvents.Add((_frames.Count, label));
 
     public GifRecorder(DrawingRect pixelRegion, int fps = 10)
     {
@@ -69,15 +79,19 @@ public sealed class GifRecorder : IDisposable
     }
 
     public async Task SaveAsync(string path, Action<double>? progress = null)
+        => await SaveAsync(path, fpsOverride: null, colorCount: 256, framesOverride: null, progress: progress);
+
+    public async Task SaveAsync(string path, int? fpsOverride, int colorCount, IList<byte[]>? framesOverride, Action<double>? progress = null)
     {
-        var frames = _frames.ToList();
+        var frames = framesOverride != null ? framesOverride.ToList() : _frames.ToList();
         int w = _pixelRegion.Width, h = _pixelRegion.Height;
-        int delayMs = (int)Math.Round(1000.0 / Fps);
+        int fps = fpsOverride ?? Fps;
+        int delayMs = (int)Math.Round(1000.0 / fps);
 
         await Task.Run(() =>
         {
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
-            using var gif = new GifFile(fs) { MaximumNumberColor = 256, RepeatCount = 0 };
+            using var gif = new GifFile(fs) { MaximumNumberColor = colorCount, RepeatCount = 0 };
 
             for (int i = 0; i < frames.Count; i++)
             {
@@ -92,6 +106,9 @@ public sealed class GifRecorder : IDisposable
 
     private void CaptureFrame()
     {
+        // Overlay'i gizle — BitBlt'ye girmesin
+        HideForCapture?.Invoke();
+
         int w = _pixelRegion.Width, h = _pixelRegion.Height;
         int x = _pixelRegion.X, y = _pixelRegion.Y;
 
@@ -120,6 +137,9 @@ public sealed class GifRecorder : IDisposable
         for (int i = 3; i < buf.Length; i += 4) buf[i] = 255;
 
         _frames.Add(buf);
+
+        // Overlay'i geri göster
+        ShowAfterCapture?.Invoke();
     }
 
     public void Dispose()
