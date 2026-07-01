@@ -79,6 +79,9 @@ public partial class CaptureOverlayWindow : Window
     private WpfPoint _toolbarDragStart;
     private bool _toolbarMoved;        // kullanıcı araç çubuğunu sürükledi mi (tam ekran/serbest)
     private WpfPoint _toolbarPos;      // kullanıcının seçtiği konum
+    private static System.Windows.Input.Cursor? _regionCursor;
+
+    private static System.Windows.Input.Cursor RegionCursor => _regionCursor ??= CreateRegionCursor();
 
     public CaptureOverlayWindow(Bitmap screenshot, Rectangle virtualBounds, AppSettings settings, CaptureMode mode = CaptureMode.Region)
     {
@@ -87,6 +90,7 @@ public partial class CaptureOverlayWindow : Window
         _virtualBounds = virtualBounds;
         _settings = settings;
         _mode = mode;
+        Cursor = RegionCursor;
         var foreground = GetForegroundWindow();
         _foregroundWindowAtOpen = foreground == IntPtr.Zero ? IntPtr.Zero : GetAncestor(foreground, GA_ROOT);
         ScreenImage.Source = ScreenCapture.ToBitmapSource(screenshot);
@@ -339,7 +343,7 @@ public partial class CaptureOverlayWindow : Window
         else
         {
             HintText.Text = "Alan seçmek için sürükleyin";
-            Cursor = Cursors.Cross;
+            Cursor = RegionCursor;
             ActionBar.Visibility = Visibility.Collapsed;
             ModeBar.Visibility = Visibility.Visible;
             HintBox.Visibility = Visibility.Visible;
@@ -449,7 +453,7 @@ public partial class CaptureOverlayWindow : Window
                 return;
             }
             if (!_selDip.Contains(pos))
-                Cursor = Cursors.Cross;
+                Cursor = RegionCursor;
         }
 
         if (!_dragging) return;
@@ -591,7 +595,7 @@ public partial class CaptureOverlayWindow : Window
     private void LeaveEditPhase()
     {
         _phase = Phase.Select;
-        Cursor = Cursors.Cross;
+        Cursor = RegionCursor;
         EditHost.Child = null;
         EditHost.Visibility = Visibility.Collapsed;
         Toolbar.Visibility = Visibility.Collapsed;
@@ -2098,5 +2102,81 @@ public partial class CaptureOverlayWindow : Window
     {
         _settings.Save();
         base.OnClosed(e);
+    }
+
+    private static System.Windows.Input.Cursor CreateRegionCursor()
+    {
+        try
+        {
+            const int size = 32;
+            const int hot = 15;
+            byte[] pixels = new byte[size * size * 4];
+
+            void SetPixel(byte[] px, int x, int y, byte r, byte g, byte b, byte a)
+            {
+                if ((uint)x >= size || (uint)y >= size) return;
+                int i = (y * size + x) * 4;
+                px[i] = b;
+                px[i + 1] = g;
+                px[i + 2] = r;
+                px[i + 3] = a;
+            }
+
+            void DrawPlus(byte[] px, int cx, int cy, int len, int thickness, byte r, byte g, byte b, byte a)
+            {
+                int half = thickness / 2;
+                for (int d = -half; d <= half; d++)
+                {
+                    for (int x = cx - len; x <= cx + len; x++) SetPixel(px, x, cy + d, r, g, b, a);
+                    for (int y = cy - len; y <= cy + len; y++) SetPixel(px, cx + d, y, r, g, b, a);
+                }
+            }
+
+            DrawPlus(pixels, hot, hot, 11, 3, 0x00, 0x00, 0x00, 0xC8);
+            DrawPlus(pixels, hot, hot, 10, 1, 0xFF, 0xFF, 0xFF, 0xFF);
+
+            using var ms = new System.IO.MemoryStream();
+            using (var bw = new System.IO.BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                const int andStride = 4;
+                uint imageSize = 40 + (uint)(size * size * 4) + (uint)(andStride * size);
+
+                bw.Write((ushort)0);
+                bw.Write((ushort)2);
+                bw.Write((ushort)1);
+                bw.Write((byte)size);
+                bw.Write((byte)size);
+                bw.Write((byte)0);
+                bw.Write((byte)0);
+                bw.Write((ushort)hot);
+                bw.Write((ushort)hot);
+                bw.Write(imageSize);
+                bw.Write((uint)22);
+
+                bw.Write((uint)40);
+                bw.Write((int)size);
+                bw.Write((int)(size * 2));
+                bw.Write((ushort)1);
+                bw.Write((ushort)32);
+                bw.Write((uint)0);
+                bw.Write((uint)(size * size * 4));
+                bw.Write((int)0);
+                bw.Write((int)0);
+                bw.Write((uint)0);
+                bw.Write((uint)0);
+
+                for (int y = size - 1; y >= 0; y--)
+                    bw.Write(pixels, y * size * 4, size * 4);
+
+                Span<byte> mask = stackalloc byte[andStride];
+                for (int y = 0; y < size; y++) bw.Write(mask);
+            }
+
+            return new System.Windows.Input.Cursor(new System.IO.MemoryStream(ms.ToArray()));
+        }
+        catch
+        {
+            return Cursors.Cross;
+        }
     }
 }

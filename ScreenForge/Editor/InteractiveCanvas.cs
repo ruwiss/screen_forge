@@ -99,8 +99,8 @@ public sealed class InteractiveCanvas : SKElement
     private SKPaint? _rotLinePaint;
     private SKPaint? _rotFillPaint;
     private SKPaint? _rotStrokePaint;
-    private SKPaint? _crFillPaint;
-    private SKPaint? _crStrokePaint;
+    private SKPaint? _crHaloPaint;
+    private SKPaint? _crLinePaint;
 
     private void EnsureScalePaints(float scale)
     {
@@ -163,11 +163,27 @@ public sealed class InteractiveCanvas : SKElement
         _rotStrokePaint?.Dispose();
         _rotStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x2F, 0x6F, 0xED), StrokeWidth = 1.5f / scale, IsAntialias = true };
 
-        _crFillPaint?.Dispose();
-        _crFillPaint = new SKPaint { Style = SKPaintStyle.Fill, Color = SKColors.White, IsAntialias = true };
+        _crHaloPaint?.Dispose();
+        _crHaloPaint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = new SKColor(0x2F, 0x6F, 0xED),
+            StrokeWidth = 4.4f / scale,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            IsAntialias = true,
+        };
 
-        _crStrokePaint?.Dispose();
-        _crStrokePaint = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(0x40, 0x40, 0x40), StrokeWidth = 1.2f / scale, IsAntialias = true };
+        _crLinePaint?.Dispose();
+        _crLinePaint = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = SKColors.White,
+            StrokeWidth = 2.1f / scale,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round,
+            IsAntialias = true,
+        };
     }
 
     // Frame limiter: dirty flag + CompositionTarget.Rendering → monitör refresh'e sync
@@ -372,11 +388,19 @@ public sealed class InteractiveCanvas : SKElement
     {
         float minDim = Math.Min(bounds.Width, bounds.Height);
         if (minDim < 20f) return;
-        float r = Math.Clamp(minDim / 30f, 3f, 5f) / scale;
-        float gap = 8f / scale;
-        var pos = new SKPoint(bounds.Right + gap, bounds.Top - gap);
-        canvas.DrawCircle(pos, r, _crFillPaint!);
-        canvas.DrawCircle(pos, r, _crStrokePaint!);
+        float s = Math.Clamp(minDim / 24f, 7f, 9f) / scale;
+        var pos = CornerRadiusHandlePoint(bounds, scale);
+        using var path = new SKPath();
+        path.MoveTo(pos.X - s, pos.Y);
+        path.CubicTo(pos.X - s * 0.35f, pos.Y, pos.X, pos.Y + s * 0.35f, pos.X, pos.Y + s);
+        canvas.DrawPath(path, _crHaloPaint!);
+        canvas.DrawPath(path, _crLinePaint!);
+    }
+
+    private static SKPoint CornerRadiusHandlePoint(SKRect bounds, float scale)
+    {
+        float gap = 11f / scale;
+        return new SKPoint(bounds.Right + gap, bounds.Top - gap);
     }
 
     private void DrawBendHandle(SKCanvas canvas, SKPoint pos, float scale)
@@ -570,9 +594,8 @@ public sealed class InteractiveCanvas : SKElement
                     else if (SelectedItem is TextItem textHit && textHit.Ribbon) { cr = textHit.RibbonRadius; crBounds = textHit.Bounds; }
                     if (cr >= 0)
                     {
-                        float crTol = 9f / _scale;
-                        float gap = 8f / _scale;
-                        var crPt = new SKPoint(crBounds.Right + gap, crBounds.Top - gap);
+                        float crTol = 11f / _scale;
+                        var crPt = CornerRadiusHandlePoint(crBounds, _scale);
                         if (SKPoint.Distance(p, crPt) <= crTol)
                         { _activeHandle = 9; _beforeState = SelectedItem.Clone(); return; }
                     }
@@ -1502,9 +1525,8 @@ public sealed class InteractiveCanvas : SKElement
                 else if (SelectedItem is TextItem tc && tc.Ribbon) { crVal = tc.RibbonRadius; crB = tc.Bounds; }
                 if (crVal >= 0)
                 {
-                    float crTol = 9f / _scale;
-                    float gap = 8f / _scale;
-                    var crPt = new SKPoint(crB.Right + gap, crB.Top - gap);
+                    float crTol = 11f / _scale;
+                    var crPt = CornerRadiusHandlePoint(crB, _scale);
                     if (SKPoint.Distance(p, crPt) <= crTol) { SetCursor(Cursors.SizeAll); return; }
                 }
 

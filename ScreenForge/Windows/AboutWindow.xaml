@@ -25,7 +25,7 @@
                        VerticalAlignment="Top" Margin="0,4,14,0" />
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="ScreenForge" Style="{StaticResource Heading}" FontSize="22" Margin="0,0,0,2" />
-                    <TextBlock Text="Sürüm 1.0.0" Style="{StaticResource Muted}" />
+                    <TextBlock Text="Sürüm 1.0.3" Style="{StaticResource Muted}" />
                 </StackPanel>
             </DockPanel>
         </Border>

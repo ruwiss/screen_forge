@@ -4,8 +4,7 @@
         Title="ScreenForge" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="False" Background="Black" ShowInTaskbar="False"
         Topmost="True" WindowStartupLocation="Manual"
-        UseLayoutRounding="True"
-        Cursor="Cross">
+        UseLayoutRounding="True">
     <Canvas x:Name="Root" ClipToBounds="True">
         <!-- Yakalanan ekran (arka plan): selection sırasında LowQuality yeterli -->
         <Image x:Name="ScreenImage" Stretch="Fill"
