@@ -33,10 +33,13 @@ public partial class CaptureOverlayWindow : Window
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out WinRect lpRect);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
     [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr hWnd);
     // DWM extended frame bounds — gölge hariç görünür çerçeve (Windows 10+)
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out WinRect pvAttribute, int cbAttribute);
     private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    private const uint GA_ROOT = 2;
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct WinRect { public int Left, Top, Right, Bottom; }
@@ -64,6 +67,7 @@ public partial class CaptureOverlayWindow : Window
     private bool _windowHoverActive = true;
     private List<(IntPtr hwnd, WpfRect dip)> _visibleWindows = new();
     private WpfRect _hoveredWindowDip = WpfRect.Empty;
+    private readonly IntPtr _foregroundWindowAtOpen;
     // Pencere tıklandı ama henüz commit edilmedi (sürüklemeye başlarsa iptal)
     private bool _windowClickPending;
     private WpfRect _windowClickBounds;
@@ -83,6 +87,8 @@ public partial class CaptureOverlayWindow : Window
         _virtualBounds = virtualBounds;
         _settings = settings;
         _mode = mode;
+        var foreground = GetForegroundWindow();
+        _foregroundWindowAtOpen = foreground == IntPtr.Zero ? IntPtr.Zero : GetAncestor(foreground, GA_ROOT);
         ScreenImage.Source = ScreenCapture.ToBitmapSource(screenshot);
 
         Loaded += OnLoaded;
@@ -182,11 +188,12 @@ public partial class CaptureOverlayWindow : Window
         if (_mode != CaptureMode.Region) return;
         var hwndSelf = new WindowInteropHelper(this).Handle;
         var hwndShell = GetShellWindow();
-        double dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
         var list = new List<(IntPtr, WpfRect)>();
 
         EnumWindows((hwnd, _) =>
         {
+            if (_foregroundWindowAtOpen == IntPtr.Zero || hwnd != _foregroundWindowAtOpen) return true;
             if (!IsWindowVisible(hwnd)) return true;
             if (hwnd == hwndSelf || hwnd == hwndShell) return true;
             if (IsIconic(hwnd)) return true;
@@ -200,16 +207,14 @@ public partial class CaptureOverlayWindow : Window
             }
             int pw = r.Right - r.Left, ph = r.Bottom - r.Top;
             if (pw <= 0 || ph <= 0) return true;
-            double dipX = (r.Left - _virtualBounds.X) / dpi;
-            double dipY = (r.Top - _virtualBounds.Y) / dpi;
-            double dipW = pw / dpi;
-            double dipH = ph / dpi;
+            double dipX = (r.Left - _virtualBounds.X) / dpi.DpiScaleX;
+            double dipY = (r.Top - _virtualBounds.Y) / dpi.DpiScaleY;
+            double dipW = pw / dpi.DpiScaleX;
+            double dipH = ph / dpi.DpiScaleY;
             list.Add((hwnd, new WpfRect(dipX, dipY, dipW, dipH)));
             return true;
         }, IntPtr.Zero);
 
-        // Küçük pencereler önce: üstte olan pencereler (daha küçük alan) önce bulunur
-        list.Sort((a, b) => (a.Item2.Width * a.Item2.Height).CompareTo(b.Item2.Width * b.Item2.Height));
         _visibleWindows = list;
     }
 

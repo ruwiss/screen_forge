@@ -45,7 +45,11 @@ public partial class SettingsWindow : Window
             _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             _hwndSource?.AddHook(WndProc);
         };
-        Closed += (_, _) => _hwndSource?.RemoveHook(WndProc);
+        Closed += (_, _) =>
+        {
+            _hwndSource?.RemoveHook(WndProc);
+            RemoveKeyboardHook();
+        };
     }
 
     // ═══════════════════════════════════════════
@@ -53,10 +57,32 @@ public partial class SettingsWindow : Window
     // ═══════════════════════════════════════════
 
     private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
     private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_SYSKEYUP = 0x0105;
+    private const int WH_KEYBOARD_LL = 13;
+    private const uint VK_SNAPSHOT = 0x2C;
+    private const uint VK_FN = 0xFF;
+    private const uint SC_FN = 0x63;
+    private const uint SC_PRINTSCREEN = 0x37;
 
-    [DllImport("user32.dll")]
-    private static extern short GetKeyState(int vk);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
@@ -65,9 +91,7 @@ public partial class SettingsWindow : Window
 
         int vk = wParam.ToInt32();
 
-        // Modifier-only → ignore
-        if (vk is 0xA0 or 0xA1 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C
-            or 0x10 or 0x11 or 0x12) // VK_SHIFT/CTRL/ALT generic
+        if (IsModifierOnly(vk))
             return IntPtr.Zero;
 
         handled = true;
@@ -79,19 +103,94 @@ public partial class SettingsWindow : Window
             return IntPtr.Zero;
         }
 
-        // Read modifier state
-        var mods = SfModifierKeys.None;
-        if ((GetKeyState(0xA2) & 0x8000) != 0 || (GetKeyState(0xA3) & 0x8000) != 0) mods |= SfModifierKeys.Control;
-        if ((GetKeyState(0xA0) & 0x8000) != 0 || (GetKeyState(0xA1) & 0x8000) != 0) mods |= SfModifierKeys.Shift;
-        if ((GetKeyState(0xA4) & 0x8000) != 0 || (GetKeyState(0xA5) & 0x8000) != 0) mods |= SfModifierKeys.Alt;
-        if ((GetKeyState(0x5B) & 0x8000) != 0 || (GetKeyState(0x5C) & 0x8000) != 0) mods |= SfModifierKeys.Windows;
-
-        var wpfKey = KeyInterop.KeyFromVirtualKey(vk);
-        _recConfig.Modifiers = mods;
-        _recConfig.Key = wpfKey.ToString();
+        _recConfig.Modifiers = ReadCurrentModifiers();
+        _recConfig.Key = GetKeyName((uint)vk, 0);
         Dispatcher.InvokeAsync(() => FinishRecording(false));
         return IntPtr.Zero;
     }
+
+    private IntPtr _keyboardHook;
+    private LowLevelKeyboardProc? _keyboardHookProc;
+
+    private void EnsureKeyboardHook()
+    {
+        if (_keyboardHook != IntPtr.Zero)
+            return;
+
+        _keyboardHookProc = KeyboardHookProc;
+        using var proc = System.Diagnostics.Process.GetCurrentProcess();
+        using var mod = proc.MainModule!;
+        _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardHookProc, GetModuleHandle(mod.ModuleName), 0);
+    }
+
+    private void RemoveKeyboardHook()
+    {
+        if (_keyboardHook == IntPtr.Zero)
+            return;
+
+        UnhookWindowsHookEx(_keyboardHook);
+        _keyboardHook = IntPtr.Zero;
+        _keyboardHookProc = null;
+    }
+
+    private IntPtr KeyboardHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        int message = wParam.ToInt32();
+        if (_recConfig == null || nCode < 0 || !IsKeyboardMessage(message))
+            return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+
+        var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+        if (IsModifierOnly((int)data.vkCode))
+            return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+
+        if (data.vkCode == 0x1B)
+        {
+            Dispatcher.Invoke(() => FinishRecording(true));
+            return new IntPtr(1);
+        }
+
+        var keyName = GetKeyName(data.vkCode, data.scanCode);
+        Dispatcher.Invoke(() =>
+        {
+            if (_recConfig == null)
+                return;
+
+            _recConfig.Modifiers = ReadCurrentModifiers();
+            _recConfig.Key = keyName;
+            FinishRecording(false);
+        });
+        return new IntPtr(1);
+    }
+
+    private static bool IsModifierOnly(int vk) =>
+        vk is 0xA0 or 0xA1 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C
+            or 0x10 or 0x11 or 0x12;
+
+    private static SfModifierKeys ReadCurrentModifiers()
+    {
+        var mods = SfModifierKeys.None;
+        if (IsDown(0xA2) || IsDown(0xA3)) mods |= SfModifierKeys.Control;
+        if (IsDown(0xA0) || IsDown(0xA1)) mods |= SfModifierKeys.Shift;
+        if (IsDown(0xA4) || IsDown(0xA5)) mods |= SfModifierKeys.Alt;
+        if (IsDown(0x5B) || IsDown(0x5C)) mods |= SfModifierKeys.Windows;
+        return mods;
+    }
+
+    private static bool IsDown(int vk) => (GetAsyncKeyState(vk) & unchecked((short)0x8000)) != 0;
+
+    private static string GetKeyName(uint vk, uint scanCode)
+    {
+        if (vk == VK_FN || (vk == 0 && scanCode == SC_FN))
+            return "Fn";
+        if (vk == VK_SNAPSHOT || scanCode == SC_PRINTSCREEN)
+            return "Snapshot";
+
+        var key = KeyInterop.KeyFromVirtualKey((int)vk);
+        return key != Key.None ? key.ToString() : $"VK_{vk:X2}";
+    }
+
+    private static bool IsKeyboardMessage(int message) =>
+        message is WM_KEYDOWN or WM_KEYUP or WM_SYSKEYDOWN or WM_SYSKEYUP;
 
     // ═══════════════════════════════════════════
     //  Hotkey panel builder (code-gen, no XAML names needed)
@@ -215,6 +314,7 @@ public partial class SettingsWindow : Window
         _recConfig = config;
         _recSavedKey = config.Key;
         _recSavedMods = config.Modifiers;
+        EnsureKeyboardHook();
         label.Text = "Tuş basın...";
         label.Foreground = _hkDimFg;
         border.BorderBrush = _hkActiveBorder;
@@ -237,6 +337,7 @@ public partial class SettingsWindow : Window
         _recLabel = null;
         _recBorder = null;
         _recConfig = null;
+        RemoveKeyboardHook();
         if (didChange) Apply(() => { });
     }
 
