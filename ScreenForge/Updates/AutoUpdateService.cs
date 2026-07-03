@@ -1,3 +1,4 @@
+using System.IO;
 using System.Threading;
 using Velopack;
 using Velopack.Sources;
@@ -7,6 +8,10 @@ namespace ScreenForge.Updates;
 public static class AutoUpdateService
 {
     private const string ReleasesUrl = "https://github.com/ruwiss/screen_forge";
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "ScreenForge",
+        "update.log");
     private static int _started;
 
     public static void CheckOnStartup(Action<string, string> notify, Action shutdown)
@@ -21,12 +26,23 @@ public static class AutoUpdateService
         {
             await Task.Delay(TimeSpan.FromSeconds(3));
 
+            WriteLog($"Kontrol başladı. ProcessPath={Environment.ProcessPath}; BaseDirectory={AppContext.BaseDirectory}");
+
             var manager = new UpdateManager(new GithubSource(ReleasesUrl, null, prerelease: false));
-            if (!manager.IsInstalled)
+            var isInstalled = manager.IsInstalled;
+            WriteLog($"Velopack durumu. IsInstalled={isInstalled}");
+
+            if (!isInstalled)
+            {
+                WriteLog("Güncelleme pas geçildi. Uygulama Velopack kurulumundan çalışmıyor.");
                 return;
+            }
+
+            WriteLog($"Kurulu sürüm. CurrentVersion={manager.CurrentVersion}; PendingRestart={manager.UpdatePendingRestart != null}");
 
             if (manager.UpdatePendingRestart is { } pending)
             {
+                WriteLog($"Bekleyen güncelleme uygulanacak. Version={pending.Version}");
                 notify("Güncelleme hazır", "ScreenForge güncellemesi uygulanıyor.");
                 await ApplyAndRestartAsync(manager, pending, shutdown);
                 return;
@@ -34,16 +50,22 @@ public static class AutoUpdateService
 
             var update = await manager.CheckForUpdatesAsync();
             if (update == null)
+            {
+                WriteLog("Yeni güncelleme bulunamadı.");
                 return;
+            }
 
+            WriteLog($"Güncelleme bulundu. TargetVersion={update.TargetFullRelease.Version}");
             notify("Güncelleme bulundu", "Yeni ScreenForge sürümü indiriliyor.");
             await manager.DownloadUpdatesAsync(update);
 
+            WriteLog("Güncelleme indirildi. Yeniden başlatma hazırlanıyor.");
             notify("Güncelleme hazır", "ScreenForge yeniden başlatılıp güncellenecek.");
             await ApplyAndRestartAsync(manager, update.TargetFullRelease, shutdown);
         }
-        catch
+        catch (Exception ex)
         {
+            WriteLog("Güncelleme hatası: " + ex);
             // Güncelleme hatası ana uygulamayı etkilememeli.
         }
     }
@@ -53,5 +75,21 @@ public static class AutoUpdateService
         await Task.Delay(TimeSpan.FromMilliseconds(700));
         manager.WaitExitThenApplyUpdates(release, silent: true, restart: true);
         shutdown();
+    }
+
+    private static void WriteLog(string message)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(LogPath);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            File.AppendAllText(LogPath, $"[{DateTimeOffset.Now:O}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Log yazılamazsa güncelleme akışı etkilenmemeli.
+        }
     }
 }
