@@ -3,6 +3,7 @@ bin/
 obj/
 publish/
 Output/
+Releases/
 
 # IDE
 .vs/

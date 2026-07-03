@@ -4,6 +4,7 @@ using System.Windows;
 using ScreenForge.Hotkeys;
 using ScreenForge.Settings;
 using ScreenForge.Tray;
+using Velopack;
 
 namespace ScreenForge;
 
@@ -15,6 +16,18 @@ public partial class App : Application
     private HotkeyService? _hotkeys;
 
     public static AppSettings Settings { get; private set; } = new();
+
+    [STAThread]
+    public static void Main(string[] args)
+    {
+        VelopackApp.Build()
+            .SetArgs(args)
+            .Run();
+
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
+    }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -56,6 +69,10 @@ public partial class App : Application
             _tray.ShowMessage("ScreenForge'a Hoş Geldiniz",
                 $"Bölge yakalamak için {regionKey} kısayolunu kullanabilirsiniz.");
         }
+
+        Updates.AutoUpdateService.CheckOnStartup(
+            (title, message) => Dispatcher.Invoke(() => _tray?.ShowMessage(title, message)),
+            () => Dispatcher.Invoke(Shutdown));
     }
 
     /// <summary>Ayarlardaki tüm kısayolları (yeniden) kaydeder.</summary>
