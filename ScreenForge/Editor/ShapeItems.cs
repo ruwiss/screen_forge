@@ -288,6 +288,14 @@ public class FreehandItem : SceneItem
 
     protected void InvalidatePathCache() { _cachedPath?.Dispose(); _cachedPath = null; }
 
+    public void ReplacePoints(IEnumerable<SKPoint> points, SKRect? boundsOverride = null)
+    {
+        Points = points.ToList();
+        if (boundsOverride.HasValue) Bounds = boundsOverride.Value;
+        else RecalcBounds();
+        InvalidatePathCache();
+    }
+
     protected virtual void RecalcBounds()
     {
         if (Points.Count == 0) { Bounds = SKRect.Empty; return; }
@@ -385,7 +393,7 @@ public class FreehandItem : SceneItem
     public override void RestoreFrom(SceneItem other)
     {
         base.RestoreFrom(other);
-        if (other is FreehandItem f) Points = new List<SKPoint>(f.Points);
+        if (other is FreehandItem f) ReplacePoints(f.Points, f.Bounds);
     }
 }
 

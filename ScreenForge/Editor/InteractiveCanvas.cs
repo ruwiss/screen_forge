@@ -67,7 +67,7 @@ public sealed class InteractiveCanvas : SKElement
     private int _sceneCropHandle = -1;   // -1=yeni çiz, 0-7=handle resize, 8=içten taşı
     private SKPoint _sceneCropMoveOrigin;
     public bool IsSceneCropping => _sceneCropping;
-    public event Action? SceneCropCommitted;
+    public event Action<SKRect>? SceneCropCommitted;
 
     // Etkileşim durumu
     private bool _interacting;
@@ -958,6 +958,7 @@ public sealed class InteractiveCanvas : SKElement
             FontFamily = ToolStyle.FontFamily,
             FontSize = (float)ToolStyle.FontSize,
             Bold = ToolStyle.FontBold,
+            Italic = ToolStyle.FontItalic,
             Shadow = ToolStyle.TextShadow,
             StrokeText = ToolStyle.TextStroke,
             StrokeTextColor = ColorFromHex(ToolStyle.TextStrokeColor),
@@ -1105,7 +1106,7 @@ public sealed class InteractiveCanvas : SKElement
             var item = Selection[i];
             var orig = _beforeStates[i];
             item.RestoreFrom(orig);                      // başlangıç haline dön
-            ApplyResize(item, ob, MapRect(orig.Bounds, ob, nb));
+            ApplyResize(item, orig.Bounds, MapRect(orig.Bounds, ob, nb), orig);
         }
     }
 
@@ -1149,14 +1150,17 @@ public sealed class InteractiveCanvas : SKElement
                 line.SyncBounds();
                 break;
             case FreehandItem fh:
-                for (int i = 0; i < fh.Points.Count; i++)
-                    fh.Points[i] = MapPoint(fh.Points[i], oldB, newB);
-                fh.Bounds = newB;
+                var beforeFreehand = beforeState as FreehandItem;
+                var sourcePoints = beforeFreehand?.Points ?? fh.Points;
+                var mappedPoints = new List<SKPoint>(sourcePoints.Count);
+                foreach (var pt in sourcePoints)
+                    mappedPoints.Add(MapPoint(pt, oldB, newB));
+                fh.ReplacePoints(mappedPoints, newB);
                 break;
             case StepItem s:
                 float newDiam = Math.Max(Math.Min(newB.Width, newB.Height), 12f);
                 s.Diameter = newDiam;
-                s.Position = new SKPoint(oldB.MidX, oldB.MidY);
+                s.Position = new SKPoint(newB.MidX, newB.MidY);
                 s.SyncBounds();
                 break;
             case TextItem t:
@@ -1290,12 +1294,13 @@ public sealed class InteractiveCanvas : SKElement
     {
         if (!_sceneCropping) return;
         var cr = _sceneCropRect;
-        if (cr.Width >= 4 && cr.Height >= 4)
+        bool applied = cr.Width >= 4 && cr.Height >= 4;
+        if (applied)
             Scene.Apply(new SceneCropAction(Scene, cr));
         _sceneCropping = false;
         _sceneCropDragging = false;
         InvalidateVisual();
-        SceneCropCommitted?.Invoke();
+        if (applied) SceneCropCommitted?.Invoke(cr);
     }
 
     public void CancelSceneCrop()

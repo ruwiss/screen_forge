@@ -134,6 +134,7 @@ public sealed class ToolStyleMemory
     // Genel
     public string StrokeColor { get; set; } = "#FFEA6F12";   // accent turuncu
     public string FillColor { get; set; } = "#00000000";     // şeffaf (varsayılan boş)
+    public string FreeBackgroundColor { get; set; } = "#FF1F2430";
     public double StrokeWidth { get; set; } = 4;
     public double Opacity { get; set; } = 1.0;
 
@@ -144,6 +145,7 @@ public sealed class ToolStyleMemory
     public string FontFamily { get; set; } = "Segoe UI";
     public double FontSize { get; set; } = 20;
     public bool FontBold { get; set; } = true;
+    public bool FontItalic { get; set; } = false;
     public string TextColor { get; set; } = "#FFFFFFFF";
     public bool TextShadow { get; set; } = true;
     public int TextShadowLevel { get; set; } = 1;   // 0=Hafif, 1=Normal, 2=Güçlü

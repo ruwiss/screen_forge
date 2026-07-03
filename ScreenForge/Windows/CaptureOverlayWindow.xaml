@@ -95,6 +95,30 @@
             <StackPanel x:Name="OptionStack" Orientation="Horizontal" VerticalAlignment="Center" />
         </Border>
 
+        <!-- Serbest mod kırpma işlem şeridi -->
+        <Border x:Name="CropActionBar" Visibility="Collapsed"
+                Background="#F21F2430" CornerRadius="6" Padding="5,4"
+                BorderBrush="#D6A800" BorderThickness="1">
+            <Border.Effect>
+                <DropShadowEffect Color="Black" BlurRadius="12" ShadowDepth="2" Opacity="0.45" />
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Kırpma" Foreground="#F2D600" FontFamily="Segoe UI"
+                           FontSize="12" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Margin="6,0,8,0" />
+                <Button x:Name="CropApplyButton" Content="Bitir" Height="26"
+                        Padding="10,0" Margin="1,0"
+                        Foreground="White" Background="#EA6F12"
+                        BorderThickness="0" Cursor="Hand"
+                        Style="{StaticResource ActionChip}" />
+                <Button x:Name="CropCancelButton" Content="İptal" Height="26"
+                        Padding="10,0" Margin="1,0"
+                        Foreground="White" Background="Transparent"
+                        BorderThickness="0" Cursor="Hand"
+                        Style="{StaticResource ActionChip}" />
+            </StackPanel>
+        </Border>
+
         <!-- İpucu (Faz 1) -->
         <Border x:Name="HintBox" Background="#CC1F2430" CornerRadius="6" Padding="14,8"
                 IsHitTestVisible="False">
