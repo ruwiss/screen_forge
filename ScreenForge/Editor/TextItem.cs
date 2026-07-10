@@ -1,4 +1,5 @@
 using SkiaSharp;
+using ScreenForge.Settings;
 
 namespace ScreenForge.Editor;
 
@@ -25,6 +26,7 @@ public sealed class TextItem : SceneItem
     public float RibbonPadding { get; set; } = 8f;
     public float RibbonPaddingV { get; set; } = 4f;
     public float RibbonRadius { get; set; } = 8f;
+    public TextAlignmentMode TextAlignment { get; set; } = TextAlignmentMode.Left;
 
     public override bool IsTextEditable => true;
 
@@ -48,11 +50,17 @@ public sealed class TextItem : SceneItem
         return new SKFont(typeface, FontSize);
     }
 
+    private string[] Lines()
+    {
+        var normalized = Text.Replace("\r\n", "\n").Replace('\r', '\n');
+        return normalized.Length == 0 ? new[] { "" } : normalized.Split('\n');
+    }
+
     /// <summary>Metni ölçer ve Bounds'u günceller (Render öncesi de çağrılır).</summary>
     public SKSize Measure()
     {
         using var font = BuildFont();
-        var lines = (Text.Length == 0 ? " " : Text).Split('\n');
+        var lines = Lines();
         float lineHeight = font.Spacing;
         float maxW = 0;
         foreach (var line in lines)
@@ -73,12 +81,12 @@ public sealed class TextItem : SceneItem
 
     public override void Render(SKCanvas canvas)
     {
-        Measure();
+        var textSize = Measure();
         canvas.Save();
         ApplyRotation(canvas);
 
         using var font = BuildFont();
-        var lines = Text.Split('\n');
+        var lines = Lines();
         float lineHeight = font.Spacing;
 
         // Şerit arka plan
@@ -93,10 +101,20 @@ public sealed class TextItem : SceneItem
         for (int i = 0; i < lines.Length; i++)
         {
             float y = baselineY + i * lineHeight;
-            DrawLine(canvas, lines[i], Position.X, y, font);
+            float lineX = AlignedLineX(lines[i], font, textSize.Width);
+            DrawLine(canvas, lines[i], lineX, y, font);
         }
 
         canvas.Restore();
+    }
+
+    private float AlignedLineX(string text, SKFont font, float maxWidth)
+    {
+        if (TextAlignment == TextAlignmentMode.Left) return Position.X;
+        float lineWidth = font.MeasureText(text.Length == 0 ? " " : text);
+        return TextAlignment == TextAlignmentMode.Center
+            ? Position.X + (maxWidth - lineWidth) / 2f
+            : Position.X + maxWidth - lineWidth;
     }
 
     private void DrawLine(SKCanvas canvas, string text, float x, float y, SKFont font)
@@ -142,7 +160,7 @@ public sealed class TextItem : SceneItem
             Text = Text, FontFamily = FontFamily, FontSize = FontSize, Bold = Bold, Italic = Italic,
             Shadow = Shadow, ShadowLevel = ShadowLevel, StrokeText = StrokeText, StrokeTextColor = StrokeTextColor,
             Ribbon = Ribbon, RibbonColor = RibbonColor, RibbonPadding = RibbonPadding, RibbonPaddingV = RibbonPaddingV, RibbonRadius = RibbonRadius,
-            Position = Position,
+            Position = Position, TextAlignment = TextAlignment,
         };
         CopyBaseTo(c);
         return c;
@@ -156,7 +174,7 @@ public sealed class TextItem : SceneItem
             Text = t.Text; FontFamily = t.FontFamily; FontSize = t.FontSize; Bold = t.Bold; Italic = t.Italic;
             Shadow = t.Shadow; ShadowLevel = t.ShadowLevel; StrokeText = t.StrokeText; StrokeTextColor = t.StrokeTextColor;
             Ribbon = t.Ribbon; RibbonColor = t.RibbonColor; RibbonPadding = t.RibbonPadding; RibbonPaddingV = t.RibbonPaddingV; RibbonRadius = t.RibbonRadius;
-            Position = t.Position;
+            Position = t.Position; TextAlignment = t.TextAlignment;
         }
     }
 }

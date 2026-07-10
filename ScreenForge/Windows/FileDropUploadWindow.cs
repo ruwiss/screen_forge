@@ -196,7 +196,7 @@ public sealed class FileDropUploadWindow
             {
                 if (new FileInfo(path).Length > MaxFileSizeBytes)
                 {
-                    MessageBox.Show("Dosya boyutu 4 MB sınırını aşıyor.", "ScreenForge",
+                    MessageBox.Show("Dosya boyutu 5,2 MB sınırını aşıyor.", "ScreenForge",
                         MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
@@ -212,7 +212,7 @@ public sealed class FileDropUploadWindow
         win.Show();
     }
 
-    private const long MaxFileSizeBytes = 4 * 1024 * 1024; // 4 MB
+    private const long MaxFileSizeBytes = ScreenForge.Editor.ImageExporter.UploadMaxBytes;
 
     private static bool IsValidDrop(DragEventArgs e)
     {

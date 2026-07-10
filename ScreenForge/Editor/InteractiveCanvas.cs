@@ -495,7 +495,7 @@ public sealed class InteractiveCanvas : SKElement
         var p = ToScene(e.GetPosition(this));
 
         // Çift tık: metin düzenle / resim crop
-        if (e.ClickCount == 2)
+        if (e.ClickCount == 2 && !_sceneCropping)
         {
             var dhit = Scene.HitTest(p);
             if (dhit is TextItem dt) { SetSelection(dt); TextEditRequested?.Invoke(dt); return; }
@@ -814,6 +814,12 @@ public sealed class InteractiveCanvas : SKElement
     protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseRightButtonUp(e);
+        if (_sceneCropping || IsCropping)
+        {
+            e.Handled = true;
+            return;
+        }
+
         var p = ToScene(e.GetPosition(this));
         var hit = Scene.HitTest(p);
         if (hit == null) return;
@@ -933,9 +939,9 @@ public sealed class InteractiveCanvas : SKElement
         {
             var item = _draftItem;
             Scene.Apply(new AddItemAction(item));
-            // Dörtgen/Daire/Çizgi/Ok: Select'e geç + öğeyi seç (resize edilebilsin).
-            // Diğerleri (Kalem/Highlight/Blur): araç aktif kalır → çoklu kullanım.
-            if (_tool is EditorTool.Rectangle or EditorTool.Ellipse or EditorTool.Line or EditorTool.Arrow)
+            // Dörtgen/Daire/Çizgi/Ok/Blur: Select'e geç + öğeyi seç (resize edilebilsin).
+            // Diğerleri (Kalem/Highlight): araç aktif kalır → çoklu kullanım.
+            if (_tool is EditorTool.Rectangle or EditorTool.Ellipse or EditorTool.Line or EditorTool.Arrow or EditorTool.Blur)
             {
                 Tool = EditorTool.Select;
                 SetSelection(item);
@@ -965,6 +971,7 @@ public sealed class InteractiveCanvas : SKElement
             Ribbon = ToolStyle.TextRibbon,
             RibbonColor = ColorFromHex(ToolStyle.TextRibbonColor),
             StrokeColor = ColorFromHex(ToolStyle.TextColor),
+            TextAlignment = ToolStyle.TextAlignment,
         };
         Scene.Apply(new AddItemAction(t));
         Tool = EditorTool.Select;
@@ -1290,9 +1297,9 @@ public sealed class InteractiveCanvas : SKElement
         InvalidateVisual();
     }
 
-    public void CommitSceneCrop()
+    public bool CommitSceneCrop()
     {
-        if (!_sceneCropping) return;
+        if (!_sceneCropping) return false;
         var cr = _sceneCropRect;
         bool applied = cr.Width >= 4 && cr.Height >= 4;
         if (applied)
@@ -1301,6 +1308,7 @@ public sealed class InteractiveCanvas : SKElement
         _sceneCropDragging = false;
         InvalidateVisual();
         if (applied) SceneCropCommitted?.Invoke(cr);
+        return applied;
     }
 
     public void CancelSceneCrop()

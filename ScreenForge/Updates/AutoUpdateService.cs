@@ -7,7 +7,7 @@ namespace ScreenForge.Updates;
 
 public static class AutoUpdateService
 {
-    private const string ReleasesUrl = "https://github.com/ruwiss/screen_forge";
+    private const string ReleasesUrl = "https://github.com/ruwiss/screen_forge/releases/latest/download";
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "ScreenForge",
@@ -28,7 +28,7 @@ public static class AutoUpdateService
 
             WriteLog($"Kontrol başladı. ProcessPath={Environment.ProcessPath}; BaseDirectory={AppContext.BaseDirectory}");
 
-            var manager = new UpdateManager(new GithubSource(ReleasesUrl, null, prerelease: false));
+            var manager = new UpdateManager(new SimpleWebSource(ReleasesUrl));
             var isInstalled = manager.IsInstalled;
             WriteLog($"Velopack durumu. IsInstalled={isInstalled}");
 

@@ -2,6 +2,8 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using ScreenForge.Editor;
+using SkiaSharp;
 
 namespace ScreenForge.Upload;
 
@@ -11,7 +13,7 @@ namespace ScreenForge.Upload;
 /// </summary>
 public sealed class PrntscrUploadProvider : IUploadProvider
 {
-    private static readonly string PrntscrSecret =
+    private static string PrntscrSecret =>
         Environment.GetEnvironmentVariable("SCREENFORGE_UPLOAD_SECRET") ?? "";
 
     private const string ChromeUserAgent =
@@ -26,15 +28,21 @@ public sealed class PrntscrUploadProvider : IUploadProvider
     {
         if (imageBytes == null || imageBytes.Length == 0)
             throw new ArgumentException("Geçersiz görüntü verisi.");
+        if (imageBytes.Length > ImageExporter.UploadMaxBytes)
+            throw new ArgumentException("Görüntü 5,2 MB yükleme sınırını aşıyor.");
 
         progress?.Invoke(0.05);
 
         string ext = MimeToExtension(mimeType);
-        var (width, height) = ReadPngDimensions(imageBytes); // PNG değilse 1×1
+        var (width, height) = ReadImageDimensions(imageBytes);
 
         // İmzalı yükleme URL'si
         long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        string hash = Md5Hex(PrntscrSecret + timestamp);
+        string secret = PrntscrSecret.Trim();
+        if (string.IsNullOrWhiteSpace(secret) || secret == "your_upload_secret_here")
+            throw new InvalidOperationException("Yükleme anahtarı bulunamadı. SCREENFORGE_UPLOAD_SECRET ayarını kontrol edin.");
+
+        string hash = Md5Hex(secret + timestamp);
         string uploadUrl = $"https://upload.prntscr.com/upload/{timestamp}/{hash}/";
 
         progress?.Invoke(0.15);
@@ -57,6 +65,8 @@ public sealed class PrntscrUploadProvider : IUploadProvider
 
         using var resp = await Http.SendAsync(req).ConfigureAwait(false);
         string xml = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Yükleme sunucusu HTTP {(int)resp.StatusCode} döndürdü.");
 
         progress?.Invoke(0.7);
 
@@ -66,7 +76,9 @@ public sealed class PrntscrUploadProvider : IUploadProvider
         if (!string.Equals(status, "success", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(shareUrl))
         {
             string error = Match(xml, @"<error>([^<]+)</error>");
-            throw new InvalidOperationException(string.IsNullOrEmpty(error) ? "Yükleme reddedildi." : error);
+            throw new InvalidOperationException(string.IsNullOrEmpty(error)
+                ? "Yükleme reddedildi. Görüntü büyük olabilir; kırparak veya daha küçük alanla deneyin."
+                : error);
         }
 
         shareUrl = System.Net.WebUtility.HtmlDecode(shareUrl);
@@ -128,6 +140,23 @@ public sealed class PrntscrUploadProvider : IUploadProvider
     {
         var m = Regex.Match(input, pattern, RegexOptions.IgnoreCase);
         return m.Success ? m.Groups[1].Value : "";
+    }
+
+    private static (int width, int height) ReadImageDimensions(byte[] data)
+    {
+        try
+        {
+            using var skData = SKData.CreateCopy(data);
+            using var codec = SKCodec.Create(skData);
+            if (codec != null && codec.Info.Width > 0 && codec.Info.Height > 0)
+                return (codec.Info.Width, codec.Info.Height);
+        }
+        catch
+        {
+            // PNG başlığına düş.
+        }
+
+        return ReadPngDimensions(data);
     }
 
     /// <summary>PNG imzasını doğrular ve gerçek boyutları okur; geçerli değilse 1×1.</summary>

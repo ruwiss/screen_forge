@@ -9,6 +9,10 @@ namespace ScreenForge.Editor;
 /// <summary>Sahneyi kodlar (PNG/JPEG/WebP), panoya kopyalar ve dosyaya kaydeder.</summary>
 public static class ImageExporter
 {
+    // Prntscr upload testi (2026-07-07): 5,200,000 byte kabul, 5,242,200+ byte ret.
+    // Sınıra yakın oynama olduğu için güvenli pay bırakılır.
+    public const int UploadMaxBytes = 5_200_000;
+
     public static SKData Encode(SKBitmap bmp, ImageFormat format, int quality)
     {
         var (skFormat, q) = format switch
@@ -50,6 +54,27 @@ public static class ImageExporter
         ImageFormat.Webp => "image/webp",
         _ => "image/png",
     };
+
+    public static (byte[] Bytes, string MimeType) EncodeForUpload(SKBitmap bmp, bool preserveTransparency = false)
+    {
+        using var pngData = Encode(bmp, ImageFormat.Png, 100);
+        var pngBytes = pngData.ToArray();
+        if (pngBytes.Length <= UploadMaxBytes)
+            return (pngBytes, MimeType(ImageFormat.Png));
+
+        if (preserveTransparency)
+            throw new InvalidOperationException("Saydam PNG 5,2 MB sınırını aşıyor. Daha küçük alan seçin veya arkaplanlı yükleyin.");
+
+        foreach (int quality in new[] { 92, 85, 78, 70, 62, 54 })
+        {
+            using var jpegData = Encode(bmp, ImageFormat.Jpeg, quality);
+            var jpegBytes = jpegData.ToArray();
+            if (jpegBytes.Length <= UploadMaxBytes)
+                return (jpegBytes, MimeType(ImageFormat.Jpeg));
+        }
+
+        throw new InvalidOperationException("Yükleme için görüntü 5,2 MB sınırını aşıyor. Daha küçük alan seçin veya kırparak yükleyin.");
+    }
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

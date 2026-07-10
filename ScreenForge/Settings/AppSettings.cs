@@ -153,6 +153,7 @@ public sealed class ToolStyleMemory
     public string TextStrokeColor { get; set; } = "#FF000000";
     public bool TextRibbon { get; set; } = true;            // paddingli şerit arka plan
     public string TextRibbonColor { get; set; } = "#CC1F2430";
+    public TextAlignmentMode TextAlignment { get; set; } = TextAlignmentMode.Left;
 
     // Step işareti
     public StepShape StepShape { get; set; } = StepShape.Circle;
@@ -173,4 +174,11 @@ public enum StepShape
     Circle,
     Square,
     Bubble,
+}
+
+public enum TextAlignmentMode
+{
+    Left,
+    Center,
+    Right,
 }

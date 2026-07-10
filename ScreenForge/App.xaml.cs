@@ -172,8 +172,11 @@ public partial class App : Application
             string mime = "image/png";
             using (var full = Capture.ScreenCapture.CaptureVirtualScreen(Settings.ShowCursor))
             using (var sk = ToSkBitmap(full))
-            using (var data = Editor.ImageExporter.Encode(sk, ScreenForge.Settings.ImageFormat.Png, 100))
-                bytes = data.ToArray();
+            {
+                var upload = Editor.ImageExporter.EncodeForUpload(sk);
+                bytes = upload.Bytes;
+                mime = upload.MimeType;
+            }
 
             var toast = new Windows.UploadToastWindow();
             toast.Show();
@@ -230,7 +233,7 @@ public partial class App : Application
             var envPath = Path.Combine(dir, ".env");
             if (File.Exists(envPath))
             {
-                foreach (var line in File.ReadAllLines(envPath))
+                foreach (var line in File.ReadAllLines(envPath, System.Text.Encoding.UTF8))
                 {
                     var trimmed = line.Trim();
                     if (trimmed.Length == 0 || trimmed[0] == '#') continue;

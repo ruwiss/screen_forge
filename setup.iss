@@ -3,7 +3,7 @@
 ; Then:  iscc setup.iss
 
 #define MyAppName "ScreenForge"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.7"
 #define MyAppPublisher "ScreenForge"
 #define MyAppURL "https://github.com/screenforge"
 #define MyAppExeName "ScreenForge.exe"

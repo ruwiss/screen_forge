@@ -45,6 +45,7 @@ public partial class CaptureOverlayWindow : Window
     private struct WinRect { public int Left, Top, Right, Bottom; }
 
     private enum Phase { Select, Edit }
+    private enum PendingFreeExportAction { Copy, Save, Upload }
 
     private readonly Bitmap _screenshot;
     private readonly Rectangle _virtualBounds;
@@ -62,6 +63,7 @@ public partial class CaptureOverlayWindow : Window
     private Scene? _scene;
     private InteractiveCanvas? _canvas;
     private bool _textEditing;   // inline metin düzenleme açıkken araç kısayollarını engelle
+    private PendingFreeExportAction? _pendingFreeExportAction;
 
     // Pencere algılama — sadece ilk Region+Select fazında aktif
     private bool _windowHoverActive = true;
@@ -164,6 +166,8 @@ public partial class CaptureOverlayWindow : Window
                 e.Handled = true;
                 return;
             }
+            e.Handled = true;
+            return;
         }
 
         if (e.Key != Key.Escape) return;
@@ -401,6 +405,8 @@ public partial class CaptureOverlayWindow : Window
             int edge = HitSelectionEdge(pos);
             if (edge >= 0)
             {
+                if (_canvas != null)
+                    _canvas.Tool = EditorTool.Select;
                 _selResizing = true;
                 _selResizeEdge = edge;
                 _start = pos;
@@ -541,6 +547,7 @@ public partial class CaptureOverlayWindow : Window
             _selResizeEdge = -1;
             ReleaseMouseCapture();
             if (_selDip.Width < 50 || _selDip.Height < 50) { LeaveEditPhase(); ResetSelection(); return; }
+            Cursor = Cursors.Arrow;
             _pixelRegion = ToPixelRegion(_selDip);
             RebuildEditForNewRegion();
             return;
@@ -635,8 +642,9 @@ public partial class CaptureOverlayWindow : Window
         SelectionBorder.Height = _selDip.Height;
         Canvas.SetLeft(SelectionBorder, _selDip.X);
         Canvas.SetTop(SelectionBorder, _selDip.Y);
-        Toolbar.Visibility = Visibility.Visible;
-        ActionBar.Visibility = Visibility.Visible;
+        BuildToolbar();
+        BuildActionBar();
+        BuildOptionBar();
         CropActionBar.Visibility = Visibility.Collapsed;
         UpdateDimRects(_selDip);
         PositionPanels();
@@ -823,6 +831,12 @@ public partial class CaptureOverlayWindow : Window
         EditHost.Height = _selDip.Height;
 
         SyncPlaceholder();
+        if (_pendingFreeExportAction != null)
+        {
+            FinishPendingFreeExport();
+            return;
+        }
+
         BuildOptionBar();
         PositionPanels();
         _canvas?.Focus();
@@ -842,9 +856,17 @@ public partial class CaptureOverlayWindow : Window
     }
 
     private void BeginSceneCropUi()
+        => BeginSceneCropUi(null);
+
+    private void BeginSceneCropUi(PendingFreeExportAction? pendingAction)
     {
         if (_canvas == null) return;
+        _pendingFreeExportAction = pendingAction;
         _canvas.BeginSceneCrop();
+        Toolbar.Visibility = Visibility.Collapsed;
+        ActionBar.Visibility = Visibility.Collapsed;
+        OptionBar.Visibility = Visibility.Collapsed;
+        PlaceholderPanel.Visibility = Visibility.Collapsed;
         CropActionBar.Visibility = Visibility.Visible;
         PositionPanels();
         _canvas.Focus();
@@ -853,10 +875,21 @@ public partial class CaptureOverlayWindow : Window
     private void CommitSceneCropUi()
     {
         if (_canvas == null) return;
-        _canvas.CommitSceneCrop();
         CropActionBar.Visibility = Visibility.Collapsed;
-        PositionPanels();
-        _canvas.Focus();
+        bool hadPendingAction = _pendingFreeExportAction != null;
+        bool applied = _canvas.CommitSceneCrop();
+        if (!applied)
+        {
+            _pendingFreeExportAction = null;
+            RestoreAfterSceneCropUi();
+            return;
+        }
+
+        if (!hadPendingAction)
+        {
+            RestoreAfterSceneCropUi();
+            _canvas.Focus();
+        }
     }
 
     private void CancelSceneCropUi()
@@ -864,7 +897,8 @@ public partial class CaptureOverlayWindow : Window
         if (_canvas == null) return;
         _canvas.CancelSceneCrop();
         CropActionBar.Visibility = Visibility.Collapsed;
-        PositionPanels();
+        _pendingFreeExportAction = null;
+        RestoreAfterSceneCropUi();
         _canvas.Focus();
     }
 
@@ -873,6 +907,16 @@ public partial class CaptureOverlayWindow : Window
         if (_canvas == null) return;
         if (_canvas.IsSceneCropping) CommitSceneCropUi();
         else BeginSceneCropUi();
+    }
+
+    private void RestoreAfterSceneCropUi()
+    {
+        if (_phase != Phase.Edit || _canvas == null) return;
+        Toolbar.Visibility = Visibility.Visible;
+        ActionBar.Visibility = Visibility.Visible;
+        SyncPlaceholder();
+        BuildOptionBar();
+        PositionPanels();
     }
 
     private static SKBitmap ToSkBitmap(Bitmap bmp)
@@ -921,28 +965,10 @@ public partial class CaptureOverlayWindow : Window
             _toolButtons[tool] = btn;
             ToolStack.Children.Add(btn);
         }
-        // Serbest modda canvas komutları
+        // Serbest modda arkaplan rengi
         if (_mode == CaptureMode.Free)
         {
-            // Horizontal toolbar → dikey çizgi; Vertical → yatay çizgi
-            bool horiz = ToolStack.Orientation == Orientation.Horizontal;
-            var sep = new Border
-            {
-                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x4A, 0x52, 0x66)),
-            };
-            if (horiz) { sep.Width = 1; sep.Height = 22; sep.Margin = new Thickness(4, 0, 4, 0); }
-            else        { sep.Height = 1; sep.Margin = new Thickness(4, 4, 4, 4); }
-            ToolStack.Children.Add(sep);
-
             ToolStack.Children.Add(MakeFreeBackgroundButton());
-
-            var cropBtn = new Button { Style = TryFindResource("IconCmdButton") as Style };
-            cropBtn.Tag = TryFindResource("IconCrop");
-            // IconToolButton ile aynı 32×32
-            cropBtn.Width = 32; cropBtn.Height = 32; cropBtn.Margin = new Thickness(2);
-            AttachHint(cropBtn, "Sahneyi Kırp / Uygula  [C]");
-            cropBtn.Click += (_, _) => ToggleSceneCropUi();
-            ToolStack.Children.Add(cropBtn);
         }
 
         Toolbar.Visibility = Visibility.Visible;
@@ -953,21 +979,12 @@ public partial class CaptureOverlayWindow : Window
         var color = CurrentFreeBackgroundColor();
         var swatch = new Border
         {
-            Width = 18,
-            Height = 18,
-            CornerRadius = new CornerRadius(4),
+            Width = 16,
+            Height = 16,
+            CornerRadius = new CornerRadius(3),
             Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(color.Alpha, color.Red, color.Green, color.Blue)),
-            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(190, 255, 255, 255)),
-            BorderThickness = new Thickness(1.25),
-        };
-        var canvasMark = new Border
-        {
-            Width = 22,
-            Height = 22,
-            CornerRadius = new CornerRadius(5),
-            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(60, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(210, 255, 255, 255)),
             BorderThickness = new Thickness(1),
-            Child = swatch,
         };
 
         var btn = new Button
@@ -979,7 +996,7 @@ public partial class CaptureOverlayWindow : Window
             Padding = new Thickness(0),
             Background = System.Windows.Media.Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Content = canvasMark,
+            Content = swatch,
             Cursor = Cursors.Hand,
         };
         btn.Click += (_, _) => OpenFreeBackgroundPicker(btn, swatch);
@@ -1125,6 +1142,8 @@ public partial class CaptureOverlayWindow : Window
                 style.FontItalic = b;
                 _scene?.RaiseChanged();
             }, italic: true);
+            AddSep();
+            AddTextAlignmentControls(all, style, (sel as TextItem)?.TextAlignment ?? style.TextAlignment);
             AddSep();
             AddFontCombo();
             AddSep();
@@ -1450,6 +1469,71 @@ public partial class CaptureOverlayWindow : Window
         b.Click += (_, _) => onToggle(b.IsChecked == true);
         AttachHint(b, label);
         target.Children.Add(b);
+    }
+
+    private void AddTextAlignmentControls(IReadOnlyCollection<SceneItem> items, ToolStyleMemory style, TextAlignmentMode current)
+    {
+        foreach (var mode in new[] { TextAlignmentMode.Left, TextAlignmentMode.Center, TextAlignmentMode.Right })
+        {
+            var btn = new ToggleButton
+            {
+                Content = BuildTextAlignIcon(mode),
+                IsChecked = current == mode,
+                Cursor = Cursors.Hand,
+                Width = 26,
+                Height = 26,
+                Margin = new Thickness(1, 0, 1, 0),
+                Padding = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Style = TryFindResource("ModeChip") as Style,
+            };
+            btn.Click += (_, _) =>
+            {
+                foreach (var s in items)
+                    if (s is TextItem ti) ti.TextAlignment = mode;
+                style.TextAlignment = mode;
+                if (_editingItem != null)
+                    _editingItem.TextAlignment = mode;
+                if (_textBox != null)
+                    _textBox.TextAlignment = ToWpfTextAlignment(mode);
+                _scene?.RaiseChanged();
+                BuildOptionBar();
+            };
+            AttachHint(btn, mode switch
+            {
+                TextAlignmentMode.Center => "Ortala",
+                TextAlignmentMode.Right => "Sağa hizala",
+                _ => "Sola hizala",
+            });
+            OptionStack.Children.Add(btn);
+        }
+    }
+
+    private static UIElement BuildTextAlignIcon(TextAlignmentMode mode)
+    {
+        var canvas = new System.Windows.Controls.Canvas { Width = 16, Height = 16 };
+        double[] widths = { 14, 10, 13 };
+        double[] tops = { 3, 7, 11 };
+        for (int i = 0; i < widths.Length; i++)
+        {
+            double left = mode switch
+            {
+                TextAlignmentMode.Center => (16 - widths[i]) / 2,
+                TextAlignmentMode.Right => 16 - widths[i],
+                _ => 0,
+            };
+            var line = new Border
+            {
+                Width = widths[i],
+                Height = 1.8,
+                CornerRadius = new CornerRadius(0.9),
+                Background = System.Windows.Media.Brushes.White,
+            };
+            System.Windows.Controls.Canvas.SetLeft(line, left);
+            System.Windows.Controls.Canvas.SetTop(line, tops[i]);
+            canvas.Children.Add(line);
+        }
+        return canvas;
     }
 
     private void AddMiniColorSwatch(SKColor color, Action<SKColor> onPick)
@@ -1914,6 +1998,19 @@ public partial class CaptureOverlayWindow : Window
         CropActionBar.UpdateLayout();
         double cbW = CropActionBar.ActualWidth;
         double cbH = CropActionBar.ActualHeight;
+        if (Toolbar.Visibility != Visibility.Visible)
+        {
+            const double edgeGap = 8;
+            double cx = Math.Round((ActualWidth - cbW) / 2);
+            double cy = 18;
+            if (cx < edgeGap) cx = edgeGap;
+            if (cx + cbW > ActualWidth - edgeGap) cx = ActualWidth - cbW - edgeGap;
+            if (cy + cbH > ActualHeight - edgeGap) cy = Math.Max(edgeGap, ActualHeight - cbH - edgeGap);
+            Canvas.SetLeft(CropActionBar, cx);
+            Canvas.SetTop(CropActionBar, cy);
+            return;
+        }
+
         double tbX = Canvas.GetLeft(Toolbar);
         double tbY = Canvas.GetTop(Toolbar);
         double tbW = Toolbar.ActualWidth;
@@ -2015,7 +2112,9 @@ public partial class CaptureOverlayWindow : Window
     private string _editBeforeText = "";
     private bool _editCommitted;
 
-    private void OnTextEditRequested(TextItem item)
+    private void OnTextEditRequested(TextItem item) => BeginTextEdit(item, selectAll: true);
+
+    private void BeginTextEdit(TextItem item, bool selectAll)
     {
         if (_scene == null) return;
         _textEditing = true;
@@ -2029,7 +2128,7 @@ public partial class CaptureOverlayWindow : Window
         // yalnız caret+seçim görünür; yazdıkça item.Text güncellenir → kutu/ribbon büyür.
         var box = new TextBox
         {
-            Text = item.Text,
+            Text = ToTextBoxText(item.Text),
             AcceptsReturn = true,
             TextWrapping = TextWrapping.NoWrap,
             MinWidth = 8,
@@ -2044,6 +2143,7 @@ public partial class CaptureOverlayWindow : Window
             SelectionBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(80, 0x2F, 0x6F, 0xED)),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
+            TextAlignment = ToWpfTextAlignment(item.TextAlignment),
         };
         _textBox = box;
 
@@ -2055,7 +2155,7 @@ public partial class CaptureOverlayWindow : Window
         box.TextChanged += (_, _) =>
         {
             if (_editingItem == null) return;
-            _editingItem.Text = box.Text;
+            _editingItem.Text = NormalizeEditorText(box.Text);
             _editingItem.Measure();
             _scene?.RaiseChanged();
             PlaceTextBox();
@@ -2070,18 +2170,40 @@ public partial class CaptureOverlayWindow : Window
         };
 
         box.Focus();
-        box.SelectAll();
+        if (selectAll)
+            box.SelectAll();
+        else
+        {
+            box.CaretIndex = box.Text.Length;
+            box.SelectionLength = 0;
+        }
     }
 
     /// <summary>TextBox'ı düzenlenen item'ın ekran konum/boyutuna hizalar (metin başına).</summary>
     private void PlaceTextBox()
     {
         if (_textBox == null || _editingItem == null) return;
+        var size = _editingItem.Measure();
+        _textBox.Width = Math.Max(8, size.Width * SceneScaleX + 4);
+        _textBox.Height = Math.Max(16, size.Height * SceneScaleY + 4);
         double sx = _selDip.X + _editingItem.Position.X * SceneScaleX;
         double sy = _selDip.Y + _editingItem.Position.Y * SceneScaleY;
         Canvas.SetLeft(_textBox, sx);
         Canvas.SetTop(_textBox, sy);
     }
+
+    private static string NormalizeEditorText(string text)
+        => text.Replace("\r\n", "\n").Replace('\r', '\n');
+
+    private static string ToTextBoxText(string text)
+        => NormalizeEditorText(text).Replace("\n", Environment.NewLine);
+
+    private static System.Windows.TextAlignment ToWpfTextAlignment(TextAlignmentMode alignment) => alignment switch
+    {
+        TextAlignmentMode.Center => System.Windows.TextAlignment.Center,
+        TextAlignmentMode.Right => System.Windows.TextAlignment.Right,
+        _ => System.Windows.TextAlignment.Left,
+    };
 
     private void CommitTextEdit()
     {
@@ -2090,7 +2212,7 @@ public partial class CaptureOverlayWindow : Window
         var item = _editingItem;
         var box = _textBox;
 
-        item.Text = box?.Text ?? item.Text;
+        item.Text = NormalizeEditorText(box?.Text ?? item.Text);
         if (string.IsNullOrWhiteSpace(item.Text))
         {
             _scene.Apply(new RemoveItemAction(item));
@@ -2122,9 +2244,9 @@ public partial class CaptureOverlayWindow : Window
         _scene.RaiseChanged();
     }
 
-    private bool? AskTransparentBackground()
+    private BackgroundChoice? AskFreeExportChoice()
     {
-        if (_mode != CaptureMode.Free) return false;
+        if (_mode != CaptureMode.Free) return BackgroundChoice.Opaque;
         var dlg = new BackgroundChoiceDialog { Owner = this };
         dlg.ShowDialog();
         return dlg.Result;
@@ -2132,10 +2254,6 @@ public partial class CaptureOverlayWindow : Window
 
     private SKBitmap RenderWithBackground(bool transparent)
     {
-        // Crop seçimi devam ediyorsa export öncesi otomatik commit et
-        if (_canvas != null && _canvas.IsSceneCropping)
-            CommitSceneCropUi();
-
         var savedBg = _scene!.BackgroundColor;
         if (transparent)
             _scene.BackgroundColor = SkiaSharp.SKColors.Transparent;
@@ -2146,31 +2264,25 @@ public partial class CaptureOverlayWindow : Window
         return bmp;
     }
 
-    private void DoCopy()
+    private bool CopyRendered(bool transparent)
     {
-        if (_scene == null) return;
+        if (_scene == null) return false;
         try
         {
-            var choice = AskTransparentBackground();
-            if (choice == null) return;
-
-            using var bmp = RenderWithBackground(choice == true);
+            using var bmp = RenderWithBackground(transparent);
             ImageExporter.CopyToClipboard(bmp);
             if (_mode == CaptureMode.Free) DoClearScene();
             Close();
+            return true;
         }
-        catch (Exception ex) { MessageBox.Show("Kopyalama başarısız: " + ex.Message); }
+        catch (Exception ex) { MessageBox.Show("Kopyalama başarısız: " + ex.Message); return false; }
     }
 
-    private void DoSave()
+    private bool SaveRendered(bool transparent)
     {
-        if (_scene == null) return;
+        if (_scene == null) return false;
         try
         {
-            var choice = AskTransparentBackground();
-            if (choice == null) return;
-            bool transparent = choice == true;
-
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 FileName = $"ScreenForge_{DateTime.Now:yyyyMMdd_HHmmss}",
@@ -2189,32 +2301,36 @@ public partial class CaptureOverlayWindow : Window
                 data.SaveTo(fs);
                 if (_mode == CaptureMode.Free) DoClearScene();
                 Close();
+                return true;
             }
+            return false;
         }
-        catch (Exception ex) { MessageBox.Show("Kaydetme başarısız: " + ex.Message); }
+        catch (Exception ex) { MessageBox.Show("Kaydetme başarısız: " + ex.Message); return false; }
     }
 
-    private async void DoUpload()
+    private bool StartUploadRendered(bool transparent)
     {
-        if (_scene == null) return;
-
-        var choice = AskTransparentBackground();
-        if (choice == null) return;
-        bool transparent = choice == true;
+        if (_scene == null) return false;
 
         byte[] bytes;
         string mime;
         try
         {
             using var bmp = RenderWithBackground(transparent);
-            using var data = ImageExporter.Encode(bmp, ImageFormat.Png, 100);
-            bytes = data.ToArray();
-            mime = "image/png";
+            var upload = ImageExporter.EncodeForUpload(bmp, preserveTransparency: transparent);
+            bytes = upload.Bytes;
+            mime = upload.MimeType;
         }
-        catch (Exception ex) { MessageBox.Show("Yükleme başarısız: " + ex.Message, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        catch (Exception ex) { MessageBox.Show("Yükleme başarısız: " + ex.Message, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning); return false; }
 
         if (_mode == CaptureMode.Free) DoClearScene();
         Close();
+        UploadBytes(bytes, mime);
+        return true;
+    }
+
+    private async void UploadBytes(byte[] bytes, string mime)
+    {
         try
         {
             var toast = new UploadToastWindow();
@@ -2228,6 +2344,54 @@ public partial class CaptureOverlayWindow : Window
         catch (Exception ex) { MessageBox.Show("Yükleme başarısız: " + ex.Message, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
+    private void FinishPendingFreeExport()
+    {
+        var action = _pendingFreeExportAction;
+        _pendingFreeExportAction = null;
+        if (action == null) { RestoreAfterSceneCropUi(); return; }
+
+        bool finished = action.Value switch
+        {
+            PendingFreeExportAction.Copy => CopyRendered(transparent: false),
+            PendingFreeExportAction.Save => SaveRendered(transparent: false),
+            PendingFreeExportAction.Upload => StartUploadRendered(transparent: false),
+            _ => false,
+        };
+
+        if (!finished)
+        {
+            RestoreAfterSceneCropUi();
+            _canvas?.Focus();
+        }
+    }
+
+    private void DoCopy()
+    {
+        if (_scene == null || _canvas?.IsSceneCropping == true) return;
+        var choice = AskFreeExportChoice();
+        if (choice == null) return;
+        if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Copy); return; }
+        CopyRendered(choice == BackgroundChoice.Transparent);
+    }
+
+    private void DoSave()
+    {
+        if (_scene == null || _canvas?.IsSceneCropping == true) return;
+        var choice = AskFreeExportChoice();
+        if (choice == null) return;
+        if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Save); return; }
+        SaveRendered(choice == BackgroundChoice.Transparent);
+    }
+
+    private void DoUpload()
+    {
+        if (_scene == null || _canvas?.IsSceneCropping == true) return;
+        var choice = AskFreeExportChoice();
+        if (choice == null) return;
+        if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Upload); return; }
+        StartUploadRendered(choice == BackgroundChoice.Transparent);
+    }
+
     // ===================== Klavye =====================
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
@@ -2236,6 +2400,8 @@ public partial class CaptureOverlayWindow : Window
 
         // Inline metin düzenleme açıkken: kısayolları TextBox'a bırak (Esc PreviewKeyDown'da ele alınır).
         if (_textEditing) return;
+
+        if (_canvas?.IsSceneCropping == true) { e.Handled = true; return; }
 
         if (_phase != Phase.Edit) return;
 
@@ -2253,14 +2419,6 @@ public partial class CaptureOverlayWindow : Window
             float dx = e.Key == Key.Left ? -step : e.Key == Key.Right ? step : 0f;
             float dy = e.Key == Key.Up ? -step : e.Key == Key.Down ? step : 0f;
             _canvas.NudgeSelection(dx, dy);
-            e.Handled = true;
-            return;
-        }
-
-        // Serbest modda C tuşu: sahne kırpma
-        if (_mode == CaptureMode.Free && e.Key == Key.C && !ctrl)
-        {
-            ToggleSceneCropUi();
             e.Handled = true;
             return;
         }
