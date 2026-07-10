@@ -12,6 +12,7 @@ public partial class App : Application
 {
     private const string MutexName = "ScreenForge_SingleInstance_Mutex_8e0f7a12";
     private Mutex? _instanceMutex;
+    private bool _ownsInstanceMutex;
     private TrayIconService? _tray;
     private HotkeyService? _hotkeys;
 
@@ -32,8 +33,8 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         // ---- Tek örnek kontrolü ----
-        _instanceMutex = new Mutex(true, MutexName, out bool isNew);
-        if (!isNew)
+        _instanceMutex = new Mutex(true, MutexName, out _ownsInstanceMutex);
+        if (!_ownsInstanceMutex)
         {
             MessageBox.Show("ScreenForge zaten çalışıyor. Sistem tepsisini kontrol edin.",
                 "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -166,6 +167,7 @@ public partial class App : Application
     {
         if (_captureInProgress) return;
         _captureInProgress = true;
+        Windows.UploadToastWindow? toast = null;
         try
         {
             byte[] bytes;
@@ -178,18 +180,23 @@ public partial class App : Application
                 mime = upload.MimeType;
             }
 
-            var toast = new Windows.UploadToastWindow();
+            toast = new Windows.UploadToastWindow();
             toast.Show();
 
             Upload.IUploadProvider provider = new Upload.PrntscrUploadProvider();
             var result = await provider.UploadAsync(bytes, mime, toast.ReportProgress);
 
             toast.ShowResult(result.Url);
-            if (Settings.AutoCopyLinkAfterUpload) { Clipboard.SetText(result.Url); toast.SetCopied(); }
+            if (Settings.AutoCopyLinkAfterUpload)
+            {
+                try { Clipboard.SetText(result.Url); toast.SetCopied(); }
+                catch (Exception ex) { _tray?.ShowMessage("Pano uyarısı", "Bağlantı yüklendi ancak kopyalanamadı: " + ex.Message); }
+            }
             if (Settings.AutoCloseUploadWindow) toast.AutoCloseSoon();
         }
         catch (Exception ex)
         {
+            toast?.Close();
             _tray?.ShowMessage("Yükleme hatası", ex.Message);
         }
         finally
@@ -254,7 +261,8 @@ public partial class App : Application
     {
         _hotkeys?.Dispose();
         _tray?.Dispose();
-        _instanceMutex?.ReleaseMutex();
+        if (_ownsInstanceMutex)
+            _instanceMutex?.ReleaseMutex();
         _instanceMutex?.Dispose();
         base.OnExit(e);
     }

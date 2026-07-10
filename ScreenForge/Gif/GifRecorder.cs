@@ -13,6 +13,8 @@ namespace ScreenForge.Gif;
 /// </summary>
 public sealed class GifRecorder : IDisposable
 {
+    public const long DefaultMaxFrameBytes = 512L * 1024 * 1024;
+
     // ─── Win32 P/Invoke ───────────────────────────────────────────────────────
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int w, int h);
@@ -37,18 +39,22 @@ public sealed class GifRecorder : IDisposable
 
     // ─── State ────────────────────────────────────────────────────────────────
     private readonly DrawingRect _pixelRegion;
-    private readonly List<byte[]> _frames = new();
-    private readonly List<int>    _frameDelays = new(); // ms per frame (for skipped frames)
+    private List<byte[]> _frames = new();
+    private List<int>    _frameDelays = new(); // ms per frame (for skipped frames)
     private readonly DispatcherTimer _timer;
     private readonly System.Diagnostics.Stopwatch _stopwatch = new();
+    private readonly long _maxFrameBytes;
     private byte[]? _lastFrame;
     private int _pendingDelayMs;
+    private long _frameBytes;
 
     public int Fps { get; }
     public int FrameCount => _frames.Count;
     public TimeSpan Elapsed => _stopwatch.Elapsed;
     public int Width => _pixelRegion.Width;
     public int Height => _pixelRegion.Height;
+    public long FrameBytes => _frameBytes;
+    public bool MemoryLimitReached { get; private set; }
     public List<byte[]> Frames => _frames;
     public List<int> FrameDelays => _frameDelays;
     public List<(int frameIndex, string keys)> KeyEvents { get; } = new();
@@ -56,13 +62,16 @@ public sealed class GifRecorder : IDisposable
     // Overlay gizleme hook'ları — GifRecordingOverlayWindow tarafından set edilir
     public Action? HideForCapture { get; set; }
     public Action? ShowAfterCapture { get; set; }
+    public event Action? FrameMemoryLimitReached;
 
     public void RecordKey(string label) => KeyEvents.Add((_frames.Count, label));
 
-    public GifRecorder(DrawingRect pixelRegion, int fps = 10)
+    public GifRecorder(DrawingRect pixelRegion, int fps = 10, long maxFrameBytes = DefaultMaxFrameBytes)
     {
+        if (maxFrameBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxFrameBytes));
         _pixelRegion = pixelRegion;
         Fps = fps;
+        _maxFrameBytes = maxFrameBytes;
 
         _timer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -75,6 +84,7 @@ public sealed class GifRecorder : IDisposable
     {
         _lastFrame       = null;
         _pendingDelayMs  = 0;
+        MemoryLimitReached = false;
         _stopwatch.Restart();
         _timer.Start();
     }
@@ -273,9 +283,12 @@ public sealed class GifRecorder : IDisposable
                 if (_frames.Count > 0 && _pendingDelayMs > 0)
                     _frameDelays[^1] += _pendingDelayMs;
                 _pendingDelayMs = 0;
-                _frames.Add(buf);
-                _frameDelays.Add(frameDelayMs);
-                _lastFrame = buf;
+                if (!TryStoreFrame(buf, frameDelayMs))
+                {
+                    Stop();
+                    FrameMemoryLimitReached?.Invoke();
+                    return;
+                }
             }
         }
         finally
@@ -301,10 +314,40 @@ public sealed class GifRecorder : IDisposable
         return ia.SequenceEqual(ib);
     }
 
+    internal bool TryStoreFrame(byte[] frame, int delayMs)
+    {
+        if (frame.LongLength > _maxFrameBytes - _frameBytes)
+        {
+            MemoryLimitReached = true;
+            return false;
+        }
+
+        _frames.Add(frame);
+        _frameDelays.Add(delayMs);
+        _lastFrame = frame;
+        _frameBytes += frame.LongLength;
+        return true;
+    }
+
+    internal (List<byte[]> Frames, List<int> FrameDelays) DetachFrames()
+    {
+        Stop();
+        var frames = _frames;
+        var frameDelays = _frameDelays;
+        _frames = new List<byte[]>();
+        _frameDelays = new List<int>();
+        _lastFrame = null;
+        _frameBytes = 0;
+        return (frames, frameDelays);
+    }
+
     public void Dispose()
     {
         _timer.Stop();
         _frames.Clear();
         _frameDelays.Clear();
+        KeyEvents.Clear();
+        _lastFrame = null;
+        _frameBytes = 0;
     }
 }

@@ -189,16 +189,46 @@ public sealed class GifRecordingOverlayWindow
         _recorder.ShowAfterCapture  = null;
 
         // ─── Stop ─────────────────────────────────────────────────────────────
+        bool stopping = false;
         void DoStop()
         {
+            if (stopping) return;
+            stopping = true;
+            _recorder.FrameMemoryLimitReached -= OnFrameMemoryLimitReached;
             _recorder.Stop();
             if (kbHook != IntPtr.Zero) { UnhookWindowsHookEx(kbHook); kbHook = IntPtr.Zero; }
             borderWin!.Close();
             barWin!.Close();
             Stopped?.Invoke(_recorder);
         }
+
+        void OnFrameMemoryLimitReached()
+        {
+            barWin!.Dispatcher.BeginInvoke(() =>
+            {
+                if (stopping) return;
+                MessageBox.Show(barWin,
+                    "GIF kaydı 512 MB bellek sınırına ulaştığı için durduruldu. Daha küçük bir alan veya daha düşük FPS kullanabilirsiniz.",
+                    "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Information);
+                DoStop();
+            });
+        }
+
+        _recorder.FrameMemoryLimitReached += OnFrameMemoryLimitReached;
         stopBtn.Click += (_, _) => DoStop();
         barWin.KeyDown += (_, e) => { if (e.Key == Key.Escape) DoStop(); };
+        barWin.Closing += (_, e) =>
+        {
+            if (stopping) return;
+            e.Cancel = true;
+            barWin.Dispatcher.BeginInvoke(DoStop);
+        };
+        borderWin.Closing += (_, e) =>
+        {
+            if (stopping) return;
+            e.Cancel = true;
+            barWin.Dispatcher.BeginInvoke(DoStop);
+        };
 
         // ─── Timers ───────────────────────────────────────────────────────────
         var uiTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -237,6 +267,7 @@ public sealed class GifRecordingOverlayWindow
         {
             uiTimer.Stop();
             blinkTimer.Stop();
+            _recorder.FrameMemoryLimitReached -= OnFrameMemoryLimitReached;
             if (kbHook != IntPtr.Zero) { UnhookWindowsHookEx(kbHook); kbHook = IntPtr.Zero; }
         };
 

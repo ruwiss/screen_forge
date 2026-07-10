@@ -62,12 +62,7 @@ public static class SceneRenderer
         }
 
         foreach (var item in scene.Items)
-        {
-            using var layer = item.Opacity < 1f
-                ? new AutoLayer(canvas, item.Opacity)
-                : null;
             item.Render(canvas);
-        }
     }
 
     private static void PrepareBlurSnapshots(Scene scene, SKImage? bgImg)
@@ -98,17 +93,4 @@ public static class SceneRenderer
             blur.SourceSnapshot = snap;
         }
     }
-}
-
-/// <summary>Opacity layer'ı RAII tarzı yöneten yardımcı.</summary>
-internal sealed class AutoLayer : IDisposable
-{
-    private readonly SKCanvas _canvas;
-    public AutoLayer(SKCanvas canvas, float opacity)
-    {
-        _canvas = canvas;
-        using var paint = new SKPaint { Color = SKColors.White.WithAlpha((byte)(opacity * 255)) };
-        _canvas.SaveLayer(paint);
-    }
-    public void Dispose() => _canvas.Restore();
 }

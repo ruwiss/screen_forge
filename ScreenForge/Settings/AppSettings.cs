@@ -54,14 +54,9 @@ public sealed class AppSettings
             if (File.Exists(SettingsPath))
             {
                 var json = File.ReadAllText(SettingsPath);
-                var loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+                var loaded = Deserialize(json);
                 if (loaded != null)
-                {
-                    loaded.ToolStyles.FontSize = 20;
-                    loaded.ToolStyles.StrokeWidth = 4;
-                    loaded.ToolStyles.StepSize = 28;
                     return loaded;
-                }
             }
         }
         catch
@@ -71,6 +66,9 @@ public sealed class AppSettings
         isFirstRun = true;
         return new AppSettings();
     }
+
+    internal static AppSettings? Deserialize(string json)
+        => JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
 
     public void Save()
     {

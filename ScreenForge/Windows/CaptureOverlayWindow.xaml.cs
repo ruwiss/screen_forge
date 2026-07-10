@@ -606,6 +606,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void LeaveEditPhase()
     {
+        DetachSceneEvents(_scene);
         _phase = Phase.Select;
         Cursor = RegionCursor;
         EditHost.Child = null;
@@ -624,10 +625,11 @@ public partial class CaptureOverlayWindow : Window
 
     private void RebuildEditForNewRegion()
     {
+        DetachSceneEvents(_scene);
         using var cropped = ScreenCapture.Crop(_screenshot, _pixelRegion);
         var newScene = new Scene { Background = ToSkBitmap(cropped) };
         _scene = newScene;
-        _scene.Changed += () => { if (OptionBar.Visibility == Visibility.Visible) PositionOptionBar(); };
+        AttachSceneEvents(_scene, syncPlaceholder: false);
         _canvas = new InteractiveCanvas(_scene, _settings.ToolStyles) { Layout = LayoutMode.OneToOne };
         WireCanvasEvents(_canvas);
         EditHost.Child = _canvas;
@@ -746,6 +748,7 @@ public partial class CaptureOverlayWindow : Window
         }
 
         // Sahne
+        DetachSceneEvents(_scene);
         bool reusedFreeScene = false;
         if (free)
         {
@@ -767,8 +770,7 @@ public partial class CaptureOverlayWindow : Window
             using var cropped = ScreenCapture.Crop(_screenshot, _pixelRegion);
             _scene = new Scene { Background = ToSkBitmap(cropped) };
         }
-        // Öğe taşınınca/değişince seçenek şeridi öğeyi takip etsin.
-        _scene.Changed += () => { if (OptionBar.Visibility == Visibility.Visible) PositionOptionBar(); };
+        AttachSceneEvents(_scene, syncPlaceholder: free);
 
         _canvas = new InteractiveCanvas(_scene, _settings.ToolStyles) { Layout = LayoutMode.OneToOne };
         WireCanvasEvents(_canvas);
@@ -793,7 +795,6 @@ public partial class CaptureOverlayWindow : Window
         if (free)
         {
             SyncPlaceholder();
-            _scene.Changed += SyncPlaceholder;
         }
 
         // Serbest mod ilk açılışta panodaki resmi yerleştir (yeniden kullanılan sahnede değil).
@@ -804,6 +805,26 @@ public partial class CaptureOverlayWindow : Window
     /// <summary>App, serbest sahneyi sağlamak/saklamak için bunları bağlar (oturum belleği).</summary>
     public Func<Scene?>? FreeSceneProvider { get; set; }
     public Action<Scene>? FreeSceneSink { get; set; }
+
+    private void AttachSceneEvents(Scene scene, bool syncPlaceholder)
+    {
+        scene.Changed += OnSceneChanged;
+        if (syncPlaceholder)
+            scene.Changed += SyncPlaceholder;
+    }
+
+    private void DetachSceneEvents(Scene? scene)
+    {
+        if (scene == null) return;
+        scene.Changed -= OnSceneChanged;
+        scene.Changed -= SyncPlaceholder;
+    }
+
+    private void OnSceneChanged()
+    {
+        if (OptionBar.Visibility == Visibility.Visible)
+            PositionOptionBar();
+    }
 
     private void WireCanvasEvents(InteractiveCanvas canvas)
     {
@@ -2255,13 +2276,18 @@ public partial class CaptureOverlayWindow : Window
     private SKBitmap RenderWithBackground(bool transparent)
     {
         var savedBg = _scene!.BackgroundColor;
-        if (transparent)
-            _scene.BackgroundColor = SkiaSharp.SKColors.Transparent;
-        else if (savedBg.Alpha == 0)
-            _scene.BackgroundColor = CurrentFreeBackgroundColor();
-        var bmp = SceneRenderer.RenderToBitmap(_scene);
-        _scene.BackgroundColor = savedBg;
-        return bmp;
+        try
+        {
+            if (transparent)
+                _scene.BackgroundColor = SkiaSharp.SKColors.Transparent;
+            else if (savedBg.Alpha == 0)
+                _scene.BackgroundColor = CurrentFreeBackgroundColor();
+            return SceneRenderer.RenderToBitmap(_scene);
+        }
+        finally
+        {
+            _scene.BackgroundColor = savedBg;
+        }
     }
 
     private bool CopyRendered(bool transparent)
@@ -2297,8 +2323,7 @@ public partial class CaptureOverlayWindow : Window
 
                 using var bmp = RenderWithBackground(transparent);
                 using var data = ImageExporter.Encode(bmp, fmt, _settings.Quality);
-                using var fs = System.IO.File.OpenWrite(dlg.FileName);
-                data.SaveTo(fs);
+                ImageExporter.SaveEncoded(data, dlg.FileName);
                 if (_mode == CaptureMode.Free) DoClearScene();
                 Close();
                 return true;
@@ -2308,7 +2333,7 @@ public partial class CaptureOverlayWindow : Window
         catch (Exception ex) { MessageBox.Show("Kaydetme başarısız: " + ex.Message); return false; }
     }
 
-    private bool StartUploadRendered(bool transparent)
+    private async Task<bool> StartUploadRenderedAsync(bool transparent)
     {
         if (_scene == null) return false;
 
@@ -2323,28 +2348,43 @@ public partial class CaptureOverlayWindow : Window
         }
         catch (Exception ex) { MessageBox.Show("Yükleme başarısız: " + ex.Message, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning); return false; }
 
-        if (_mode == CaptureMode.Free) DoClearScene();
         Close();
-        UploadBytes(bytes, mime);
-        return true;
+        bool uploaded = await UploadBytesAsync(bytes, mime);
+        if (uploaded && _mode == CaptureMode.Free)
+            DoClearScene();
+        return uploaded;
     }
 
-    private async void UploadBytes(byte[] bytes, string mime)
+    private async Task<bool> UploadBytesAsync(byte[] bytes, string mime)
     {
+        var toast = new UploadToastWindow();
+        toast.Show();
         try
         {
-            var toast = new UploadToastWindow();
-            toast.Show();
             IUploadProvider provider = new PrntscrUploadProvider();
             var result = await provider.UploadAsync(bytes, mime, toast.ReportProgress);
             toast.ShowResult(result.Url);
-            if (_settings.AutoCopyLinkAfterUpload) { Clipboard.SetText(result.Url); toast.SetCopied(); }
+            if (_settings.AutoCopyLinkAfterUpload)
+            {
+                try { Clipboard.SetText(result.Url); toast.SetCopied(); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Görüntü yüklendi ancak bağlantı panoya kopyalanamadı: " + ex.Message,
+                        "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
             if (_settings.AutoCloseUploadWindow) toast.AutoCloseSoon();
+            return true;
         }
-        catch (Exception ex) { MessageBox.Show("Yükleme başarısız: " + ex.Message, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (Exception ex)
+        {
+            toast.Close();
+            MessageBox.Show("Yükleme başarısız: " + ex.Message, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
     }
 
-    private void FinishPendingFreeExport()
+    private async void FinishPendingFreeExport()
     {
         var action = _pendingFreeExportAction;
         _pendingFreeExportAction = null;
@@ -2354,11 +2394,11 @@ public partial class CaptureOverlayWindow : Window
         {
             PendingFreeExportAction.Copy => CopyRendered(transparent: false),
             PendingFreeExportAction.Save => SaveRendered(transparent: false),
-            PendingFreeExportAction.Upload => StartUploadRendered(transparent: false),
+            PendingFreeExportAction.Upload => await StartUploadRenderedAsync(transparent: false),
             _ => false,
         };
 
-        if (!finished)
+        if (!finished && IsVisible)
         {
             RestoreAfterSceneCropUi();
             _canvas?.Focus();
@@ -2383,13 +2423,13 @@ public partial class CaptureOverlayWindow : Window
         SaveRendered(choice == BackgroundChoice.Transparent);
     }
 
-    private void DoUpload()
+    private async void DoUpload()
     {
         if (_scene == null || _canvas?.IsSceneCropping == true) return;
         var choice = AskFreeExportChoice();
         if (choice == null) return;
         if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Upload); return; }
-        StartUploadRendered(choice == BackgroundChoice.Transparent);
+        await StartUploadRenderedAsync(choice == BackgroundChoice.Transparent);
     }
 
     // ===================== Klavye =====================
@@ -2436,6 +2476,7 @@ public partial class CaptureOverlayWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        DetachSceneEvents(_scene);
         _settings.Save();
         base.OnClosed(e);
     }

@@ -220,9 +220,14 @@ public static class ImageExporter
         string name = $"ScreenForge_{DateTime.Now:yyyyMMdd_HHmmss}.{Extension(format)}";
         string path = Path.Combine(directory, name);
         using var data = Encode(bmp, format, quality);
-        using var fs = File.OpenWrite(path);
-        data.SaveTo(fs);
+        SaveEncoded(data, path);
         return path;
+    }
+
+    internal static void SaveEncoded(SKData data, string path)
+    {
+        using var fs = File.Create(path);
+        data.SaveTo(fs);
     }
 
     /// <summary>Sahneyi kodlanmış byte dizisine çevirir (yükleme için).</summary>

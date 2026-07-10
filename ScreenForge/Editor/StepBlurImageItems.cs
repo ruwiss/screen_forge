@@ -135,20 +135,21 @@ public sealed class BlurItem : SceneItem
                 if (small != null)
                 {
                     using var img = SKImage.FromBitmap(small);
-                    canvas.DrawImage(img, Bounds, new SKSamplingOptions(SKFilterMode.Nearest));
+                    using var paint = new SKPaint { Color = SKColors.White.WithAlpha(AlphaByte) };
+                    canvas.DrawImage(img, Bounds, new SKSamplingOptions(SKFilterMode.Nearest), paint);
                 }
             }
             else
             {
                 using var img = SKImage.FromBitmap(cropped);
                 using var filter = SKImageFilter.CreateBlur(Strength, Strength);
-                using var paint = new SKPaint { ImageFilter = filter, IsAntialias = true };
+                using var paint = new SKPaint { ImageFilter = filter, IsAntialias = true, Color = SKColors.White.WithAlpha(AlphaByte) };
                 canvas.DrawImage(img, Bounds, SKSamplingOptions.Default, paint);
             }
         }
         else
         {
-            using var ph = new SKPaint { Color = new SKColor(40, 40, 50, 180), IsAntialias = true };
+            using var ph = new SKPaint { Color = new SKColor(40, 40, 50, (byte)(180 * Opacity)), IsAntialias = true };
             canvas.DrawRect(Bounds, ph);
         }
         canvas.Restore();

@@ -60,16 +60,18 @@ public sealed class GifPreviewWindow
     // Playback
     private DispatcherTimer? _playTimer;
     private bool             _playing;
+    private bool             _saving;
 
     // Per-frame delays
     private List<int> _frameDelays;
 
     public GifPreviewWindow(GifRecorder recorder)
     {
-        _recorder    = recorder;
-        _frames      = recorder.Frames.Select(f => f.ToArray()).ToList();
-        _frameDelays = recorder.FrameDelays.ToList();
-        _keyEvents   = recorder.KeyEvents.ToList();
+        _recorder = recorder;
+        var recording = recorder.DetachFrames();
+        _frames = recording.Frames;
+        _frameDelays = recording.FrameDelays;
+        _keyEvents = recorder.KeyEvents.ToList();
     }
 
     public void Show()
@@ -268,11 +270,32 @@ public sealed class GifPreviewWindow
             });
 
         titleBar.MouseLeftButtonDown += (_, _) => win.DragMove();
-        closeBtn.Click += (_, _) => { StopPlayback(); win.Close(); };
-        win.Closed     += (_, _) => StopPlayback();
+        closeBtn.Click += (_, _) =>
+        {
+            if (_saving) return;
+            StopPlayback();
+            win.Close();
+        };
+        win.Closing += (_, e) =>
+        {
+            if (_saving) e.Cancel = true;
+        };
+        win.Closed += (_, _) =>
+        {
+            StopPlayback();
+            _recorder.Dispose();
+            _frames.Clear();
+            _frameDelays.Clear();
+            _keyEvents.Clear();
+        };
 
         win.KeyDown += (_, e) =>
         {
+            if (_saving)
+            {
+                e.Handled = true;
+                return;
+            }
             switch (e.Key)
             {
                 case Key.Escape: StopPlayback(); win.Close(); break;
@@ -903,6 +926,7 @@ public sealed class GifPreviewWindow
 
         // Export sırasında tüm butonları pasifleştir
         PausePlayback();
+        _saving = true;
         SetEditingEnabled(false);
         SetPlaybackEnabled(false);
         SetFaded(_saveBtn, false);
@@ -911,55 +935,66 @@ public sealed class GifPreviewWindow
         _progressBar!.Value   = 0;
         _progressBar.Visibility = Visibility.Visible;
 
-        List<byte[]> toSave;
-        if (resize)
+        try
         {
-            int srcW = _recorder.Width, srcH = _recorder.Height;
-            toSave = await System.Threading.Tasks.Task.Run(() =>
-                _frames.Select(f => ResizeFrame(f, srcW, srcH, outW, outH)).ToList());
-            _statusLabel!.Text = "Kaydediliyor...";
-            _progressBar.Value = 0;
-        }
-        else
-        {
-            toSave = _frames;
-        }
-
-        // FPS override varsa delay'leri yeniden hesapla, yoksa per-frame delays kullan
-        List<int>? delaysToUse = null;
-        if (_frameDelays.Count == toSave.Count)
-        {
-            int defaultMs = (int)Math.Round(1000.0 / fps);
-            delaysToUse = fps == _recorder.Fps
-                ? _frameDelays.ToList()
-                : Enumerable.Repeat(defaultMs, toSave.Count).ToList();
-        }
-
-        await _recorder.SaveAsync(
-            dlg.FileName,
-            fpsOverride          : fps,
-            colorCount           : colors,
-            framesOverride       : toSave,
-            widthOverride        : outW,
-            heightOverride       : outH,
-            progress             : p => Application.Current?.Dispatcher.Invoke(() =>
+            List<byte[]> toSave;
+            if (resize)
             {
-                _progressBar!.Value = p * 100;
-                _statusLabel!.Text  = $"Kaydediliyor... {(int)(p * 100)}%";
-            }),
-            quantizerType        : GetQuantizerType(),
-            samplingFactor       : GetSamplingFactor(),
-            frameDelaysOverride  : delaysToUse,
-            useGlobalPalette     : _globalPaletteCheck?.IsChecked == true,
-            dithering            : _ditheringCheck?.IsChecked == true);
+                int srcW = _recorder.Width, srcH = _recorder.Height;
+                toSave = await System.Threading.Tasks.Task.Run(() =>
+                    _frames.Select(f => ResizeFrame(f, srcW, srcH, outW, outH)).ToList());
+                _statusLabel!.Text = "Kaydediliyor...";
+                _progressBar.Value = 0;
+            }
+            else
+            {
+                toSave = _frames;
+            }
 
-        _progressBar.Visibility = Visibility.Collapsed;
-        _statusLabel!.Text      = $"Kaydedildi → {Path.GetFileName(dlg.FileName)}";
+            // FPS override varsa delay'leri yeniden hesapla, yoksa per-frame delays kullan
+            List<int>? delaysToUse = null;
+            if (_frameDelays.Count == toSave.Count)
+            {
+                int defaultMs = (int)Math.Round(1000.0 / fps);
+                delaysToUse = fps == _recorder.Fps
+                    ? _frameDelays.ToList()
+                    : Enumerable.Repeat(defaultMs, toSave.Count).ToList();
+            }
 
-        // Butonları geri aç
-        SetEditingEnabled(true);
-        SetPlaybackEnabled(true);
-        SetFaded(_saveBtn, true);
+            await _recorder.SaveAsync(
+                dlg.FileName,
+                fpsOverride          : fps,
+                colorCount           : colors,
+                framesOverride       : toSave,
+                widthOverride        : outW,
+                heightOverride       : outH,
+                progress             : p => Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    _progressBar!.Value = p * 100;
+                    _statusLabel!.Text  = $"Kaydediliyor... {(int)(p * 100)}%";
+                }),
+                quantizerType        : GetQuantizerType(),
+                samplingFactor       : GetSamplingFactor(),
+                frameDelaysOverride  : delaysToUse,
+                useGlobalPalette     : _globalPaletteCheck?.IsChecked == true,
+                dithering            : _ditheringCheck?.IsChecked == true);
+
+            _statusLabel!.Text = $"Kaydedildi → {Path.GetFileName(dlg.FileName)}";
+        }
+        catch (Exception ex)
+        {
+            _statusLabel!.Text = "GIF kaydedilemedi";
+            MessageBox.Show("GIF kaydedilemedi: " + ex.Message, "ScreenForge",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _saving = false;
+            _progressBar.Visibility = Visibility.Collapsed;
+            SetEditingEnabled(true);
+            SetPlaybackEnabled(true);
+            SetFaded(_saveBtn, true);
+        }
     }
 
     private int GetColorCount()
