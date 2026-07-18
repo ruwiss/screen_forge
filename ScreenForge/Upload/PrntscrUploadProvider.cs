@@ -13,8 +13,20 @@ namespace ScreenForge.Upload;
 /// </summary>
 public sealed class PrntscrUploadProvider : IUploadProvider
 {
-    private static string PrntscrSecret =>
-        Environment.GetEnvironmentVariable("SCREENFORGE_UPLOAD_SECRET") ?? "";
+    /// <summary>
+    /// Öncelik: runtime env → gömülü build secret.
+    /// Gömülü değer package-velopack / csproj tarafından .env'den basılır.
+    /// </summary>
+    private static string PrntscrSecret
+    {
+        get
+        {
+            var fromEnv = Environment.GetEnvironmentVariable("SCREENFORGE_UPLOAD_SECRET");
+            if (!string.IsNullOrWhiteSpace(fromEnv))
+                return fromEnv.Trim();
+            return UploadSecret.Value.Trim();
+        }
+    }
 
     private const string ChromeUserAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -38,7 +50,7 @@ public sealed class PrntscrUploadProvider : IUploadProvider
 
         // İmzalı yükleme URL'si
         long timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        string secret = PrntscrSecret.Trim();
+        string secret = PrntscrSecret;
         if (string.IsNullOrWhiteSpace(secret) || secret == "your_upload_secret_here")
             throw new InvalidOperationException("Yükleme anahtarı bulunamadı. SCREENFORGE_UPLOAD_SECRET ayarını kontrol edin.");
 

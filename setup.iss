@@ -1,9 +1,9 @@
-; ScreenForge — Inno Setup Script
+﻿; ScreenForge ÔÇö Inno Setup Script
 ; Build: dotnet publish ScreenForge -c Release --self-contained false -r win-x64 -o publish
 ; Then:  iscc setup.iss
 
 #define MyAppName "ScreenForge"
-#define MyAppVersion "1.0.8"
+#define MyAppVersion "1.0.9"
 #define MyAppPublisher "ScreenForge"
 #define MyAppURL "https://github.com/screenforge"
 #define MyAppExeName "ScreenForge.exe"
@@ -33,22 +33,22 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Masaüstü kısayolu oluştur"; GroupDescription: "Ek simgeler:"
-Name: "launchstartup"; Description: "Windows ile birlikte başlat"; GroupDescription: "Sistem:"; Flags: checkedonce
+Name: "desktopicon"; Description: "Masa├╝st├╝ k─▒sayolu olu┼ştur"; GroupDescription: "Ek simgeler:"
+Name: "launchstartup"; Description: "Windows ile birlikte ba┼şlat"; GroupDescription: "Sistem:"; Flags: checkedonce
 
 [Files]
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs; Excludes: "*.pdb"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{#MyAppName} Kaldır"; Filename: "{uninstallexe}"
+Name: "{group}\{#MyAppName} Kald─▒r"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: launchstartup
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} uygulamasını başlat"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} uygulamas─▒n─▒ ba┼şlat"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\{#MyAppName}"
@@ -93,9 +93,9 @@ begin
   Result := True;
   if not CheckDotNetRuntime() then
   begin
-    if MsgBox('.NET 9 Desktop Runtime bulunamadı.' + #13#10 + #13#10 +
-             'ScreenForge çalışabilmek için .NET 9 Desktop Runtime gerektirir.' + #13#10 +
-             'İndirme sayfasını açmak ister misiniz?',
+    if MsgBox('.NET 9 Desktop Runtime bulunamad─▒.' + #13#10 + #13#10 +
+             'ScreenForge ├ğal─▒┼şabilmek i├ğin .NET 9 Desktop Runtime gerektirir.' + #13#10 +
+             '─░ndirme sayfas─▒n─▒ a├ğmak ister misiniz?',
              mbConfirmation, MB_YESNO) = IDYES then
     begin
       ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/9.0/runtime', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
