@@ -218,7 +218,10 @@ public sealed class ImageItem : SceneItem
 
     public override SceneItem Clone()
     {
-        var c = new ImageItem { Bitmap = Bitmap, CropRect = CropRect };
+        // Derin kopya: bitmap paylaşma → bir kopyayı kırp/sil diğerini bozar.
+        var c = new ImageItem { CropRect = CropRect };
+        if (_bitmap != null)
+            c.Bitmap = _bitmap.Copy() ?? _bitmap;
         CopyBaseTo(c);
         return c;
     }
@@ -226,6 +229,11 @@ public sealed class ImageItem : SceneItem
     public override void RestoreFrom(SceneItem other)
     {
         base.RestoreFrom(other);
-        if (other is ImageItem im) { Bitmap = im.Bitmap; CropRect = im.CropRect; }
+        if (other is ImageItem im)
+        {
+            // Undo/redo aynı bitmap örneğini paylaşabilir (snapshot zaten Clone ile ayrıldı).
+            Bitmap = im.Bitmap;
+            CropRect = im.CropRect;
+        }
     }
 }

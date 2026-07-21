@@ -64,6 +64,12 @@ public partial class CaptureOverlayWindow : Window
     private InteractiveCanvas? _canvas;
     private bool _textEditing;   // inline metin düzenleme açıkken araç kısayollarını engelle
     private PendingFreeExportAction? _pendingFreeExportAction;
+    private bool _pendingFreeExportTransparent;
+    /// <summary>Serbest modda Ctrl+C ile kopyalanan sahne öğeleri (çoklu seçim, z-sırası).</summary>
+    private List<SceneItem>? _itemClipboard;
+    /// <summary>Tuval üzerinde son bilinen fare noktası (alan dışı yapıştırmada kullanılır).</summary>
+    private SKPoint? _lastScenePointer;
+    private CancellationTokenSource? _toastCts;
 
     // Pencere algılama — sadece ilk Region+Select fazında aktif
     private bool _windowHoverActive = true;
@@ -343,7 +349,7 @@ public partial class CaptureOverlayWindow : Window
         }
         else if (_mode == CaptureMode.Free)
         {
-            HintText.Text = "Serbest — Ctrl+V ile resim yapıştırın";
+            HintText.Text = "Serbest — Ctrl+C öğe · Ctrl+V yapıştır · Ctrl+D çoğalt · toolbar = dışa aktar";
             _selDip = new WpfRect(0, 0, ActualWidth, ActualHeight);
             _pixelRegion = new Rectangle(0, 0, _screenshot.Width, _screenshot.Height);
             EnterEditPhase(useScreenshotBackground: false);
@@ -834,6 +840,7 @@ public partial class CaptureOverlayWindow : Window
         canvas.ToolChanged += () => { SyncToolButtons(); BuildOptionBar(); };
         canvas.ItemMoved += () => Dispatcher.BeginInvoke(PositionOptionBar, System.Windows.Threading.DispatcherPriority.Render);
         canvas.SceneCropCommitted += OnSceneCropCommitted;
+        canvas.MouseMove += TrackCanvasPointer;
     }
 
     private void OnSceneCropCommitted(SKRect cropRect)
@@ -877,12 +884,13 @@ public partial class CaptureOverlayWindow : Window
     }
 
     private void BeginSceneCropUi()
-        => BeginSceneCropUi(null);
+        => BeginSceneCropUi(null, transparent: false);
 
-    private void BeginSceneCropUi(PendingFreeExportAction? pendingAction)
+    private void BeginSceneCropUi(PendingFreeExportAction? pendingAction, bool transparent = false)
     {
         if (_canvas == null) return;
         _pendingFreeExportAction = pendingAction;
+        _pendingFreeExportTransparent = transparent;
         _canvas.BeginSceneCrop();
         Toolbar.Visibility = Visibility.Collapsed;
         ActionBar.Visibility = Visibility.Collapsed;
@@ -902,6 +910,7 @@ public partial class CaptureOverlayWindow : Window
         if (!applied)
         {
             _pendingFreeExportAction = null;
+            _pendingFreeExportTransparent = false;
             RestoreAfterSceneCropUi();
             return;
         }
@@ -919,6 +928,7 @@ public partial class CaptureOverlayWindow : Window
         _canvas.CancelSceneCrop();
         CropActionBar.Visibility = Visibility.Collapsed;
         _pendingFreeExportAction = null;
+        _pendingFreeExportTransparent = false;
         RestoreAfterSceneCropUi();
         _canvas.Focus();
     }
@@ -1260,11 +1270,15 @@ public partial class CaptureOverlayWindow : Window
         ActionStack.Children.Clear();
         if (_mode == CaptureMode.Region)
             ActionStack.Children.Add(MakeGifSplitButton());
-        ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala", "Kopyala (Ctrl+C)", DoCopy));
+        ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala",
+            _mode == CaptureMode.Free
+                ? "Dışa aktar / panoya kopyala · seçili öğe için Ctrl+C"
+                : "Kopyala (Ctrl+C)",
+            DoCopy));
         ActionStack.Children.Add(MakeCmd("IconSave", "Kaydet", "Kaydet (Ctrl+S)", DoSave));
         ActionStack.Children.Add(MakeCmd("IconCloud", "Yükle", "Buluta Yükle", DoUpload, accent: true));
         if (_mode == CaptureMode.Free)
-            ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle", DoClearScene));
+            ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle (iç pano kalır)", DoClearScene));
         ActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
         ActionBar.Visibility = Visibility.Visible;
     }
@@ -2087,12 +2101,59 @@ public partial class CaptureOverlayWindow : Window
         Canvas.SetTop(OptionBar, obY);
     }
 
-    // ===================== Serbest mod: resim yapıştırma =====================
+    // ===================== Serbest mod: öğe kopyala / yapıştır / çoğalt =====================
+    private void CopySelectedItems()
+    {
+        if (_scene == null || _canvas == null || _canvas.Selection.Count == 0) return;
+
+        // Z-sırası korunarak kopyala (yapıştırınca aynı üst üste biniş).
+        var ordered = SceneClipboard.OrderBySceneZ(_scene, _canvas.Selection);
+        _itemClipboard = ordered.Select(s => s.Clone()).ToList();
+
+        // Sistem panosuna da PNG koy — başka uygulamaya yapıştırılabilir.
+        try
+        {
+            using var bmp = SceneClipboard.RenderSelectionBitmap(_itemClipboard);
+            ImageExporter.CopyToClipboard(bmp);
+        }
+        catch
+        {
+            // Sistem panosu başarısız olsa da iç clipboard çalışır.
+        }
+
+        ShowToast(_itemClipboard.Count == 1
+            ? "1 öğe kopyalandı"
+            : $"{_itemClipboard.Count} öğe kopyalandı");
+    }
+
+    private void DuplicateSelectedItems()
+    {
+        if (_scene == null || _canvas == null || _canvas.Selection.Count == 0) return;
+
+        var ordered = SceneClipboard.OrderBySceneZ(_scene, _canvas.Selection);
+        var clones = ordered.Select(s => s.Clone()).ToList();
+        var union = SceneClipboard.UnionBounds(clones);
+        var (dx, dy) = SceneClipboard.ComputeDuplicateOffset(union, _scene.Width, _scene.Height);
+        foreach (var c in clones)
+            c.Move(dx, dy);
+
+        var actions = clones.Select(c => (IUndoableAction)new AddItemAction(c)).ToList();
+        _scene.Apply(actions.Count == 1 ? actions[0] : new CompositeAction(actions));
+        _canvas.SetSelection(clones);
+        ShowToast(clones.Count == 1 ? "1 öğe çoğaltıldı" : $"{clones.Count} öğe çoğaltıldı");
+    }
+
     private void TryPasteImage()
     {
         if (_scene == null) return;
         try
         {
+            if (_itemClipboard is { Count: > 0 })
+            {
+                PasteSceneItems(_itemClipboard);
+                return;
+            }
+
             if (!Clipboard.ContainsImage()) return;
             var src = Clipboard.GetImage();
             if (src == null) return;
@@ -2102,14 +2163,103 @@ public partial class CaptureOverlayWindow : Window
             float maxW = _scene.Width * 0.6f, maxH = _scene.Height * 0.6f;
             float scale = Math.Min(1f, Math.Min(maxW / sk.Width, maxH / sk.Height));
             float w = sk.Width * scale, h = sk.Height * scale;
-            float cx = _scene.Width / 2f, cy = _scene.Height / 2f;
-            int n = _scene.Items.OfType<ImageItem>().Count();
-            float off = n * 30f;
-            var item = new ImageItem { Bitmap = sk, Bounds = new SKRect(cx - w / 2 + off, cy - h / 2 + off, cx + w / 2 + off, cy + h / 2 + off) };
+            var anchor = GetPasteAnchorScenePoint();
+            var tl = SceneClipboard.ClampTopLeft(
+                anchor.X - w / 2f, anchor.Y - h / 2f, w, h, _scene.Width, _scene.Height);
+            var item = new ImageItem { Bitmap = sk, Bounds = new SKRect(tl.X, tl.Y, tl.X + w, tl.Y + h) };
             _scene.Apply(new AddItemAction(item));
             _canvas?.SetSelection(item);
+            ShowToast("Resim yapıştırıldı");
         }
         catch { }
+    }
+
+    private void PasteSceneItems(IReadOnlyList<SceneItem> source)
+    {
+        if (_scene == null || source.Count == 0) return;
+
+        var clones = source.Select(s => s.Clone()).ToList();
+        var union = SceneClipboard.UnionBounds(clones);
+        var anchor = GetPasteAnchorScenePoint();
+        var (dx, dy) = SceneClipboard.ComputeAnchorOffset(
+            union, anchor.X, anchor.Y, _scene.Width, _scene.Height);
+        foreach (var c in clones)
+            c.Move(dx, dy);
+
+        var actions = clones.Select(c => (IUndoableAction)new AddItemAction(c)).ToList();
+        _scene.Apply(actions.Count == 1 ? actions[0] : new CompositeAction(actions));
+        _canvas?.SetSelection(clones);
+        ShowToast(clones.Count == 1
+            ? "1 öğe yapıştırıldı (Ctrl+Z = geri al)"
+            : $"{clones.Count} öğe yapıştırıldı (Ctrl+Z = geri al)");
+    }
+
+    /// <summary>
+    /// Yapıştırma hedefi: fare tuvaldeyse orası; değilse son bilinen tuval noktası;
+    /// o da yoksa seçim merkezi / sahne merkezi.
+    /// </summary>
+    private SKPoint GetPasteAnchorScenePoint()
+    {
+        if (_scene == null) return default;
+
+        if (_canvas != null && _canvas.IsVisible && _canvas.ActualWidth > 0 && _canvas.ActualHeight > 0)
+        {
+            try
+            {
+                var pos = Mouse.GetPosition(_canvas);
+                if (pos.X >= 0 && pos.Y >= 0 && pos.X <= _canvas.ActualWidth && pos.Y <= _canvas.ActualHeight)
+                {
+                    var p = _canvas.PointToScene(pos);
+                    _lastScenePointer = p;
+                    return p;
+                }
+            }
+            catch { /* fare konumu alınamazsa fallback */ }
+        }
+
+        if (_lastScenePointer is { } last)
+            return last;
+
+        if (_canvas is { Selection.Count: > 0 })
+        {
+            var b = _canvas.SelectionBounds();
+            return new SKPoint(b.MidX, b.MidY);
+        }
+
+        return new SKPoint(_scene.Width / 2f, _scene.Height / 2f);
+    }
+
+    private void TrackCanvasPointer(object sender, MouseEventArgs e)
+    {
+        if (_canvas == null || _scene == null) return;
+        try
+        {
+            var pos = e.GetPosition(_canvas);
+            if (pos.X >= 0 && pos.Y >= 0 && pos.X <= _canvas.ActualWidth && pos.Y <= _canvas.ActualHeight)
+                _lastScenePointer = _canvas.PointToScene(pos);
+        }
+        catch { }
+    }
+
+    private async void ShowToast(string message, int ms = 1600)
+    {
+        _toastCts?.Cancel();
+        _toastCts = new CancellationTokenSource();
+        var token = _toastCts.Token;
+
+        ToastText.Text = message;
+        ToastBanner.Visibility = Visibility.Visible;
+        ToastBanner.UpdateLayout();
+        Canvas.SetLeft(ToastBanner, Math.Round((ActualWidth - ToastBanner.ActualWidth) / 2));
+        Canvas.SetTop(ToastBanner, Math.Round(ActualHeight - ToastBanner.ActualHeight - 28));
+
+        try
+        {
+            await Task.Delay(ms, token);
+            if (!token.IsCancellationRequested)
+                ToastBanner.Visibility = Visibility.Collapsed;
+        }
+        catch (TaskCanceledException) { }
     }
 
     private static SKBitmap? BitmapSourceToSk(System.Windows.Media.Imaging.BitmapSource src)
@@ -2387,14 +2537,16 @@ public partial class CaptureOverlayWindow : Window
     private async void FinishPendingFreeExport()
     {
         var action = _pendingFreeExportAction;
+        bool transparent = _pendingFreeExportTransparent;
         _pendingFreeExportAction = null;
+        _pendingFreeExportTransparent = false;
         if (action == null) { RestoreAfterSceneCropUi(); return; }
 
         bool finished = action.Value switch
         {
-            PendingFreeExportAction.Copy => CopyRendered(transparent: false),
-            PendingFreeExportAction.Save => SaveRendered(transparent: false),
-            PendingFreeExportAction.Upload => await StartUploadRenderedAsync(transparent: false),
+            PendingFreeExportAction.Copy => CopyRendered(transparent),
+            PendingFreeExportAction.Save => SaveRendered(transparent),
+            PendingFreeExportAction.Upload => await StartUploadRenderedAsync(transparent),
             _ => false,
         };
 
@@ -2405,13 +2557,23 @@ public partial class CaptureOverlayWindow : Window
         }
     }
 
+    private static bool IsCropChoice(BackgroundChoice choice)
+        => choice is BackgroundChoice.CropOpaque or BackgroundChoice.CropTransparent;
+
+    private static bool IsTransparentChoice(BackgroundChoice choice)
+        => choice is BackgroundChoice.Transparent or BackgroundChoice.CropTransparent;
+
     private void DoCopy()
     {
         if (_scene == null || _canvas?.IsSceneCropping == true) return;
         var choice = AskFreeExportChoice();
         if (choice == null) return;
-        if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Copy); return; }
-        CopyRendered(choice == BackgroundChoice.Transparent);
+        if (IsCropChoice(choice.Value))
+        {
+            BeginSceneCropUi(PendingFreeExportAction.Copy, IsTransparentChoice(choice.Value));
+            return;
+        }
+        CopyRendered(IsTransparentChoice(choice.Value));
     }
 
     private void DoSave()
@@ -2419,8 +2581,12 @@ public partial class CaptureOverlayWindow : Window
         if (_scene == null || _canvas?.IsSceneCropping == true) return;
         var choice = AskFreeExportChoice();
         if (choice == null) return;
-        if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Save); return; }
-        SaveRendered(choice == BackgroundChoice.Transparent);
+        if (IsCropChoice(choice.Value))
+        {
+            BeginSceneCropUi(PendingFreeExportAction.Save, IsTransparentChoice(choice.Value));
+            return;
+        }
+        SaveRendered(IsTransparentChoice(choice.Value));
     }
 
     private async void DoUpload()
@@ -2428,8 +2594,12 @@ public partial class CaptureOverlayWindow : Window
         if (_scene == null || _canvas?.IsSceneCropping == true) return;
         var choice = AskFreeExportChoice();
         if (choice == null) return;
-        if (choice == BackgroundChoice.Crop) { BeginSceneCropUi(PendingFreeExportAction.Upload); return; }
-        await StartUploadRenderedAsync(choice == BackgroundChoice.Transparent);
+        if (IsCropChoice(choice.Value))
+        {
+            BeginSceneCropUi(PendingFreeExportAction.Upload, IsTransparentChoice(choice.Value));
+            return;
+        }
+        await StartUploadRenderedAsync(IsTransparentChoice(choice.Value));
     }
 
     // ===================== Klavye =====================
@@ -2447,7 +2617,29 @@ public partial class CaptureOverlayWindow : Window
 
         if (ctrl && e.Key == Key.Z) { if (shift) _scene?.Redo(); else _scene?.Undo(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.Y) { _scene?.Redo(); e.Handled = true; return; }
-        if (ctrl && e.Key == Key.C) { DoCopy(); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.C)
+        {
+            // Serbest: seçili öğe → öğe kopyala. Seçim yok → sessiz no-op (export = toolbar Kopyala).
+            // Diğer modlar: her zaman export kopyala.
+            if (_mode == CaptureMode.Free)
+            {
+                if (_canvas is { Selection.Count: > 0 })
+                    CopySelectedItems();
+                else
+                    ShowToast("Kopyalamak için öğe seçin · dışa aktar: Kopyala");
+            }
+            else
+                DoCopy();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && e.Key == Key.D)
+        {
+            if (_canvas is { Selection.Count: > 0 })
+                DuplicateSelectedItems();
+            e.Handled = true;
+            return;
+        }
         if (ctrl && e.Key == Key.S) { DoSave(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.V) { TryPasteImage(); e.Handled = true; return; }
         if (e.Key is Key.Delete or Key.Back) { _canvas?.DeleteSelected(); e.Handled = true; return; }
@@ -2476,6 +2668,9 @@ public partial class CaptureOverlayWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        _toastCts = null;
         DetachSceneEvents(_scene);
         _settings.Save();
         base.OnClosed(e);

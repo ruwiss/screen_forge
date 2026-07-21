@@ -126,6 +126,17 @@
                        Text="Alan seçmek için sürükleyin" />
         </Border>
 
+        <!-- Kısa geri bildirim (kopyala/yapıştır/çoğalt) -->
+        <Border x:Name="ToastBanner" Visibility="Collapsed" IsHitTestVisible="False"
+                Background="#E21F2430" CornerRadius="8" Padding="16,10"
+                BorderBrush="#3A4254" BorderThickness="1">
+            <Border.Effect>
+                <DropShadowEffect Color="Black" BlurRadius="16" ShadowDepth="2" Opacity="0.45" />
+            </Border.Effect>
+            <TextBlock x:Name="ToastText" Foreground="#EAF0F7" FontFamily="Segoe UI" FontSize="13"
+                       FontWeight="SemiBold" TextAlignment="Center" />
+        </Border>
+
         <!-- Sağ üst hover etiket -->
         <Border x:Name="HoverLabel" Visibility="Collapsed" IsHitTestVisible="False"
                 Background="#CC1F2430" CornerRadius="4" Padding="7,3">

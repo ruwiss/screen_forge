@@ -325,6 +325,8 @@ public sealed class InteractiveCanvas : SKElement
     }
 
     /// <summary>WPF fare noktası → sahne (içerik piksel) koordinatı.</summary>
+    public SKPoint PointToScene(Point wpf) => ToScene(wpf);
+
     private SKPoint ToScene(Point wpf)
     {
         double dpi = DpiScale;
