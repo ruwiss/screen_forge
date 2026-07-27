@@ -43,6 +43,15 @@ public sealed class Scene
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
 
+    /// <summary>
+    /// Geri alınabilir işlem sayısı.
+    /// </summary>
+    /// <remarks>
+    /// Sahneyi başka bir geçmiş sistemiyle eşitlemek için kullanılır; dışarıdan
+    /// kaç yeni işlem yapıldığı bu sayacın farkından anlaşılır.
+    /// </remarks>
+    public int UndoDepth => _undo.Count;
+
     public void ClearHistory() { _undo.Clear(); _redo.Clear(); }
 
     public event Action? Changed;
@@ -101,10 +110,26 @@ public sealed class Scene
     }
 
     /// <summary>En üstteki öğeden başlayarak hit-test.</summary>
+    /// <summary>
+    /// Bir öğenin şu anda seçilebilir olup olmadığını belirleyen isteğe bağlı süzgeç.
+    /// </summary>
+    /// <remarks>
+    /// Zamana bağlı sahnelerde (GIF kareleri gibi) öğe her karede görünmez.
+    /// Süzgeç olmadan görünmeyen öğeler de tıklamayla seçilir ve kullanıcı
+    /// olmayan bir nesneyi düzenlemeye başlar.
+    /// </remarks>
+    public Func<SceneItem, bool>? HitFilter { get; set; }
+
     public SceneItem? HitTest(SKPoint p)
     {
         for (int i = Items.Count - 1; i >= 0; i--)
+        {
+            if (HitFilter != null && !HitFilter(Items[i]))
+                continue;
+
             if (Items[i].HitTest(p)) return Items[i];
+        }
+
         return null;
     }
 }

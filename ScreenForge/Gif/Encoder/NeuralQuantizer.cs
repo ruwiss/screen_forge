@@ -3,15 +3,16 @@ using WpfColor = System.Windows.Media.Color;
 namespace ScreenForge.Gif.Encoder;
 
 // NeuQuant Neural-Net Quantization Algorithm
-// Ported from ScreenToGif — Anthony Dekker, Kevin Weiner, gOODiDEA.NET, Simon Bridewell, Nicke Manarin
+// ScreenToGif üzerinden uyarlandı — Anthony Dekker, Kevin Weiner, gOODiDEA.NET, Simon Bridewell, Nicke Manarin
 // GNU GPL v3 — http://www.gnu.org/licenses/gpl.html
 
+/// <summary>
+/// Kendini düzenleyen sinir ağı ile renk kuantalaması. Octree'ye göre yavaş ama
+/// fotoğrafik içerikte belirgin daha iyi palet üretir.
+/// </summary>
 internal sealed class NeuralQuantizer : Quantizer
 {
-    private readonly int _networkSize;
-    private int _maximumNeuronIndex;
-
-    private const int NetworkBiasShift       = 4;
+    private const int NetworkBiasShift = 4;
     private const int NumberOfLearningCycles = 100;
 
     private const int Prime1 = 499;
@@ -19,312 +20,222 @@ internal sealed class NeuralQuantizer : Quantizer
     private const int Prime3 = 487;
     private const int Prime4 = 503;
 
-    private int[] _biases          = Array.Empty<int>();
-    private int[] _frequencies     = Array.Empty<int>();
-    private int[] _neighbourhoodAlphas = Array.Empty<int>();
-
-    private const int AlphaBiasShift    = 10;
-    private const int InitialAlpha      = 1 << AlphaBiasShift;
-    private const int IntBiasShift      = 16;
-    private const int IntBias           = 1 << IntBiasShift;
-    private const int GammaShift        = 10;
-    private const int BetaShift         = 10;
+    private const int AlphaBiasShift = 10;
+    private const int InitialAlpha = 1 << AlphaBiasShift;
+    private const int IntBiasShift = 16;
+    private const int IntBias = 1 << IntBiasShift;
+    private const int GammaShift = 10;
+    private const int BetaShift = 10;
     private const int ClosestNeuronFrequencyIncrement = IntBias >> BetaShift;
-    private const int ClosestNeuronBiasDecrement      = IntBias << (GammaShift - BetaShift);
+    private const int ClosestNeuronBiasDecrement = IntBias << (GammaShift - BetaShift);
 
-    private int _initialNeighbourhoodSize;
-    private const int NeighbourhoodSizeBiasShift      = 6;
-    private const int NeighbourhoodSizeBias            = 1 << NeighbourhoodSizeBiasShift;
-    private int _initialUnbiasedNeighbourhoodSize;
+    private const int NeighbourhoodSizeBiasShift = 6;
+    private const int NeighbourhoodSizeBias = 1 << NeighbourhoodSizeBiasShift;
     private const int UnbiasedNeighbourhoodSizeDecrement = 30;
 
-    private const int RadiusBiasShift       = 8;
-    private const int RadiusBias            = 1 << RadiusBiasShift;
-    private const int AlphaRadiusBiasShift  = AlphaBiasShift + RadiusBiasShift;
-    private const int AlphaRadiusBias       = 1 << AlphaRadiusBiasShift;
+    private const int RadiusBiasShift = 8;
+    private const int RadiusBias = 1 << RadiusBiasShift;
+    private const int AlphaRadiusBias = 1 << (AlphaBiasShift + RadiusBiasShift);
 
-    private int _pixelBytesCount;
+    private readonly int _networkSize;
     private int _samplingFactor;
 
-    private int[][] _network   = Array.Empty<int[]>();
-    private int[] _indexOfGreen = Array.Empty<int>();
+    private int[][] _network = Array.Empty<int[]>();
+    private int[] _biases = Array.Empty<int>();
+    private int[] _frequencies = Array.Empty<int>();
+    private int[] _neighbourhoodAlphas = Array.Empty<int>();
+    private int _initialUnbiasedNeighbourhoodSize;
 
-    /// <param name="samplingFactor">1-20. 1=en yüksek kalite (yavaş), 10=varsayılan, 20=en hızlı.</param>
-    /// <param name="maximumColors">Maksimum renk sayısı (<=256).</param>
-    public NeuralQuantizer(int samplingFactor, int maximumColors = 256) : base(false)
+    /// <param name="samplingFactor">1-20. 1 = en yüksek kalite (yavaş), 20 = en hızlı.</param>
+    /// <param name="maximumColors">Üretilecek renk sayısı (2-256).</param>
+    public NeuralQuantizer(int samplingFactor, int maximumColors = 256)
     {
-        _samplingFactor = samplingFactor;
-        _networkSize    = maximumColors;
+        _samplingFactor = Math.Clamp(samplingFactor, 1, 20);
+        _networkSize = Math.Clamp(maximumColors, 2, 256);
+        MaxColors = _networkSize;
     }
 
-    internal override void FirstPass(byte[] pixels)
+    internal override void FirstPass(byte[] bgra)
     {
-        MaxColorsWithTransparency = TransparentColor.HasValue ? _networkSize - 1 : _networkSize;
-        _maximumNeuronIndex       = MaxColorsWithTransparency - 1;
-        _network      = new int[MaxColorsWithTransparency][];
-        _indexOfGreen = new int[256];
-        _biases       = new int[MaxColorsWithTransparency];
-        _frequencies  = new int[MaxColorsWithTransparency];
-        _initialNeighbourhoodSize        = Math.Max(MaxColorsWithTransparency >> 3, 1);
-        _neighbourhoodAlphas             = new int[_initialNeighbourhoodSize];
-        _initialUnbiasedNeighbourhoodSize = _initialNeighbourhoodSize * NeighbourhoodSizeBias;
+        int size = Math.Clamp(Math.Min(MaxColors, _networkSize), 2, 256);
 
-        for (var n = 0; n < MaxColorsWithTransparency; n++)
+        _network = new int[size][];
+        _biases = new int[size];
+        _frequencies = new int[size];
+
+        int initialNeighbourhood = Math.Max(size >> 3, 1);
+        _neighbourhoodAlphas = new int[initialNeighbourhood];
+        _initialUnbiasedNeighbourhoodSize = initialNeighbourhood * NeighbourhoodSizeBias;
+
+        for (int n = 0; n < size; n++)
         {
-            _network[n]    = new int[4];
-            _network[n][0] = _network[n][1] = _network[n][2] =
-                (n << (NetworkBiasShift + 8)) / MaxColorsWithTransparency;
-            _frequencies[n] = IntBias / MaxColorsWithTransparency;
-            _biases[n]      = 0;
+            _network[n] = new int[4];
+            _network[n][0] = _network[n][1] = _network[n][2] = (n << (NetworkBiasShift + 8)) / size;
+            _frequencies[n] = IntBias / size;
         }
 
-        Learn(pixels);
+        Learn(bgra);
         UnbiasNetwork();
-        BuildIndex();
     }
 
     internal override List<WpfColor> BuildPalette()
     {
-        var map   = new byte[3 * MaxColorsWithTransparency];
-        var index = new int[MaxColorsWithTransparency];
-        for (var i = 0; i < MaxColorsWithTransparency; i++)
-            index[_network[i][3]] = i;
-
-        var colors = new List<WpfColor>(MaxColorsWithTransparency + 1);
-        var k = 0;
-        for (var i = 0; i < MaxColorsWithTransparency; i++)
-        {
-            var j = index[i];
-            map[k++] = (byte)_network[j][0]; // B
-            map[k++] = (byte)_network[j][1]; // G
-            map[k++] = (byte)_network[j][2]; // R
-            colors.Add(new WpfColor { A = 255, B = map[k - 3], G = map[k - 2], R = map[k - 1] });
-        }
-
-        if (TransparentColor.HasValue)
-            colors.Add(TransparentColor.Value);
+        var colors = new List<WpfColor>(_network.Length);
+        foreach (var neuron in _network)
+            colors.Add(WpfColor.FromRgb((byte)neuron[2], (byte)neuron[1], (byte)neuron[0]));
 
         return colors;
     }
 
-    protected override byte QuantizePixel(WpfColor pixel) => MapColor(pixel.B, pixel.G, pixel.R);
-
-    // ─── Learning ────────────────────────────────────────────────────────────────
+    // ─── Öğrenme ──────────────────────────────────────────────────────────────
 
     private void Learn(byte[] pixels)
     {
-        _pixelBytesCount = pixels.Length;
+        int byteCount = pixels.Length;
+        if (byteCount < BytesPerPixel)
+            return;
 
-        if (_pixelBytesCount < Prime4 * 4)
+        if (byteCount < Prime4 * BytesPerPixel)
             _samplingFactor = 1;
 
-        var alphaDecrement    = 30 + (_samplingFactor - 1) / 4;
-        var pixelIndex        = 0;
-        var pixelsToExamine   = _pixelBytesCount / (4 * _samplingFactor);
-        var alphaUpdateFreq   = Math.Max(1, pixelsToExamine / NumberOfLearningCycles);
-        var alpha             = InitialAlpha;
-        var unbiasedSize      = _initialUnbiasedNeighbourhoodSize;
-        var neighbourhoodSize = unbiasedSize >> NeighbourhoodSizeBiasShift;
-        if (neighbourhoodSize < 1) neighbourhoodSize = 1;
+        int alphaDecrement = 30 + (_samplingFactor - 1) / 4;
+        int pixelsToExamine = Math.Max(1, byteCount / (BytesPerPixel * _samplingFactor));
+        int alphaUpdateFrequency = Math.Max(1, pixelsToExamine / NumberOfLearningCycles);
+        int alpha = InitialAlpha;
+        int unbiasedSize = _initialUnbiasedNeighbourhoodSize;
+        int neighbourhoodSize = Math.Max(1, unbiasedSize >> NeighbourhoodSizeBiasShift);
 
-        SetNeighbourhoodAlphas(_neighbourhoodAlphas, neighbourhoodSize, alpha, RadiusBias);
-        var step = GetPixelIndexIncrement(_pixelBytesCount);
+        SetNeighbourhoodAlphas(neighbourhoodSize, alpha);
 
-        for (var examined = 0; examined < pixelsToExamine; examined++)
+        int step = GetPixelIndexIncrement(byteCount);
+        int pixelIndex = 0;
+
+        for (int examined = 0; examined < pixelsToExamine; examined++)
         {
-            if (pixels[pixelIndex + 3] > 0)
+            if (pixelIndex + 3 < byteCount && pixels[pixelIndex + 3] > 0)
             {
-                var b = (pixels[pixelIndex + 0] & 0xff) << NetworkBiasShift;
-                var g = (pixels[pixelIndex + 1] & 0xff) << NetworkBiasShift;
-                var r = (pixels[pixelIndex + 2] & 0xff) << NetworkBiasShift;
+                int b = (pixels[pixelIndex] & 0xff) << NetworkBiasShift;
+                int g = (pixels[pixelIndex + 1] & 0xff) << NetworkBiasShift;
+                int r = (pixels[pixelIndex + 2] & 0xff) << NetworkBiasShift;
 
-                var best = FindClosestAndReturnBestNeuron(b, g, r);
+                int best = FindBestNeuron(b, g, r);
                 MoveNeuron(alpha, best, b, g, r);
                 if (neighbourhoodSize != 0)
                     MoveNeighbouringNeurons(neighbourhoodSize, best, b, g, r);
             }
 
             pixelIndex += step;
-            if (pixelIndex >= _pixelBytesCount) pixelIndex -= _pixelBytesCount;
+            if (pixelIndex >= byteCount) pixelIndex -= byteCount;
 
-            if (examined % alphaUpdateFreq == 0)
-            {
-                alpha       -= alpha       / alphaDecrement;
-                unbiasedSize -= unbiasedSize / UnbiasedNeighbourhoodSizeDecrement;
-                neighbourhoodSize = unbiasedSize >> NeighbourhoodSizeBiasShift;
-                if (neighbourhoodSize <= 1) neighbourhoodSize = 0;
-                SetNeighbourhoodAlphas(_neighbourhoodAlphas, neighbourhoodSize, alpha, RadiusBias);
-            }
+            if (examined % alphaUpdateFrequency != 0)
+                continue;
+
+            alpha -= alpha / alphaDecrement;
+            unbiasedSize -= unbiasedSize / UnbiasedNeighbourhoodSizeDecrement;
+            neighbourhoodSize = unbiasedSize >> NeighbourhoodSizeBiasShift;
+            if (neighbourhoodSize <= 1) neighbourhoodSize = 0;
+            SetNeighbourhoodAlphas(neighbourhoodSize, alpha);
         }
     }
 
-    private static void SetNeighbourhoodAlphas(int[] alphas, int size, int alpha, int radiusBias)
+    private void SetNeighbourhoodAlphas(int size, int alpha)
     {
-        var sq = size * size;
-        for (var i = 0; i < size; i++)
-            alphas[i] = alpha * ((sq - i * i) * radiusBias / sq);
+        if (size <= 0)
+            return;
+
+        size = Math.Min(size, _neighbourhoodAlphas.Length);
+        int squared = size * size;
+        for (int i = 0; i < size; i++)
+            _neighbourhoodAlphas[i] = alpha * ((squared - i * i) * RadiusBias / squared);
     }
 
     private static int GetPixelIndexIncrement(int byteCount)
     {
-        if (byteCount < Prime4 * 4)          return 4;
-        if (byteCount % Prime1 != 0)          return Prime1 * 4;
-        if (byteCount % Prime2 != 0)          return Prime2 * 4;
-        if (byteCount % Prime3 != 0)          return Prime3 * 4;
-        return Prime4 * 4;
+        if (byteCount < Prime4 * BytesPerPixel) return BytesPerPixel;
+        if (byteCount % Prime1 != 0) return Prime1 * BytesPerPixel;
+        if (byteCount % Prime2 != 0) return Prime2 * BytesPerPixel;
+        if (byteCount % Prime3 != 0) return Prime3 * BytesPerPixel;
+        return Prime4 * BytesPerPixel;
     }
 
-    private int FindClosestAndReturnBestNeuron(int blue, int green, int red)
+    private int FindBestNeuron(int blue, int green, int red)
     {
-        var bestDist     = ~(1 << 31);
-        var bestBiasDist = bestDist;
-        var closestIdx   = -1;
-        var bestBiasIdx  = -1;
+        int bestDistance = int.MaxValue;
+        int bestBiasDistance = int.MaxValue;
+        int closestIndex = 0;
+        int bestBiasIndex = 0;
 
-        for (var n = 0; n < MaxColorsWithTransparency; n++)
+        for (int n = 0; n < _network.Length; n++)
         {
-            var dist = _network[n][0] - blue;
-            if (dist < 0) dist = -dist;
-            var d2 = _network[n][1] - green; if (d2 < 0) d2 = -d2; dist += d2;
-            d2 = _network[n][2] - red;       if (d2 < 0) d2 = -d2; dist += d2;
+            var neuron = _network[n];
 
-            if (dist < bestDist) { bestDist = dist; closestIdx = n; }
+            int distance = Math.Abs(neuron[0] - blue)
+                         + Math.Abs(neuron[1] - green)
+                         + Math.Abs(neuron[2] - red);
 
-            var biasDist = dist - (_biases[n] >> (IntBiasShift - NetworkBiasShift));
-            if (biasDist < bestBiasDist) { bestBiasDist = biasDist; bestBiasIdx = n; }
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                closestIndex = n;
+            }
 
-            var bf = _frequencies[n] >> BetaShift;
-            _frequencies[n] -= bf;
-            _biases[n]       += bf << GammaShift;
+            int biasDistance = distance - (_biases[n] >> (IntBiasShift - NetworkBiasShift));
+            if (biasDistance < bestBiasDistance)
+            {
+                bestBiasDistance = biasDistance;
+                bestBiasIndex = n;
+            }
+
+            int frequencyDelta = _frequencies[n] >> BetaShift;
+            _frequencies[n] -= frequencyDelta;
+            _biases[n] += frequencyDelta << GammaShift;
         }
 
-        _frequencies[closestIdx] += ClosestNeuronFrequencyIncrement;
-        _biases[closestIdx]      -= ClosestNeuronBiasDecrement;
-        return bestBiasIdx;
+        _frequencies[closestIndex] += ClosestNeuronFrequencyIncrement;
+        _biases[closestIndex] -= ClosestNeuronBiasDecrement;
+        return bestBiasIndex;
     }
 
-    private void MoveNeuron(int alpha, int idx, int b, int g, int r)
+    private void MoveNeuron(int alpha, int index, int b, int g, int r)
     {
-        _network[idx][0] -= (alpha * (_network[idx][0] - b)) / InitialAlpha;
-        _network[idx][1] -= (alpha * (_network[idx][1] - g)) / InitialAlpha;
-        _network[idx][2] -= (alpha * (_network[idx][2] - r)) / InitialAlpha;
+        var neuron = _network[index];
+        neuron[0] -= alpha * (neuron[0] - b) / InitialAlpha;
+        neuron[1] -= alpha * (neuron[1] - g) / InitialAlpha;
+        neuron[2] -= alpha * (neuron[2] - r) / InitialAlpha;
     }
 
-    private void MoveNeighbouringNeurons(int size, int idx, int b, int g, int r)
+    private void MoveNeighbouringNeurons(int size, int index, int b, int g, int r)
     {
-        var lo = idx - size; if (lo < -1) lo = -1;
-        var hi = idx + size; if (hi > _network.Length) hi = _network.Length;
+        int low = Math.Max(index - size, -1);
+        int high = Math.Min(index + size, _network.Length);
 
-        var hiIdx = idx + 1;
-        var loIdx = idx - 1;
-        var ai    = 1;
+        int highIndex = index + 1;
+        int lowIndex = index - 1;
+        int alphaIndex = 1;
 
-        while (hiIdx < hi || loIdx > lo)
+        while ((highIndex < high || lowIndex > low) && alphaIndex < _neighbourhoodAlphas.Length)
         {
-            var na = _neighbourhoodAlphas[ai++];
-            if (hiIdx < hi) MoveNeighbour(hiIdx++, na, AlphaRadiusBias, b, g, r);
-            if (loIdx > lo) MoveNeighbour(loIdx--, na, AlphaRadiusBias, b, g, r);
+            int alpha = _neighbourhoodAlphas[alphaIndex++];
+            if (highIndex < high) MoveNeighbour(highIndex++, alpha, b, g, r);
+            if (lowIndex > low) MoveNeighbour(lowIndex--, alpha, b, g, r);
         }
     }
 
-    private void MoveNeighbour(int idx, int alpha, int arb, int b, int g, int r)
+    private void MoveNeighbour(int index, int alpha, int b, int g, int r)
     {
-        _network[idx][0] -= (alpha * (_network[idx][0] - b)) / arb;
-        _network[idx][1] -= (alpha * (_network[idx][1] - g)) / arb;
-        _network[idx][2] -= (alpha * (_network[idx][2] - r)) / arb;
+        var neuron = _network[index];
+        neuron[0] -= alpha * (neuron[0] - b) / AlphaRadiusBias;
+        neuron[1] -= alpha * (neuron[1] - g) / AlphaRadiusBias;
+        neuron[2] -= alpha * (neuron[2] - r) / AlphaRadiusBias;
     }
 
     private void UnbiasNetwork()
     {
-        for (var n = 0; n < MaxColorsWithTransparency; n++)
+        foreach (var neuron in _network)
         {
-            _network[n][0] >>= NetworkBiasShift;
-            _network[n][1] >>= NetworkBiasShift;
-            _network[n][2] >>= NetworkBiasShift;
-            _network[n][3]   = n;
+            neuron[0] = Math.Clamp(neuron[0] >> NetworkBiasShift, 0, 255);
+            neuron[1] = Math.Clamp(neuron[1] >> NetworkBiasShift, 0, 255);
+            neuron[2] = Math.Clamp(neuron[2] >> NetworkBiasShift, 0, 255);
         }
-    }
-
-    private void BuildIndex()
-    {
-        var prevGreen  = 0;
-        var startGreen = 0;
-
-        for (var i = 0; i < MaxColorsWithTransparency; i++)
-        {
-            var cur = _network[i];
-            var li  = IndexOfLeastGreen(i);
-            var lv  = _network[li][1];
-
-            if (i != li) SwapNeurons(cur, _network[li]);
-
-            if (lv != prevGreen)
-            {
-                _indexOfGreen[prevGreen] = (startGreen + i) >> 1;
-                for (var g = prevGreen + 1; g < lv; g++) _indexOfGreen[g] = i;
-                prevGreen  = lv;
-                startGreen = i;
-            }
-        }
-
-        _indexOfGreen[prevGreen] = (startGreen + _maximumNeuronIndex) >> 1;
-        for (var g = prevGreen + 1; g < 256; g++) _indexOfGreen[g] = _maximumNeuronIndex;
-    }
-
-    private int IndexOfLeastGreen(int start)
-    {
-        var bestIdx = start;
-        var bestG   = _network[start][1];
-        for (var j = start + 1; j < MaxColorsWithTransparency; j++)
-            if (_network[j][1] < bestG) { bestIdx = j; bestG = _network[j][1]; }
-        return bestIdx;
-    }
-
-    private static void SwapNeurons(int[] a, int[] b)
-    {
-        for (var i = 0; i < a.Length; i++) { var t = a[i]; a[i] = b[i]; b[i] = t; }
-    }
-
-    // ─── Color lookup ─────────────────────────────────────────────────────────────
-
-    internal byte MapColor(int blue, int green, int red)
-    {
-        var best    = -1;
-        var bestDist = 1000;
-        var hi      = _indexOfGreen[green];
-        var lo      = hi - 1;
-
-        while (hi < MaxColorsWithTransparency || lo >= 0)
-        {
-            if (hi < MaxColorsWithTransparency)
-            {
-                var n = _network[hi];
-                var d = n[1] - green;
-                if (d >= bestDist) { hi = MaxColorsWithTransparency; }
-                else
-                {
-                    hi++;
-                    if (d < 0) d = -d;
-                    var d2 = n[0] - blue; if (d2 < 0) d2 = -d2; d += d2;
-                    if (d < bestDist) { d2 = n[2] - red; if (d2 < 0) d2 = -d2; d += d2; if (d < bestDist) { bestDist = d; best = n[3]; } }
-                }
-            }
-
-            if (lo >= 0)
-            {
-                var n = _network[lo];
-                var d = green - n[1];
-                if (d >= bestDist) { lo = -1; }
-                else
-                {
-                    lo--;
-                    if (d < 0) d = -d;
-                    var d2 = n[0] - blue; if (d2 < 0) d2 = -d2; d += d2;
-                    if (d < bestDist) { d2 = n[2] - red; if (d2 < 0) d2 = -d2; d += d2; if (d < bestDist) { bestDist = d; best = n[3]; } }
-                }
-            }
-        }
-
-        return (byte)Math.Min(best, MaxColorsWithTransparency);
     }
 }

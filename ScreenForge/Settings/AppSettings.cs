@@ -30,6 +30,9 @@ public sealed class AppSettings
     // ---- Son kullanılan araç stilleri (kalıcı, sıfırlanmaz) ----
     public ToolStyleMemory ToolStyles { get; set; } = new();
 
+    // ---- GIF kayıt/dışa aktarma tercihleri ----
+    public GifSettings Gif { get; set; } = new();
+
     // ===================== Kalıcılık =====================
 
     [JsonIgnore]
@@ -90,6 +93,63 @@ public enum ImageFormat
     Png,
     Jpeg,
     Webp,
+}
+
+/// <summary>GIF kaydı ve dışa aktarımı için hatırlanan tercihler.</summary>
+public sealed class GifSettings
+{
+    /// <summary>
+    /// Yakalama hızı (1-60). Varsayılan 20: GIF gecikmesi 1/100 sn biriminde
+    /// tutulduğu için 20 fps tam 5 santisaniyeye oturur ve sapma olmaz.
+    /// (15 fps 6.67cs ister, 7cs'e yuvarlanır → gerçekte ~14.3 fps oynar.)
+    /// </summary>
+    public int Fps { get; set; } = 20;
+
+    /// <summary>Palet boyutu: 256, 128 veya 64.</summary>
+    public int ColorCount { get; set; } = 256;
+
+    /// <summary>Neural = kaliteli, Octree = hızlı.</summary>
+    public string Quantizer { get; set; } = "Neural";
+
+    /// <summary>Neural örnekleme faktörü (1 = en iyi kalite, 20 = en hızlı).</summary>
+    public int SamplingFactor { get; set; } = 5;
+
+    public bool Dithering { get; set; }
+
+    /// <summary>Tüm kareler için tek palet — dosya boyutunu belirgin düşürür.</summary>
+    public bool UseGlobalPalette { get; set; }
+
+    /// <summary>Değişmeyen bölgeleri kırp ve saydam yaz.</summary>
+    public bool OptimizeUnchangedPixels { get; set; } = true;
+
+    /// <summary>"Değişmedi" sayılması için kanal başına izin verilen fark (0-32).</summary>
+    public int ChangeTolerance { get; set; }
+
+    /// <summary>
+    /// Kare belleği üst sınırı (MB). Kareler sıkıştırılmış saklandığı için
+    /// bu bütçe ham piksel karşılığının 20-30 katına denk gelir.
+    /// </summary>
+    public int MaxFrameMemoryMb { get; set; } = 1024;
+
+    // ---- Girdi yakalama ----
+
+    /// <summary>Fare imlecini kayda dahil et.</summary>
+    public bool CaptureCursor { get; set; } = true;
+
+    /// <summary>Fare tıklamalarını izle ve renkli daire ile vurgula.</summary>
+    public bool HighlightClicks { get; set; } = true;
+
+    /// <summary>
+    /// Tıklama olmasa da imlecin etrafında sürekli vurgu göster.
+    /// İmleci takip etmeyi kolaylaştırır; varsayılan kapalı.
+    /// </summary>
+    public bool HighlightCursor { get; set; }
+
+    /// <summary>Klavyeyi izle ve basılan tuşları rozet olarak göster.</summary>
+    public bool ShowKeys { get; set; } = true;
+
+    /// <summary>Vurgu dairesinin yarıçapı (kaynak piksel).</summary>
+    public double HighlightRadius { get; set; } = 12;
 }
 
 [Flags]

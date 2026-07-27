@@ -1263,7 +1263,15 @@ public partial class CaptureOverlayWindow : Window
     }
 
     // ---- Üst aksiyon çubuğu (Kopyala/Kaydet/Yükle) ----
-    private int _gifFps = 15;
+    private int GifFps
+    {
+        get => Math.Clamp(_settings.Gif.Fps, 1, 60);
+        set
+        {
+            _settings.Gif.Fps = Math.Clamp(value, 1, 60);
+            _settings.Save();
+        }
+    }
 
     private void BuildActionBar()
     {
@@ -1309,7 +1317,7 @@ public partial class CaptureOverlayWindow : Window
             Margin = new Thickness(7, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
             FontSize = 13, Foreground = System.Windows.Media.Brushes.White,
         };
-        mainLabel.Text = $"GIF  {_gifFps}fps";
+        mainLabel.Text = $"GIF  {GifFps}fps";
         mainSp.Children.Add(mainLabel);
         mainBtn.Content = mainSp;
         mainBtn.Click += (_, _) => OnGifRecord();
@@ -1332,20 +1340,29 @@ public partial class CaptureOverlayWindow : Window
         void ShowFpsMenu()
         {
             var menu = new ContextMenu();
-            foreach (int fps in new[] { 5, 10, 12, 15, 20, 24, 30 })
+            // GIF gecikmesi 1/100 sn biriminde saklanır. 100/fps tam sayı olan
+            // hızlar sapmasız oynar; diğerleri yuvarlanır.
+            foreach (int fps in new[] { 5, 10, 20, 25, 50, 12, 15, 24, 30 })
             {
                 int f = fps;
+                bool exact = 100 % fps == 0;
+
                 var item = new MenuItem
                 {
-                    Header = $"{fps} FPS",
-                    IsChecked = _gifFps == fps,
+                    Header = exact ? $"{fps} FPS" : $"{fps} FPS  (~{Math.Round(100.0 / Math.Round(100.0 / fps), 1)})",
+                    IsChecked = GifFps == fps,
+                    ToolTip = exact
+                        ? "Tam kare süresi — sapma yok"
+                        : $"GIF {Math.Round(100.0 / fps)} santisaniyeye yuvarlar; gerçek hız biraz farklı olur",
                 };
                 item.Click += (_, _) =>
                 {
-                    _gifFps = f;
-                    mainLabel.Text = $"GIF  {_gifFps}fps";
+                    GifFps = f;
+                    mainLabel.Text = $"GIF  {GifFps}fps";
                 };
+
                 menu.Items.Add(item);
+                if (fps == 50) menu.Items.Add(new Separator());
             }
             menu.PlacementTarget = arrowBtn;
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
@@ -1374,19 +1391,25 @@ public partial class CaptureOverlayWindow : Window
             (int)Math.Round(_selDip.Width  * dpi.DpiScaleX),
             (int)Math.Round(_selDip.Height * dpi.DpiScaleY));
         var dipRegion = _selDip;
+        var settings = _settings;
         Close();
 
-        var recorder = new Gif.GifRecorder(gifPixelRegion, fps: _gifFps);
+        if (gifPixelRegion.Width <= 0 || gifPixelRegion.Height <= 0)
+            return;
+
+        long maxBytes = Math.Max(32, settings.Gif.MaxFrameMemoryMb) * 1024L * 1024L;
+        var recorder = new Gif.GifRecorder(gifPixelRegion, fps: settings.Gif.Fps, maxFrameBytes: maxBytes)
+        {
+            CaptureCursor = settings.Gif.CaptureCursor,
+            // Fare ve klavye ayrı kancalar; kapalı olan hiç kurulmaz.
+            TrackMouse = settings.Gif.HighlightClicks || settings.Gif.HighlightCursor,
+            TrackKeyboard = settings.Gif.ShowKeys,
+        };
+
         var overlay = new GifRecordingOverlayWindow(recorder, dipRegion);
-        overlay.Stopped += OnGifStopped;
+        overlay.Stopped += r => new GifEditorWindow(r, settings).Show();
         overlay.Show();
         recorder.Start();
-    }
-
-    private static void OnGifStopped(Gif.GifRecorder recorder)
-    {
-        var preview = new GifPreviewWindow(recorder);
-        preview.Show();
     }
 
     // Temel 6 renk

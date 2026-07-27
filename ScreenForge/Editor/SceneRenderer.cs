@@ -61,8 +61,15 @@ public static class SceneRenderer
             if (hasBlur) PrepareBlurSnapshots(scene, bgImg);
         }
 
+        // Süzgeç varsa yalnızca o an geçerli öğeler çizilir; zamana bağlı
+        // sahnelerde (GIF kareleri) görünmeyen nesneler ekrana gelmemeli.
         foreach (var item in scene.Items)
+        {
+            if (scene.HitFilter != null && !scene.HitFilter(item))
+                continue;
+
             item.Render(canvas);
+        }
     }
 
     private static void PrepareBlurSnapshots(Scene scene, SKImage? bgImg)

@@ -1,62 +1,30 @@
-using System.Collections;
 using WpfColor = System.Windows.Media.Color;
 
 namespace ScreenForge.Gif.Encoder;
 
+/// <summary>
+/// Palet üreten kuantalayıcıların ortak temeli.
+/// Piksel → indeks eşlemesi <see cref="PaletteMap"/> tarafından yapılır;
+/// buradaki iş yalnızca temsili renk kümesini bulmaktır.
+/// </summary>
 internal abstract class Quantizer
 {
-    private readonly bool _singlePass;
-    private readonly Hashtable _colorMap = new();
+    /// <summary>BGRA girdide piksel başına bayt.</summary>
+    protected const int BytesPerPixel = 4;
 
-    public int Depth { get; set; } = 4;
     public int MaxColors { get; set; } = 256;
-    public int MaxColorsWithTransparency { get; set; }
-    public List<WpfColor> ColorTable { get; set; } = new();
     public WpfColor? TransparentColor { get; set; }
 
-    protected Quantizer(bool singlePass) => _singlePass = singlePass;
+    /// <summary>Piksel verisini tarayıp iç durumu doldurur.</summary>
+    internal abstract void FirstPass(byte[] bgra);
 
-    public byte[] Quantize(byte[] pixels)
-    {
-        if (!_singlePass) FirstPass(pixels);
-        ColorTable = BuildPalette();
-        return SecondPass(pixels);
-    }
-
-    internal virtual void FirstPass(byte[] pixels)
-    {
-        for (var i = 0; i < pixels.Length; i += Depth)
-            InitialQuantizePixel(WpfColor.FromArgb(pixels[i + 3], pixels[i + 2], pixels[i + 1], pixels[i]));
-    }
-
-    internal List<WpfColor> GetPalette() => ColorTable = BuildPalette();
-
-    internal virtual byte[] SecondPass(byte[] pixels)
-    {
-        var output = new List<byte>();
-        for (var index = 0; index < pixels.Length; index += Depth)
-        {
-            if (pixels[index + 3] == 0) { output.Add((byte)(ColorTable.Count - 1)); continue; }
-
-            var pixel = new WpfColor
-            {
-                B = pixels[index],
-                G = pixels[index + 1],
-                R = pixels[index + 2],
-                A = pixels[index + 3],
-            };
-
-            var hash = BitConverter.ToInt32(new[] { byte.MaxValue, pixel.R, pixel.G, pixel.B }, 0);
-            if (_colorMap.ContainsKey(hash)) { output.Add((byte)_colorMap[hash]!); continue; }
-
-            var position = QuantizePixel(pixel);
-            output.Add(position);
-            _colorMap.Add(hash, position);
-        }
-        return output.ToArray();
-    }
-
-    protected virtual void InitialQuantizePixel(WpfColor pixel) { }
-    protected abstract byte QuantizePixel(WpfColor pixel);
+    /// <summary>Taramanın sonucundan paleti üretir.</summary>
     internal abstract List<WpfColor> BuildPalette();
+
+    /// <summary>Tek çağrıda tarama + palet üretimi.</summary>
+    public List<WpfColor> Quantize(byte[] bgra)
+    {
+        FirstPass(bgra);
+        return BuildPalette();
+    }
 }

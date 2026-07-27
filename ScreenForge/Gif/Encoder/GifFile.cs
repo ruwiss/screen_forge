@@ -1,4 +1,3 @@
-using System.Collections;
 using System.IO;
 using System.Windows;
 using WpfColor = System.Windows.Media.Color;
@@ -6,298 +5,394 @@ using WpfColor = System.Windows.Media.Color;
 namespace ScreenForge.Gif.Encoder;
 
 /// <summary>
-/// Animated GIF writer. Adapted from ScreenToGif (Nicke Manarin).
-/// Caller: AddFrame() per frame, then Dispose() to finalize the stream.
+/// Animasyonlu GIF yazıcı. ScreenToGif (Nicke Manarin) mimarisinden uyarlandı.
+/// Kullanım: <see cref="SetCanvasSize"/> → (opsiyonel) <see cref="BuildGlobalPalette"/> →
+/// her kare için <see cref="AddFrame"/> → <see cref="Dispose"/> ile trailer yaz.
 /// </summary>
 internal sealed class GifFile : IDisposable
 {
-    public int RepeatCount { get; set; } = 0;
-    public bool UseFullTransparency { get; set; }
-    public WpfColor? TransparentColor { get; set; }
+    /// <summary>0 = sonsuz döngü, -1 = döngü yok.</summary>
+    public int RepeatCount { get; set; }
+
+    /// <summary>Kare başına maksimum renk (2-256).</summary>
     public int MaximumNumberColor { get; set; } = 256;
 
-    /// <summary>Neural=kaliteli (varsayılan), Octree=hızlı</summary>
+    /// <summary>Neural = kaliteli (varsayılan), Octree = hızlı.</summary>
     public QuantizerType QuantizerType { get; set; } = QuantizerType.Neural;
 
-    /// <summary>Neural quantizer örnekleme faktörü: 1=en iyi kalite, 20=en hızlı. Varsayılan: 5.</summary>
+    /// <summary>Neural örnekleme faktörü: 1 = en iyi kalite, 20 = en hızlı.</summary>
     public int SamplingFactor { get; set; } = 5;
 
-    /// <summary>İlk frame'den palette oluştur, sonraki frameler aynı global palette kullanır. Dosya boyutu -40%.</summary>
-    public bool UseGlobalPalette { get; set; } = false;
+    /// <summary>Tüm kareler tek bir global palet kullanır; palet tekrarı olmaz, dosya küçülür.</summary>
+    public bool UseGlobalPalette { get; set; }
 
-    /// <summary>Floyd-Steinberg dithering — gradient/fotoğraf kalitesini artırır.</summary>
-    public bool UseDithering { get; set; } = false;
+    /// <summary>Floyd-Steinberg dithering — gradyan/fotoğraf kalitesini artırır.</summary>
+    public bool UseDithering { get; set; }
+
+    private const int DisposalLeave = 1; // önceki kareyi olduğu yerde bırak (delta kareler için şart)
 
     private readonly Stream _stream;
-    private bool _isFirstFrame = true;
-    private byte[] _indexedPixels = Array.Empty<byte>();
-    private List<WpfColor> _colorTable = new();
-    private List<WpfColor> _globalPalette = new();
-    private bool _colorTableHasTransparency;
-    private int _colorTableSize;
+    private bool _headerWritten;
+    private bool _disposed;
+    private int _canvasWidth;
+    private int _canvasHeight;
+
+    private List<WpfColor>? _globalPalette;
+    private PaletteMap? _globalMap;
+    private int _globalSizeField;
 
     public GifFile(Stream stream) => _stream = stream;
 
-    private int _frameWidth, _frameHeight;
-
-    public void AddFrame(byte[] pixels, Int32Rect rect, int delayMs = 100, bool isLastFrame = false)
+    /// <summary>Mantıksal ekran boyutu. İlk <see cref="AddFrame"/> çağrısından önce verilmeli.</summary>
+    public void SetCanvasSize(int width, int height)
     {
-        _frameWidth  = rect.Width;
-        _frameHeight = rect.Height;
-        ReadPixels(pixels);
+        _canvasWidth = width;
+        _canvasHeight = height;
+    }
 
-        CalculateColorTableSize();
+    /// <summary>
+    /// Verilen örnek karelerden tek bir global palet üretir.
+    /// Yalnızca <see cref="UseGlobalPalette"/> açıkken anlamlıdır.
+    /// </summary>
+    public void BuildGlobalPalette(IReadOnlyList<byte[]> samples)
+    {
+        if (!UseGlobalPalette || samples.Count == 0)
+            return;
 
-        if (_isFirstFrame)
+        var merged = MergeSamples(samples);
+        // Global palette delta karelerde saydamlık gerektirir → bir slot ayır.
+        int maxColors = Math.Clamp(MaximumNumberColor, 2, 256) - 1;
+        _globalPalette = BuildPalette(merged, maxColors);
+        _globalPalette.Add(WpfColor.FromRgb(0, 0, 0)); // saydam slot (son indeks)
+        _globalMap = new PaletteMap(_globalPalette, _globalPalette.Count - 1);
+        _globalSizeField = SizeField(_globalPalette.Count);
+    }
+
+    /// <summary>
+    /// Kareyi yazar. <paramref name="bgra"/>, <paramref name="rect"/> boyutunda BGRA verisidir.
+    /// Alfa değeri 0 olan pikseller "değişmedi" kabul edilip saydam yazılır.
+    /// </summary>
+    public void AddFrame(byte[] bgra, Int32Rect rect, int delayMs, bool hasTransparency)
+    {
+        if (rect.Width <= 0 || rect.Height <= 0)
+            return;
+
+        List<WpfColor> palette;
+        PaletteMap map;
+        int transparentIndex;
+
+        if (UseGlobalPalette && _globalMap != null && _globalPalette != null)
         {
-            WriteLogicalScreenDescriptor(rect);
-            if (UseGlobalPalette) WritePalette();
-            if (RepeatCount > -1) WriteApplicationExtension();
+            palette = _globalPalette;
+            map = _globalMap;
+            transparentIndex = _globalMap.TransparentIndex;
+        }
+        else
+        {
+            int maxColors = Math.Clamp(MaximumNumberColor, 2, 256);
+            if (hasTransparency)
+                maxColors--;
+
+            palette = BuildPalette(bgra, maxColors);
+            if (hasTransparency)
+            {
+                palette.Add(WpfColor.FromRgb(0, 0, 0));
+                transparentIndex = palette.Count - 1;
+            }
+            else
+            {
+                transparentIndex = -1;
+            }
+
+            map = new PaletteMap(palette, transparentIndex);
         }
 
-        WriteGraphicControlExtension(delayMs, isLastFrame);
-        WriteImageDescriptor(rect);
-        WritePalette();
-        WriteImage();
+        var indexed = UseDithering
+            ? MapDithered(bgra, rect.Width, rect.Height, map, transparentIndex)
+            : MapDirect(bgra, map, transparentIndex);
 
-        _isFirstFrame = false;
+        int sizeField = UseGlobalPalette && _globalPalette != null ? _globalSizeField : SizeField(palette.Count);
+
+        if (!_headerWritten)
+        {
+            WriteHeader(sizeField);
+            _headerWritten = true;
+        }
+
+        WriteGraphicControlExtension(delayMs, transparentIndex);
+        WriteImageDescriptor(rect, sizeField);
+        if (!UseGlobalPalette)
+            WritePalette(palette, sizeField);
+
+        new LzwEncoder(indexed, sizeField + 1).Encode(_stream);
     }
 
-    // ─── Private write methods ────────────────────────────────────────────────
+    // ─── Palet üretimi ────────────────────────────────────────────────────────
 
-    private void WriteLogicalScreenDescriptor(Int32Rect rect)
+    private List<WpfColor> BuildPalette(byte[] bgra, int maxColors)
+    {
+        maxColors = Math.Clamp(maxColors, 2, 256);
+
+        Quantizer quantizer = QuantizerType == QuantizerType.Octree
+            ? new OctreeQuantizer { MaxColors = maxColors }
+            : new NeuralQuantizer(Math.Clamp(SamplingFactor, 1, 20), maxColors) { MaxColors = maxColors };
+
+        quantizer.TransparentColor = null;
+        quantizer.FirstPass(bgra);
+        var palette = quantizer.BuildPalette();
+
+        if (palette.Count == 0)
+            palette.Add(WpfColor.FromRgb(0, 0, 0));
+        if (palette.Count > maxColors)
+            palette.RemoveRange(maxColors, palette.Count - maxColors);
+
+        return palette;
+    }
+
+    /// <summary>Global palet için kareleri seyreltip tek bir örnek tampona toplar.</summary>
+    private static byte[] MergeSamples(IReadOnlyList<byte[]> samples)
+    {
+        const int MaxSampleBytes = 8 * 1024 * 1024; // 2M piksel — palet için fazlasıyla yeterli
+
+        long total = 0;
+        foreach (var s in samples) total += s.LongLength;
+        if (total <= MaxSampleBytes)
+        {
+            var all = new byte[total];
+            int offset = 0;
+            foreach (var s in samples)
+            {
+                Buffer.BlockCopy(s, 0, all, offset, s.Length);
+                offset += s.Length;
+            }
+            return all;
+        }
+
+        // Piksel adımlayarak eşit dağılımlı örnek al.
+        int stride = (int)Math.Ceiling((double)total / MaxSampleBytes);
+        var buffer = new byte[MaxSampleBytes];
+        int written = 0;
+
+        foreach (var s in samples)
+        {
+            for (int i = 0; i + 3 < s.Length && written + 3 < buffer.Length; i += 4 * stride)
+            {
+                buffer[written++] = s[i];
+                buffer[written++] = s[i + 1];
+                buffer[written++] = s[i + 2];
+                buffer[written++] = s[i + 3];
+            }
+        }
+
+        if (written == buffer.Length)
+            return buffer;
+
+        var trimmed = new byte[written];
+        Buffer.BlockCopy(buffer, 0, trimmed, 0, written);
+        return trimmed;
+    }
+
+    // ─── Piksel → indeks eşleme ───────────────────────────────────────────────
+
+    private static byte[] MapDirect(byte[] bgra, PaletteMap map, int transparentIndex)
+    {
+        var output = new byte[bgra.Length / 4];
+        byte transparent = (byte)Math.Max(0, transparentIndex);
+
+        for (int i = 0, p = 0; p < output.Length; i += 4, p++)
+        {
+            if (transparentIndex >= 0 && bgra[i + 3] == 0)
+            {
+                output[p] = transparent;
+                continue;
+            }
+
+            output[p] = map.Map(bgra[i + 2], bgra[i + 1], bgra[i]);
+        }
+
+        return output;
+    }
+
+    /// <summary>
+    /// Floyd-Steinberg dithering ile tek geçişte eşleme.
+    /// Hata yalnızca iki satırlık kayan tamponda tutulur → bellek O(genişlik).
+    /// </summary>
+    private static byte[] MapDithered(byte[] bgra, int width, int height, PaletteMap map, int transparentIndex)
+    {
+        int pixelCount = bgra.Length / 4;
+        if (width <= 0 || height <= 0 || width * height != pixelCount)
+            return MapDirect(bgra, map, transparentIndex);
+
+        var output = new byte[pixelCount];
+        byte transparent = (byte)Math.Max(0, transparentIndex);
+
+        // [0] = mevcut satır, [1] = sonraki satır; her piksel için R,G,B hatası
+        var curr = new float[(width + 2) * 3];
+        var next = new float[(width + 2) * 3];
+
+        for (int y = 0; y < height; y++)
+        {
+            Array.Clear(next);
+
+            for (int x = 0; x < width; x++)
+            {
+                int p = y * width + x;
+                int i = p * 4;
+
+                if (transparentIndex >= 0 && bgra[i + 3] == 0)
+                {
+                    output[p] = transparent;
+                    continue;
+                }
+
+                int e = (x + 1) * 3;
+                float r = bgra[i + 2] + curr[e];
+                float g = bgra[i + 1] + curr[e + 1];
+                float b = bgra[i] + curr[e + 2];
+
+                int ri = Clamp255(r), gi = Clamp255(g), bi = Clamp255(b);
+                byte index = map.FindNearest(ri, gi, bi);
+                output[p] = index;
+
+                float er = r - map.RedOf(index);
+                float eg = g - map.GreenOf(index);
+                float eb = b - map.BlueOf(index);
+
+                Spread(curr, e + 3, er, eg, eb, 7f / 16f);
+                Spread(next, e - 3, er, eg, eb, 3f / 16f);
+                Spread(next, e, er, eg, eb, 5f / 16f);
+                Spread(next, e + 3, er, eg, eb, 1f / 16f);
+            }
+
+            (curr, next) = (next, curr);
+        }
+
+        return output;
+    }
+
+    private static void Spread(float[] buffer, int offset, float r, float g, float b, float factor)
+    {
+        buffer[offset] += r * factor;
+        buffer[offset + 1] += g * factor;
+        buffer[offset + 2] += b * factor;
+    }
+
+    private static int Clamp255(float value) => value <= 0 ? 0 : value >= 255 ? 255 : (int)value;
+
+    // ─── Blok yazıcılar ───────────────────────────────────────────────────────
+
+    private void WriteHeader(int sizeField)
     {
         WriteString("GIF89a");
-        WriteShort(rect.Width);
-        WriteShort(rect.Height);
+        WriteShort(_canvasWidth > 0 ? _canvasWidth : 1);
+        WriteShort(_canvasHeight > 0 ? _canvasHeight : 1);
 
-        var bitArray = new BitArray(8);
-        bitArray.Set(0, UseGlobalPalette);
-        var pixelBits = ToBitValues(ColorTableSize());
-        bitArray.Set(1, pixelBits[0]); bitArray.Set(2, pixelBits[1]); bitArray.Set(3, pixelBits[2]);
-        bitArray.Set(4, true);
-        var globalBits = ToBitValues(UseGlobalPalette ? _colorTableSize : 0);
-        bitArray.Set(5, globalBits[0]); bitArray.Set(6, globalBits[1]); bitArray.Set(7, globalBits[2]);
+        bool globalTable = UseGlobalPalette && _globalPalette != null;
+        int packed = 0x70 | (globalTable ? 0x80 | (sizeField & 0x07) : 0); // renk çözünürlüğü = 8 bit
+        WriteByte(packed);
+        WriteByte(0); // arka plan rengi indeksi
+        WriteByte(0); // piksel en-boy oranı
 
-        WriteByte(ConvertToByte(bitArray));
-        WriteByte(UseFullTransparency ? FindTransparentColorIndex() : 0);
-        WriteByte(0);
+        if (globalTable)
+            WritePalette(_globalPalette!, sizeField);
+
+        if (RepeatCount > -1)
+            WriteApplicationExtension();
     }
 
-    private void WritePalette()
+    private void WritePalette(List<WpfColor> palette, int sizeField)
     {
-        foreach (var color in _colorTable) { WriteByte(color.R); WriteByte(color.G); WriteByte(color.B); }
-        var empty = (GetMaximumColorCount() - _colorTable.Count) * 3;
-        for (var i = 0; i < empty; i++) WriteByte(0);
+        foreach (var color in palette)
+        {
+            WriteByte(color.R);
+            WriteByte(color.G);
+            WriteByte(color.B);
+        }
+
+        int slots = 2 << sizeField;
+        for (int i = palette.Count; i < slots; i++)
+        {
+            WriteByte(0);
+            WriteByte(0);
+            WriteByte(0);
+        }
     }
 
     private void WriteApplicationExtension()
     {
-        WriteByte(0x21); WriteByte(0xff); WriteByte(0x0b);
+        WriteByte(0x21);
+        WriteByte(0xff);
+        WriteByte(0x0b);
         WriteString("NETSCAPE2.0");
-        WriteByte(0x03); WriteByte(0x01); WriteShort(RepeatCount); WriteByte(0x00);
+        WriteByte(0x03);
+        WriteByte(0x01);
+        WriteShort(RepeatCount);
+        WriteByte(0x00);
     }
 
-    private void WriteGraphicControlExtension(int delayMs, bool isLastFrame)
+    private void WriteGraphicControlExtension(int delayMs, int transparentIndex)
     {
-        WriteByte(0x21); WriteByte(0xf9); WriteByte(0x04);
+        WriteByte(0x21);
+        WriteByte(0xf9);
+        WriteByte(0x04);
 
-        var b = new BitArray(8);
-        b.Set(0, false); b.Set(1, false); b.Set(2, false);
+        // bit 4-2 disposal, bit 1 kullanıcı girdisi, bit 0 saydamlık
+        int packed = (DisposalLeave & 0x07) << 2;
+        if (transparentIndex >= 0)
+            packed |= 0x01;
+        WriteByte(packed);
 
-        if (UseFullTransparency)
-        {
-            if (isLastFrame) { b.Set(3, false); b.Set(4, false); b.Set(5, true); }
-            else             { b.Set(3, false); b.Set(4, true);  b.Set(5, false); }
-        }
-        else
-        {
-            if (_isFirstFrame) { b.Set(3, false); b.Set(4, false); b.Set(5, true); }
-            else               { b.Set(3, false); b.Set(4, false); b.Set(5, false); }
-        }
+        // GIF gecikmesi 1/100 sn birimindedir; 0 tarayıcılarda "olabildiğince hızlı"ya düşer.
+        int centiseconds = (int)Math.Round(delayMs / 10.0, MidpointRounding.AwayFromZero);
+        WriteShort(Math.Clamp(centiseconds, 1, ushort.MaxValue));
 
-        b.Set(6, false);
-        b.Set(7, (!_isFirstFrame || UseFullTransparency) && _colorTableHasTransparency);
-        WriteByte(ConvertToByte(b));
-
-        // GIF delay is in 1/100s units
-        WriteShort((int)Math.Round(delayMs / 10.0, MidpointRounding.AwayFromZero));
-        WriteByte(FindTransparentColorIndex());
+        WriteByte(transparentIndex >= 0 ? transparentIndex : 0);
         WriteByte(0);
     }
 
-    private void WriteImageDescriptor(Int32Rect rect)
+    private void WriteImageDescriptor(Int32Rect rect, int sizeField)
     {
         WriteByte(0x2c);
-        WriteShort(rect.X); WriteShort(rect.Y);
-        WriteShort(rect.Width); WriteShort(rect.Height);
+        WriteShort(rect.X);
+        WriteShort(rect.Y);
+        WriteShort(rect.Width);
+        WriteShort(rect.Height);
 
-        if (UseGlobalPalette)
-        {
-            WriteByte(0);
-            return;
-        }
-
-        // Always local color table
-        var b = new BitArray(8);
-        b.Set(0, true);  // local color table flag
-        b.Set(1, false); // no interlace
-        b.Set(2, true);  // sort flag
-        b.Set(3, false); b.Set(4, false);
-        var sz = ToBitValues(_colorTableSize);
-        b.Set(5, sz[0]); b.Set(6, sz[1]); b.Set(7, sz[2]);
-        WriteByte(ConvertToByte(b));
+        // bit 7 yerel palet, bit 6 interlace, bit 5 sıralı, bit 2-0 palet boyutu
+        WriteByte(UseGlobalPalette ? 0 : 0x80 | (sizeField & 0x07));
     }
 
-    private void WriteImage()
+    // ─── Yardımcılar ──────────────────────────────────────────────────────────
+
+    /// <summary>Palet boyutu alanı: girdi sayısı 2^(n+1) olacak şekilde en küçük n (0-7).</summary>
+    internal static int SizeField(int count)
     {
-        var encoder = new LzwEncoder(0, 0, _indexedPixels, 8);
-        encoder.Encode(_stream);
+        int n = 0;
+        while (n < 7 && (2 << n) < count) n++;
+        return n;
     }
 
-    // ─── Quantization ─────────────────────────────────────────────────────────
+    private void WriteByte(int value) => _stream.WriteByte((byte)value);
 
-    private void ReadPixels(byte[] pixels)
+    private void WriteShort(int value)
     {
-        if (UseGlobalPalette && !_isFirstFrame && _globalPalette.Count > 0)
-        {
-            // Sonraki frameler: global palette üzerinden direkt map
-            _colorTable  = _globalPalette;
-            _indexedPixels = MapWithPalette(pixels, _globalPalette);
-        }
-        else
-        {
-            Quantizer q = QuantizerType == QuantizerType.Octree
-                ? new OctreeQuantizer { MaxColors = MaximumNumberColor }
-                : new NeuralQuantizer(SamplingFactor, MaximumNumberColor);
-
-            q.MaxColors        = MaximumNumberColor;
-            q.TransparentColor = (!_isFirstFrame || UseFullTransparency) ? TransparentColor : null;
-
-            _indexedPixels = q.Quantize(pixels);
-            _colorTable    = q.ColorTable;
-
-            if (UseGlobalPalette && _isFirstFrame)
-                _globalPalette = _colorTable;
-        }
-
-        if (UseDithering && _indexedPixels.Length > 0)
-            _indexedPixels = ApplyFloydSteinberg(pixels, _colorTable, _indexedPixels);
-
-        _colorTableHasTransparency = TransparentColor.HasValue && _colorTable.Contains(TransparentColor.Value);
+        _stream.WriteByte((byte)(value & 0xff));
+        _stream.WriteByte((byte)((value >> 8) & 0xff));
     }
 
-    /// <summary>Var olan palette kullanarak piksel indekslerini bul (global palette modu).</summary>
-    private static byte[] MapWithPalette(byte[] pixels, List<WpfColor> palette)
+    private void WriteString(string value)
     {
-        var output = new byte[pixels.Length / 4];
-        for (int i = 0, p = 0; i < pixels.Length; i += 4, p++)
-        {
-            byte b = pixels[i], g = pixels[i + 1], r = pixels[i + 2];
-            int best = 0, bestDist = int.MaxValue;
-            for (int c = 0; c < palette.Count; c++)
-            {
-                int dr = r - palette[c].R, dg = g - palette[c].G, db = b - palette[c].B;
-                int dist = dr * dr + dg * dg + db * db;
-                if (dist < bestDist) { bestDist = dist; best = c; }
-            }
-            output[p] = (byte)best;
-        }
-        return output;
+        foreach (char c in value)
+            _stream.WriteByte((byte)c);
     }
-
-    /// <summary>Floyd-Steinberg dithering — hata yayılımı ile banding azaltır.</summary>
-    private byte[] ApplyFloydSteinberg(byte[] pixels, List<WpfColor> palette, byte[] indexed)
-    {
-        // pixels: BGRA flat, indexed: output palette indices
-        // Satır genişliğini indexed uzunluğundan çıkar (kare değil olabilir)
-        int pixCount = pixels.Length / 4;
-        if (pixCount != indexed.Length) return indexed; // güvenlik
-
-        // Hata buffer'ları (float): her piksel için R,G,B hatası
-        var errR = new float[pixCount];
-        var errG = new float[pixCount];
-        var errB = new float[pixCount];
-
-        int w = _frameWidth;
-        int h = _frameHeight;
-        if (w <= 0 || h <= 0 || w * h != pixCount) return indexed;
-
-        var result = new byte[indexed.Length];
-
-        for (int y = 0; y < h; y++)
-        {
-            for (int x = 0; x < w; x++)
-            {
-                int pi   = y * w + x;
-                int bi   = pi * 4;
-
-                float oldB = pixels[bi]     + errB[pi];
-                float oldG = pixels[bi + 1] + errG[pi];
-                float oldR = pixels[bi + 2] + errR[pi];
-
-                // En yakın palette rengi bul
-                int best = 0, bestDist = int.MaxValue;
-                for (int c = 0; c < palette.Count; c++)
-                {
-                    float dr = oldR - palette[c].R;
-                    float dg = oldG - palette[c].G;
-                    float db = oldB - palette[c].B;
-                    int dist = (int)(dr * dr + dg * dg + db * db);
-                    if (dist < bestDist) { bestDist = dist; best = c; }
-                }
-                result[pi] = (byte)best;
-
-                // Hata dağıt (Floyd-Steinberg katsayıları: 7/16, 3/16, 5/16, 1/16)
-                float eR = oldR - palette[best].R;
-                float eG = oldG - palette[best].G;
-                float eB = oldB - palette[best].B;
-
-                if (x + 1 < w)               { errR[pi + 1]     += eR * 7 / 16f; errG[pi + 1]     += eG * 7 / 16f; errB[pi + 1]     += eB * 7 / 16f; }
-                if (y + 1 < h && x > 0)       { errR[pi + w - 1] += eR * 3 / 16f; errG[pi + w - 1] += eG * 3 / 16f; errB[pi + w - 1] += eB * 3 / 16f; }
-                if (y + 1 < h)                { errR[pi + w]     += eR * 5 / 16f; errG[pi + w]     += eG * 5 / 16f; errB[pi + w]     += eB * 5 / 16f; }
-                if (y + 1 < h && x + 1 < w)   { errR[pi + w + 1] += eR * 1 / 16f; errG[pi + w + 1] += eG * 1 / 16f; errB[pi + w + 1] += eB * 1 / 16f; }
-            }
-        }
-        return result;
-    }
-
-    private void CalculateColorTableSize()
-    {
-        _colorTableSize = _colorTable.Count > 1 ? (int)Math.Log(_colorTable.Count - 1, 2) : 0;
-    }
-
-    private int ColorTableSize() => _colorTable.Count > 1 ? (int)Math.Log(_colorTable.Count - 1, 2) : 0;
-
-    private int GetMaximumColorCount() => (int)Math.Pow(2, _colorTableSize + 1);
-
-    private int FindTransparentColorIndex()
-    {
-        if ((_isFirstFrame && !UseFullTransparency) || !_colorTableHasTransparency) return 0;
-        var index = _colorTable.IndexOf(TransparentColor!.Value);
-        return index > -1 ? index : 0;
-    }
-
-    // ─── Stream helpers ───────────────────────────────────────────────────────
-
-    private void WriteByte(int value) => _stream.WriteByte(Convert.ToByte(value));
-    private void WriteShort(int value) { _stream.WriteByte(Convert.ToByte(value & 0xff)); _stream.WriteByte(Convert.ToByte((value >> 8) & 0xff)); }
-    private void WriteString(string value) => _stream.Write(value.Select(c => (byte)c).ToArray(), 0, value.Length);
-
-    private static byte ConvertToByte(BitArray bits)
-    {
-        var bytes = new byte[1];
-        new BitArray(bits.Cast<bool>().Reverse().ToArray()).CopyTo(bytes, 0);
-        return bytes[0];
-    }
-
-    private static bool[] ToBitValues(int number) =>
-        new BitArray(new[] { number }).Cast<bool>().Take(3).Reverse().ToArray();
 
     public void Dispose()
     {
+        if (_disposed)
+            return;
+        _disposed = true;
+
         WriteByte(0x3b); // GIF trailer
         _stream.Flush();
-        _stream.Position = 0;
     }
 }

@@ -16,7 +16,7 @@ namespace ScreenForge.Editor;
 /// </summary>
 public sealed class InteractiveCanvas : SKElement
 {
-    public Scene Scene { get; }
+    public Scene Scene { get; private set; }
     public ToolStyleMemory ToolStyle { get; }
 
     /// <summary>
@@ -24,6 +24,15 @@ public sealed class InteractiveCanvas : SKElement
     /// OneToOne = bire bir, ölçeksiz (ekran-üstü in-place editör — canvas zaten sahne boyutunda yerleştirilir).
     /// </summary>
     public LayoutMode Layout { get; set; } = LayoutMode.Fit;
+
+    /// <summary>
+    /// Tuval kendi zeminini çizmez, saydam kalır.
+    /// </summary>
+    /// <remarks>
+    /// Başka bir görüntünün üzerine katman olarak yerleştirildiğinde gereklidir;
+    /// aksi hâlde opak temizleme alttaki içeriği tamamen örter.
+    /// </remarks>
+    public bool TransparentBackground { get; set; }
 
     private EditorTool _tool = EditorTool.Select;
     public EditorTool Tool
@@ -210,6 +219,36 @@ public sealed class InteractiveCanvas : SKElement
         System.Windows.Media.CompositionTarget.Rendering += OnRenderingTick;
     }
 
+    /// <summary>
+    /// Düzenlenen sahneyi değiştirir.
+    /// </summary>
+    /// <remarks>
+    /// Kare kare çalışan düzenleyicilerde her geçişte yeni bir tuval yaratmak
+    /// pahalıdır; bu yol aboneliği taşıyıp yalnızca içeriği yeniler.
+    /// </remarks>
+    public void SetScene(Scene scene)
+    {
+        if (ReferenceEquals(Scene, scene))
+            return;
+
+        Scene.Changed -= OnSceneChanged;
+        Scene.SelectionRestore -= OnSelectionRestore;
+
+        // Yarım kalan etkileşim yeni sahneye taşınmamalı.
+        _interacting = false;
+        _draftItem = null;
+        _moving = false;
+        _activeHandle = -1;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        ClearSelection();
+
+        Scene = scene;
+        Scene.Changed += OnSceneChanged;
+        Scene.SelectionRestore += OnSelectionRestore;
+
+        InvalidateVisual();
+    }
+
     // Pencere kapanınca event'i temizle (aksi halde her zaman ateşlenir)
     protected override void OnVisualParentChanged(System.Windows.DependencyObject oldParent)
     {
@@ -235,7 +274,9 @@ public sealed class InteractiveCanvas : SKElement
     {
         if (e.Info.Width <= 0 || e.Info.Height <= 0) return;
         var canvas = e.Surface.Canvas;
-        canvas.Clear(new SKColor(0x16, 0x1A, 0x22));
+
+        // Katman olarak kullanıldığında alttaki görüntü görünmeye devam etmeli.
+        canvas.Clear(TransparentBackground ? SKColors.Transparent : new SKColor(0x16, 0x1A, 0x22));
 
         // Tuvali pencereye sığacak şekilde ölçekle + ortala
         var (scale, offset) = ComputeTransform(e.Info.Width, e.Info.Height);
@@ -780,7 +821,11 @@ public sealed class InteractiveCanvas : SKElement
                 _marqueeActive = false;
                 var box = new SKRect(Math.Min(_dragStart.X, p.X), Math.Min(_dragStart.Y, p.Y),
                                      Math.Max(_dragStart.X, p.X), Math.Max(_dragStart.Y, p.Y));
-                var inside = Scene.Items.Where(it => box.Contains(it.Bounds) || box.IntersectsWith(it.Bounds)).ToList();
+                // Süzgeç burada da geçerli; görünmeyen öğeler kement seçimine girmemeli.
+                var inside = Scene.Items
+                    .Where(it => Scene.HitFilter == null || Scene.HitFilter(it))
+                    .Where(it => box.Contains(it.Bounds) || box.IntersectsWith(it.Bounds))
+                    .ToList();
                 SetSelection(inside);
                 InvalidateVisual();
                 return;

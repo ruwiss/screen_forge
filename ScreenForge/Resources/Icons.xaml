@@ -60,4 +60,40 @@
     <Geometry x:Key="IconPower">M12 4 V12 M7.5 6.5 A8 8 0 1 0 16.5 6.5</Geometry>
     <Geometry x:Key="IconCamera">M14.5 4 H9.5 L8 6 H5 A2 2 0 0 0 3 8 V18 A2 2 0 0 0 5 20 H19 A2 2 0 0 0 21 18 V8 A2 2 0 0 0 19 6 H16 Z M12 16 A3.5 3.5 0 1 0 12.01 16 Z</Geometry>
 
+    <!-- GIF düzenleyici: geçmiş -->
+    <Geometry x:Key="IconUndo">M3 8 H14 A5 5 0 0 1 14 18 H8 M3 8 L7 4 M3 8 L7 12</Geometry>
+    <Geometry x:Key="IconRedo">M21 8 H10 A5 5 0 0 0 10 18 H16 M21 8 L17 4 M21 8 L17 12</Geometry>
+
+    <!-- GIF düzenleyici: kare işlemleri -->
+    <Geometry x:Key="IconDuplicate">M9 3 H19 A2 2 0 0 1 21 5 V15 M15 9 H5 A2 2 0 0 0 3 11 V19 A2 2 0 0 0 5 21 H15 A2 2 0 0 0 17 19 V11 A2 2 0 0 0 15 9 Z</Geometry>
+    <Geometry x:Key="IconDeleteBefore">M10 4 V20 M10 12 H20 M20 12 L16 8 M20 12 L16 16 M4 4 V20</Geometry>
+    <Geometry x:Key="IconDeleteAfter">M14 4 V20 M14 12 H4 M4 12 L8 8 M4 12 L8 16 M20 4 V20</Geometry>
+    <Geometry x:Key="IconReverse">M4 8 H18 M18 8 L14 4 M18 8 L14 12 M20 16 H6 M6 16 L10 12 M6 16 L10 20</Geometry>
+    <Geometry x:Key="IconMoveLeft">M14 5 L7 12 L14 19 M18 5 V19</Geometry>
+    <Geometry x:Key="IconMoveRight">M10 5 L17 12 L10 19 M6 5 V19</Geometry>
+
+    <!-- GIF düzenleyici: dönüşümler -->
+    <Geometry x:Key="IconRotateLeft">M4 10 A8 8 0 1 1 6 16 M4 5 V10 H9</Geometry>
+    <Geometry x:Key="IconRotateRight">M20 10 A8 8 0 1 0 18 16 M20 5 V10 H15</Geometry>
+
+    <!-- GIF düzenleyici: oynatma -->
+    <Geometry x:Key="IconPlay">M7 4 L19 12 L7 20 Z</Geometry>
+    <Geometry x:Key="IconPause">M8 4 V20 M16 4 V20</Geometry>
+    <Geometry x:Key="IconPrevFrame">M16 4 L8 12 L16 20 Z</Geometry>
+    <Geometry x:Key="IconNextFrame">M8 4 L16 12 L8 20 Z</Geometry>
+    <Geometry x:Key="IconFirstFrame">M18 4 L9 12 L18 20 Z M6 4 V20</Geometry>
+    <Geometry x:Key="IconLastFrame">M6 4 L15 12 L6 20 Z M18 4 V20</Geometry>
+
+    <!-- GIF düzenleyici: keyframe -->
+    <Geometry x:Key="IconStopwatch">M12 7 A7 7 0 1 0 12.01 7 Z M12 10 V14 M9 3 H15 M12 3 V6</Geometry>
+    <Geometry x:Key="IconKeyframe">M12 5 L19 12 L12 19 L5 12 Z</Geometry>
+    <Geometry x:Key="IconPrevKey">M13 5 L6 12 L13 19 Z M18 5 V19</Geometry>
+    <Geometry x:Key="IconNextKey">M11 5 L18 12 L11 19 Z M6 5 V19</Geometry>
+
+    <!-- GIF düzenleyici: aralık -->
+    <Geometry x:Key="IconMarkIn">M8 4 H5 V20 H8 M14 8 L18 12 L14 16</Geometry>
+    <Geometry x:Key="IconMarkOut">M16 4 H19 V20 H16 M10 8 L6 12 L10 16</Geometry>
+    <Geometry x:Key="IconReset">M4 10 A8 8 0 1 1 5 15 M4 5 V10 H9</Geometry>
+    <Geometry x:Key="IconFit">M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15</Geometry>
+
 </ResourceDictionary>

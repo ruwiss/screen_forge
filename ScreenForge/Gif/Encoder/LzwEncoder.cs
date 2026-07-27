@@ -3,34 +3,16 @@ using System.IO;
 namespace ScreenForge.Gif.Encoder;
 
 /// <summary>
-/// LZW image compression. Adapted from ScreenToGif (Nicke Manarin),
-/// originally based on Jef Poskanzer's Java port.
+/// GIF LZW sıkıştırıcı. ScreenToGif (Nicke Manarin) üzerinden Jef Poskanzer'ın
+/// Java uyarlamasına dayanır. Değişken başlangıç kod boyutunu destekler:
+/// 64 renklik palet 6 bitlik kodla yazılır, 8 bit yerine → çıktı belirgin küçülür.
 /// </summary>
 internal sealed class LzwEncoder
 {
     private const int Eof = -1;
-    private const int Bits = 12;
-    private const int HSize = 5003;
-    private const int MaxMaxCode = 1 << Bits;
-
-    private readonly byte[] _pixAry;
-    private readonly int _initCodeSize;
-    private int _curPixel;
-    private int _numBits;
-    private readonly int _maxBits = Bits;
-    private int _maxCode;
-    private int[] htab = new int[HSize];
-    private readonly int[] _codeTab = new int[HSize];
-    private int _hSize = HSize;
-    private int _freeEntry;
-    private bool clear_flg;
-    private int g_init_bits;
-    private int ClearCode;
-    private int EOFCode;
-    private int cur_accum;
-    private int cur_bits;
-    private int _charCount;
-    private readonly byte[] _accumulator = new byte[256];
+    private const int MaxBits = 12;
+    private const int HashSize = 5003;
+    private const int MaxMaxCode = 1 << MaxBits;
 
     private static readonly int[] Masks =
     {
@@ -38,131 +20,176 @@ internal sealed class LzwEncoder
         0x00FF, 0x01FF, 0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF, 0xFFFF,
     };
 
-    public LzwEncoder(int width, int height, byte[] pixels, int colorDepth)
+    private readonly byte[] _pixels;
+    private readonly int _initialCodeSize;
+    private readonly int[] _hashTable = new int[HashSize];
+    private readonly int[] _codeTable = new int[HashSize];
+    private readonly byte[] _accumulator = new byte[256];
+
+    private int _currentPixel;
+    private int _numBits;
+    private int _maxCode;
+    private int _freeEntry;
+    private bool _clearFlag;
+    private int _initialBits;
+    private int _clearCode;
+    private int _eofCode;
+    private int _bitAccumulator;
+    private int _bitCount;
+    private int _charCount;
+
+    /// <param name="indexedPixels">Palet indeksleri (piksel başına 1 bayt).</param>
+    /// <param name="colorDepth">Palet için gereken bit sayısı (1-8).</param>
+    public LzwEncoder(byte[] indexedPixels, int colorDepth)
     {
-        _pixAry = pixels;
-        _initCodeSize = Math.Max(2, colorDepth);
+        _pixels = indexedPixels;
+        // GIF minimum LZW kod boyutu en az 2 olmalıdır.
+        _initialCodeSize = Math.Clamp(colorDepth, 2, 8);
     }
 
-    public void Encode(Stream os)
+    public void Encode(Stream output)
     {
-        os.WriteByte(Convert.ToByte(_initCodeSize));
-        _curPixel = 0;
-        Compress(_initCodeSize + 1, os);
-        os.WriteByte(0);
+        output.WriteByte((byte)_initialCodeSize);
+        _currentPixel = 0;
+        Compress(_initialCodeSize + 1, output);
+        output.WriteByte(0); // blok sonlandırıcı
     }
 
-    private void Add(byte c, Stream outs)
+    private void Compress(int initialBits, Stream output)
     {
-        _accumulator[_charCount++] = c;
-        if (_charCount >= 254) Flush(outs);
-    }
-
-    private void ClearTable(Stream outs)
-    {
-        ResetCodeTable(_hSize);
-        _freeEntry = ClearCode + 2;
-        clear_flg = true;
-        Output(ClearCode, outs);
-    }
-
-    private void ResetCodeTable(int hsize)
-    {
-        for (int i = 0; i < hsize; ++i) htab[i] = -1;
-    }
-
-    private void Compress(int initBits, Stream outs)
-    {
-        g_init_bits = initBits;
-        clear_flg = false;
-        _numBits = g_init_bits;
+        _initialBits = initialBits;
+        _clearFlag = false;
+        _numBits = _initialBits;
         _maxCode = MaxCode(_numBits);
-        ClearCode = 1 << (initBits - 1);
-        EOFCode = ClearCode + 1;
-        _freeEntry = ClearCode + 2;
+        _clearCode = 1 << (initialBits - 1);
+        _eofCode = _clearCode + 1;
+        _freeEntry = _clearCode + 2;
         _charCount = 0;
+        _bitAccumulator = 0;
+        _bitCount = 0;
 
-        var ent = NextPixel();
-        var hshift = 0;
-        for (int fcode2 = _hSize; fcode2 < 65536; fcode2 *= 2) ++hshift;
-        hshift = 8 - hshift;
-        var hsizeReg = _hSize;
-        ResetCodeTable(hsizeReg);
-        Output(ClearCode, outs);
+        int entry = NextPixel();
+        if (entry == Eof)
+        {
+            Output(_clearCode, output);
+            Output(_eofCode, output);
+            return;
+        }
+
+        int hashShift = 0;
+        for (int code = HashSize; code < 65536; code *= 2) hashShift++;
+        hashShift = 8 - hashShift;
+
+        ResetHashTable();
+        Output(_clearCode, output);
 
         int c;
         while ((c = NextPixel()) != Eof)
         {
-            var fcode = (c << _maxBits) + ent;
-            var i = (c << hshift) ^ ent;
+            int fcode = (c << MaxBits) + entry;
+            int i = (c << hashShift) ^ entry;
 
-            if (htab[i] == fcode) { ent = _codeTab[i]; continue; }
-
-            if (htab[i] >= 0)
+            if (_hashTable[i] == fcode)
             {
-                var disp = hsizeReg - i;
-                if (i == 0) disp = 1;
+                entry = _codeTable[i];
+                continue;
+            }
+
+            if (_hashTable[i] >= 0)
+            {
+                int disp = i == 0 ? 1 : HashSize - i;
                 bool found = false;
                 do
                 {
-                    if ((i -= disp) < 0) i += hsizeReg;
-                    if (htab[i] == fcode) { ent = _codeTab[i]; found = true; break; }
-                } while (htab[i] >= 0);
+                    if ((i -= disp) < 0) i += HashSize;
+                    if (_hashTable[i] == fcode) { entry = _codeTable[i]; found = true; break; }
+                } while (_hashTable[i] >= 0);
                 if (found) continue;
             }
 
-            Output(ent, outs);
-            ent = c;
-            if (_freeEntry < MaxMaxCode) { _codeTab[i] = _freeEntry++; htab[i] = fcode; }
-            else ClearTable(outs);
+            Output(entry, output);
+            entry = c;
+
+            if (_freeEntry < MaxMaxCode)
+            {
+                _codeTable[i] = _freeEntry++;
+                _hashTable[i] = fcode;
+            }
+            else
+            {
+                ResetHashTable();
+                _freeEntry = _clearCode + 2;
+                _clearFlag = true;
+                Output(_clearCode, output);
+            }
         }
 
-        Output(ent, outs);
-        Output(EOFCode, outs);
+        Output(entry, output);
+        Output(_eofCode, output);
     }
 
-    private void Flush(Stream outs)
+    private void ResetHashTable()
     {
-        if (_charCount > 0)
-        {
-            outs.WriteByte(Convert.ToByte(_charCount));
-            outs.Write(_accumulator, 0, _charCount);
-            _charCount = 0;
-        }
+        for (int i = 0; i < HashSize; i++) _hashTable[i] = -1;
     }
 
-    private int MaxCode(int numBits) => (1 << numBits) - 1;
+    private static int MaxCode(int numBits) => (1 << numBits) - 1;
 
-    private int NextPixel()
+    private int NextPixel() => _currentPixel < _pixels.Length ? _pixels[_currentPixel++] & 0xff : Eof;
+
+    private void Output(int code, Stream output)
     {
-        if (_curPixel <= _pixAry.GetUpperBound(0))
-            return _pixAry[_curPixel++] & 0xff;
-        return Eof;
+        _bitAccumulator &= Masks[_bitCount];
+        _bitAccumulator = _bitCount > 0 ? _bitAccumulator | (code << _bitCount) : code;
+        _bitCount += _numBits;
+
+        while (_bitCount >= 8)
+        {
+            Add((byte)(_bitAccumulator & 0xff), output);
+            _bitAccumulator >>= 8;
+            _bitCount -= 8;
+        }
+
+        if (_freeEntry > _maxCode || _clearFlag)
+        {
+            if (_clearFlag)
+            {
+                _numBits = _initialBits;
+                _maxCode = MaxCode(_numBits);
+                _clearFlag = false;
+            }
+            else
+            {
+                _numBits++;
+                _maxCode = _numBits == MaxBits ? MaxMaxCode : MaxCode(_numBits);
+            }
+        }
+
+        if (code != _eofCode)
+            return;
+
+        while (_bitCount > 0)
+        {
+            Add((byte)(_bitAccumulator & 0xff), output);
+            _bitAccumulator >>= 8;
+            _bitCount -= 8;
+        }
+        Flush(output);
     }
 
-    private void Output(int code, Stream outs)
+    private void Add(byte value, Stream output)
     {
-        cur_accum &= Masks[cur_bits];
-        cur_accum = cur_bits > 0 ? cur_accum | (code << cur_bits) : code;
-        cur_bits += _numBits;
+        _accumulator[_charCount++] = value;
+        if (_charCount >= 254) Flush(output);
+    }
 
-        while (cur_bits >= 8)
-        {
-            Add((byte)(cur_accum & 0xff), outs);
-            cur_accum >>= 8;
-            cur_bits -= 8;
-        }
+    private void Flush(Stream output)
+    {
+        if (_charCount <= 0)
+            return;
 
-        if (_freeEntry > _maxCode || clear_flg)
-        {
-            if (clear_flg) { _maxCode = MaxCode(_numBits = g_init_bits); clear_flg = false; }
-            else { ++_numBits; _maxCode = _numBits == _maxBits ? MaxMaxCode : MaxCode(_numBits); }
-        }
-
-        if (code == EOFCode)
-        {
-            while (cur_bits > 0) { Add((byte)(cur_accum & 0xff), outs); cur_accum >>= 8; cur_bits -= 8; }
-            Flush(outs);
-        }
+        output.WriteByte((byte)_charCount);
+        output.Write(_accumulator, 0, _charCount);
+        _charCount = 0;
     }
 }
