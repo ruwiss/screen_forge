@@ -527,7 +527,7 @@ public partial class CaptureOverlayWindow : Window
             _newSelectionArmed = false;
             ReleaseMouseCapture();
             var newRect = MakeRect(_start, e.GetPosition(Root));
-            if (!armed || newRect.Width < 50 || newRect.Height < 50)
+            if (!armed || !IsUsableSelection(newRect))
             {
                 SizeBadge.Visibility = Visibility.Collapsed;
                 EditHost.Visibility = Visibility.Visible;
@@ -552,7 +552,7 @@ public partial class CaptureOverlayWindow : Window
             _selResizing = false;
             _selResizeEdge = -1;
             ReleaseMouseCapture();
-            if (_selDip.Width < 50 || _selDip.Height < 50) { LeaveEditPhase(); ResetSelection(); return; }
+            if (!IsUsableSelection(_selDip)) { LeaveEditPhase(); ResetSelection(); return; }
             Cursor = Cursors.Arrow;
             _pixelRegion = ToPixelRegion(_selDip);
             RebuildEditForNewRegion();
@@ -564,16 +564,36 @@ public partial class CaptureOverlayWindow : Window
         ReleaseMouseCapture();
 
         var rect = MakeRect(_start, e.GetPosition(Root));
-        if (rect.Width < 50 || rect.Height < 50) { ResetSelection(); return; }
+        if (!IsUsableSelection(rect)) { ResetSelection(); return; }
 
         _selDip = rect;
         _pixelRegion = ToPixelRegion(rect);
         EnterEditPhase(useScreenshotBackground: true);
     }
 
+    /// <summary>
+    /// Bölge seçimi geçerli mi?
+    /// Her iki kenar da küçükse (yanlış tıklama / nokta) reddet;
+    /// genişlik veya yükseklikten en az biri yeterince uzunsa (ince şeritler dahil) kabul et.
+    /// </summary>
+    private static bool IsUsableSelection(WpfRect rect)
+    {
+        // Mutlak minimum: 0 veya 1 px'lik "seçim" anlamsız; crop bozulmasın.
+        const double minDim = 2;
+        // En az bir kenarın "gerçek seçim" sayılması için eşik (DIP).
+        const double minExtent = 50;
+
+        if (rect.Width < minDim || rect.Height < minDim)
+            return false;
+
+        // Eski mantık: width>=50 AND height>=50 → ince şeritleri (ör. 200×12) reddediyordu.
+        // Yeni: en az bir kenar uzunsa kabul (status bar, dar panel, satır seçimi vb.).
+        return rect.Width >= minExtent || rect.Height >= minExtent;
+    }
+
     private int HitSelectionEdge(WpfPoint p)
     {
-        if (_selDip.Width < 50) return -1;
+        if (_selDip.Width < 2 || _selDip.Height < 2) return -1;
         const double tol = 7;
         double l = _selDip.X, t = _selDip.Y, r = _selDip.X + _selDip.Width, b = _selDip.Y + _selDip.Height;
         bool nearL = Math.Abs(p.X - l) <= tol && p.Y >= t - tol && p.Y <= b + tol;
