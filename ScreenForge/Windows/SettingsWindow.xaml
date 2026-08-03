@@ -95,6 +95,29 @@
                     </StackPanel>
                 </Border>
             </TabItem>
+
+            <!-- ===== Çeviri ===== -->
+            <TabItem Header="Çeviri" Style="{StaticResource SettingsTabItem}">
+                <StackPanel>
+                    <TextBlock Text="Görüntü çevirisi" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource Muted}" FontSize="11" Margin="0,0,0,10"
+                                       Text="Bölge seçip Çevir'e basınca metin algılanır ve hedef dile çevrilir." />
+                            <DockPanel Margin="0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="Kaynak dil" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbTranslateSource" Width="200" HorizontalAlignment="Left" />
+                            </DockPanel>
+                            <DockPanel Margin="0,10,0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="Hedef dil" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbTranslateTarget" Width="200" HorizontalAlignment="Left" />
+                            </DockPanel>
+                            <TextBlock Style="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0"
+                                       Text="Kaynak dilde “Otomatik” önerilir; hedef dili kendiniz seçin." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </TabItem>
         </TabControl>
 
         <Button x:Name="BtnClose" Content="Kapat" Style="{StaticResource PrimaryButton}"

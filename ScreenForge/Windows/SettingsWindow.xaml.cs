@@ -365,6 +365,28 @@ public partial class SettingsWindow : Window
                 fe.MinHeight = maxH;
     }
 
+    /// <summary>Kod → görünen ad (kaynak dilde "auto" = Otomatik).</summary>
+    private static readonly (string Code, string Label)[] TranslateLanguages =
+    [
+        ("auto", "Otomatik algıla"),
+        ("tr", "Türkçe"),
+        ("en", "English"),
+        ("de", "Deutsch"),
+        ("fr", "Français"),
+        ("es", "Español"),
+        ("it", "Italiano"),
+        ("pt", "Português"),
+        ("ru", "Русский"),
+        ("ar", "العربية"),
+        ("zh", "中文"),
+        ("ja", "日本語"),
+        ("ko", "한국어"),
+        ("nl", "Nederlands"),
+        ("pl", "Polski"),
+        ("uk", "Українська"),
+        ("hi", "हिन्दी"),
+    ];
+
     private void LoadValues()
     {
         _loading = true;
@@ -379,8 +401,45 @@ public partial class SettingsWindow : Window
         QualityValue.Text = _settings.Quality.ToString();
         TxtSaveDir.Text = _settings.SaveDirectory;
         UpdateQualityVisibility();
+        FillTranslateLanguageCombos();
         _loading = false;
     }
+
+    private void FillTranslateLanguageCombos()
+    {
+        CmbTranslateSource.Items.Clear();
+        CmbTranslateTarget.Items.Clear();
+        foreach (var (code, label) in TranslateLanguages)
+        {
+            // Kaynak: auto dahil
+            CmbTranslateSource.Items.Add(new ComboBoxItem { Content = label, Tag = code });
+            // Hedef: auto yok
+            if (code != "auto")
+                CmbTranslateTarget.Items.Add(new ComboBoxItem { Content = label, Tag = code });
+        }
+
+        SelectLangCombo(CmbTranslateSource, _settings.TranslateSourceLanguage, "auto");
+        SelectLangCombo(CmbTranslateTarget, _settings.TranslateTargetLanguage, "tr");
+    }
+
+    private static void SelectLangCombo(ComboBox cmb, string code, string fallback)
+    {
+        string want = string.IsNullOrWhiteSpace(code) ? fallback : code.Trim().ToLowerInvariant();
+        for (int i = 0; i < cmb.Items.Count; i++)
+        {
+            if (cmb.Items[i] is ComboBoxItem item && string.Equals(item.Tag as string, want, StringComparison.OrdinalIgnoreCase))
+            {
+                cmb.SelectedIndex = i;
+                return;
+            }
+        }
+        // Bilinmeyen kod: listeye ekle
+        cmb.Items.Add(new ComboBoxItem { Content = want, Tag = want });
+        cmb.SelectedIndex = cmb.Items.Count - 1;
+    }
+
+    private static string? GetLangComboCode(ComboBox cmb)
+        => (cmb.SelectedItem as ComboBoxItem)?.Tag as string;
 
     private void WireEvents()
     {
@@ -409,6 +468,15 @@ public partial class SettingsWindow : Window
             QualityValue.Text = _settings.Quality.ToString();
         });
         BtnBrowse.Click += (_, _) => BrowseFolder();
+
+        CmbTranslateSource.SelectionChanged += (_, _) => Apply(() =>
+        {
+            _settings.TranslateSourceLanguage = GetLangComboCode(CmbTranslateSource) ?? "auto";
+        });
+        CmbTranslateTarget.SelectionChanged += (_, _) => Apply(() =>
+        {
+            _settings.TranslateTargetLanguage = GetLangComboCode(CmbTranslateTarget) ?? "tr";
+        });
     }
 
     private void SyncAutoCloseState()

@@ -27,6 +27,8 @@
     <Geometry x:Key="IconCloud">M12 13 V21 M8 17 L12 13 L16 17 M20 16.6 A5 5 0 0 0 18 7 H16.7 A8 8 0 1 0 4 15.2</Geometry>
     <Geometry x:Key="IconClose">M18 6 L6 18 M6 6 L18 18</Geometry>
     <Geometry x:Key="IconTrash">M3 6 H21 M8 6 V4 H16 V6 M5 6 V20 A1 1 0 0 0 6 21 H18 A1 1 0 0 0 19 20 V6 M10 10 V17 M14 10 V17</Geometry>
+    <!-- Çevir: lucide-style languages (A + 文) -->
+    <Geometry x:Key="IconTranslate">M5 8 L10 13 M4 14 L10 8 L12 5 M2 5 H14 M7 2 H8 M12.913 17 H20.087 M12.913 17 L11 21 M12.913 17 L15.7783 11.009 C16.0092,10.5263 16.1246,10.2849 16.2826,10.2086 C16.4199,10.1423 16.5801,10.1423 16.7174,10.2086 C16.8754,10.2849 16.9908,10.5263 17.2217,11.009 L20.087 17 M20.087 17 L22 21</Geometry>
 
     <!-- Modlar -->
     <!-- Bölgesel: köşe işaretli seçim kutusu (crop area) -->

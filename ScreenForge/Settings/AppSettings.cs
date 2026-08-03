@@ -33,6 +33,12 @@ public sealed class AppSettings
     // ---- GIF kayıt/dışa aktarma tercihleri ----
     public GifSettings Gif { get; set; } = new();
 
+    // ---- Görüntü çevirisi (Google Lens) ----
+    /// <summary>Kaynak dil kodu; "auto" = otomatik algıla.</summary>
+    public string TranslateSourceLanguage { get; set; } = "auto";
+    /// <summary>Hedef dil kodu (örn. tr, en, de).</summary>
+    public string TranslateTargetLanguage { get; set; } = "tr";
+
     // ===================== Kalıcılık =====================
 
     [JsonIgnore]

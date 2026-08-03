@@ -126,15 +126,30 @@
                        Text="Alan seçmek için sürükleyin" />
         </Border>
 
-        <!-- Kısa geri bildirim (kopyala/yapıştır/çoğalt) -->
+        <!-- Kısa geri bildirim (kopyala/yapıştır/çoğalt/çeviri) -->
         <Border x:Name="ToastBanner" Visibility="Collapsed" IsHitTestVisible="False"
-                Background="#E21F2430" CornerRadius="8" Padding="16,10"
+                Background="#E21F2430" CornerRadius="8" Padding="14,10"
                 BorderBrush="#3A4254" BorderThickness="1">
             <Border.Effect>
                 <DropShadowEffect Color="Black" BlurRadius="16" ShadowDepth="2" Opacity="0.45" />
             </Border.Effect>
-            <TextBlock x:Name="ToastText" Foreground="#EAF0F7" FontFamily="Segoe UI" FontSize="13"
-                       FontWeight="SemiBold" TextAlignment="Center" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Çeviri sırasında dönen spinner -->
+                <Grid x:Name="ToastSpinner" Width="18" Height="18" Margin="0,0,10,0"
+                      Visibility="Collapsed" VerticalAlignment="Center">
+                    <Ellipse Width="16" Height="16"
+                             Stroke="#EA6F12" StrokeThickness="2.2"
+                             StrokeDashArray="3.2 2.2"
+                             StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                             RenderTransformOrigin="0.5,0.5">
+                        <Ellipse.RenderTransform>
+                            <RotateTransform x:Name="ToastSpinnerRotate" />
+                        </Ellipse.RenderTransform>
+                    </Ellipse>
+                </Grid>
+                <TextBlock x:Name="ToastText" Foreground="#EAF0F7" FontFamily="Segoe UI" FontSize="13"
+                           FontWeight="SemiBold" VerticalAlignment="Center" TextAlignment="Left" />
+            </StackPanel>
         </Border>
 
         <!-- Sağ üst hover etiket -->
@@ -142,5 +157,78 @@
                 Background="#CC1F2430" CornerRadius="4" Padding="7,3">
             <TextBlock x:Name="HoverText" Foreground="#9AA4B8" FontFamily="Segoe UI" FontSize="11"/>
         </Border>
+
+        <!-- Çeviri sonucu: tam ekran koyu + ortalanmış görüntü (monitrün %40–100) -->
+        <Rectangle x:Name="TranslateDim" Fill="#E6000000" Visibility="Collapsed"
+                   MouseLeftButtonDown="OnTranslateDimClick" Cursor="Arrow" />
+        <Border x:Name="TranslateResultHost" Visibility="Collapsed" ClipToBounds="False"
+                BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="4"
+                Background="#FF12151C" Cursor="Hand"
+                MouseEnter="OnTranslateHostMouseEnter"
+                MouseLeave="OnTranslateHostMouseLeave"
+                RenderTransformOrigin="0.5,0.5">
+            <Border.RenderTransform>
+                <ScaleTransform x:Name="TranslateHostScale" ScaleX="1" ScaleY="1" />
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect Color="Black" BlurRadius="32" ShadowDepth="6" Opacity="0.6" />
+            </Border.Effect>
+            <Image x:Name="TranslateResultImage" Stretch="Uniform"
+                   RenderOptions.BitmapScalingMode="HighQuality"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <!-- Monitör sağ üst: kapat -->
+        <Button x:Name="TranslateCloseButton" Visibility="Collapsed"
+                Width="40" Height="40" Padding="0" Cursor="Hand"
+                Background="#E61F2430" BorderBrush="#50FFFFFF" BorderThickness="1"
+                Click="OnTranslateCloseClick" ToolTip="Kapat (Esc)">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="8">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="#F0EA6F12" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Button.Template>
+            <Path Data="{StaticResource IconClose}" Stroke="White" StrokeThickness="2"
+                  Width="16" Height="16" Stretch="Uniform"
+                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+        </Button>
+        <!-- Monitör sağ alt: metin kopyala -->
+        <Button x:Name="TranslateCopyButton" Visibility="Collapsed"
+                Height="40" MinWidth="160" Padding="14,0" Cursor="Hand"
+                Background="#E61F2430" BorderBrush="#50FFFFFF" BorderThickness="1"
+                Click="OnTranslateCopyClick" ToolTip="Çevrilmiş metni panoya kopyala">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="#F0EA6F12" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Button.Template>
+            <StackPanel Orientation="Horizontal">
+                <Path Data="{StaticResource IconCopy}" Stroke="White" StrokeThickness="1.8"
+                      Width="16" Height="16" Stretch="Uniform" Margin="0,0,8,0"
+                      VerticalAlignment="Center"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                <TextBlock x:Name="TranslateCopyLabel" Text="Metni kopyala" Foreground="White" FontSize="13"
+                           FontFamily="Segoe UI" VerticalAlignment="Center" />
+            </StackPanel>
+        </Button>
     </Canvas>
 </Window>

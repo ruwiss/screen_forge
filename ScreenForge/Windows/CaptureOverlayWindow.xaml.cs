@@ -6,10 +6,13 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using SkiaSharp;
 using ScreenForge.Capture;
 using ScreenForge.Editor;
 using ScreenForge.Settings;
+using ScreenForge.Translate;
 using ScreenForge.Upload;
 using WpfPoint = System.Windows.Point;
 using WpfRect = System.Windows.Rect;
@@ -88,6 +91,22 @@ public partial class CaptureOverlayWindow : Window
     private bool _toolbarMoved;        // kullanıcı araç çubuğunu sürükledi mi (tam ekran/serbest)
     private WpfPoint _toolbarPos;      // kullanıcının seçtiği konum
     private static System.Windows.Input.Cursor? _regionCursor;
+    private bool _translateViewOpen;
+    private bool _translateBusy;
+    /// <summary>
+    /// Çeviri kapatılırken (X/Esc/dim) aynı tıklamanın MouseUp'ı seçimi yeniden
+    /// açmasın / araçları geri getirmesin diye kısa süreli giriş kilidi.
+    /// </summary>
+    private bool _suspendCaptureInput;
+    private CancellationTokenSource? _translateCts;
+    private GoogleLensClient? _lensClient;
+    private GoogleTranslateVisualClient? _visualClient;
+    private double _translateBaseLeft;
+    private double _translateBaseTop;
+    private string? _lastTranslatedText;
+    /// <summary>Son çevrilmiş PNG (Ctrl+C ile panoya kopyalamak için, tam kalite).</summary>
+    private byte[]? _lastTranslatedPng;
+    private CancellationTokenSource? _copyFeedbackCts;
 
     private static System.Windows.Input.Cursor RegionCursor => _regionCursor ??= CreateRegionCursor();
 
@@ -105,6 +124,20 @@ public partial class CaptureOverlayWindow : Window
 
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
+        Closed += async (_, _) =>
+        {
+            _translateCts?.Cancel();
+            _translateCts?.Dispose();
+            _copyFeedbackCts?.Cancel();
+            _copyFeedbackCts?.Dispose();
+            _lensClient?.Dispose();
+            _lensClient = null;
+            if (_visualClient != null)
+            {
+                try { await _visualClient.DisposeAsync().ConfigureAwait(true); } catch { }
+                _visualClient = null;
+            }
+        };
         MouseLeftButtonDown += OnMouseDown;
         MouseMove += OnMouseMove;
         MouseLeftButtonUp += OnMouseUp;
@@ -157,6 +190,14 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Çeviri sonucu açıkken Esc her şeyden önce kapatır (odak kaybı olmasın)
+        if (e.Key == Key.Escape && _translateViewOpen)
+        {
+            CloseTranslateView();
+            e.Handled = true;
+            return;
+        }
+
         // Sahne kırpma klavye işleme
         if (_canvas != null && _canvas.IsSceneCropping)
         {
@@ -290,6 +331,30 @@ public partial class CaptureOverlayWindow : Window
         Activate();
         Focus();
         BuildWindowList();
+
+        // Çeviri motorunu hemen ısıt (edit fazını bekleme) — ilk "Çevir" daha çabuk başlar
+        if (_mode != CaptureMode.Free)
+            KickTranslateWarmup();
+    }
+
+    /// <summary>WebView2 + Google Images sayfasını arka planda hazırla.</summary>
+    private void KickTranslateWarmup()
+    {
+        _ = Dispatcher.BeginInvoke(async () =>
+        {
+            try
+            {
+                string tl = string.IsNullOrWhiteSpace(_settings.TranslateTargetLanguage)
+                    ? "tr" : _settings.TranslateTargetLanguage.Trim();
+                string? sl = string.IsNullOrWhiteSpace(_settings.TranslateSourceLanguage)
+                    || string.Equals(_settings.TranslateSourceLanguage, "auto", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : _settings.TranslateSourceLanguage.Trim();
+                _visualClient ??= new GoogleTranslateVisualClient();
+                await _visualClient.WarmupAsync(tl, sl).ConfigureAwait(true);
+            }
+            catch { /* sessiz — çeviri anında tekrar dener */ }
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     // ===================== Mod çubuğu =====================
@@ -381,6 +446,8 @@ public partial class CaptureOverlayWindow : Window
     // ===================== Faz 1: Seçim (sadece Bölgesel) =====================
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
+        // Çeviri sonucu açıkken veya kapatma tıklaması sürerken seçim/resize yok
+        if (_translateViewOpen || _suspendCaptureInput) { e.Handled = true; return; }
         if (_mode != CaptureMode.Region) return;
 
         var pos = e.GetPosition(Root);
@@ -451,6 +518,12 @@ public partial class CaptureOverlayWindow : Window
     {
         var pos = e.GetPosition(Root);
 
+        if (_translateViewOpen || _suspendCaptureInput)
+        {
+            if (_translateViewOpen) Cursor = Cursors.Arrow;
+            return;
+        }
+
         if (_windowHoverActive && _mode == CaptureMode.Region && _phase == Phase.Select && !_dragging)
             UpdateWindowHover(pos);
 
@@ -502,6 +575,20 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        // Çeviri kapatma tıklamasının MouseUp'ı seçim/edit'e sızmasın
+        if (_suspendCaptureInput)
+        {
+            _suspendCaptureInput = false;
+            _dragging = false;
+            _pendingNewSelection = false;
+            _newSelectionArmed = false;
+            _windowClickPending = false;
+            _selResizing = false;
+            try { if (IsMouseCaptured) ReleaseMouseCapture(); } catch { /* ignore */ }
+            e.Handled = true;
+            return;
+        }
+
         // Pencere tıklama — sürükleme olmadıysa window bounds'u seç
         if (_windowClickPending)
         {
@@ -593,6 +680,9 @@ public partial class CaptureOverlayWindow : Window
 
     private int HitSelectionEdge(WpfPoint p)
     {
+        if (_translateViewOpen) return -1;
+        // Seçim çerçevesi gizliyken resize “aktif seçim” hissi verme
+        if (SelectionBorder.Visibility != Visibility.Visible) return -1;
         if (_selDip.Width < 2 || _selDip.Height < 2) return -1;
         const double tol = 7;
         double l = _selDip.X, t = _selDip.Y, r = _selDip.X + _selDip.Width, b = _selDip.Y + _selDip.Height;
@@ -825,6 +915,11 @@ public partial class CaptureOverlayWindow : Window
 
         // Serbest mod ilk açılışta panodaki resmi yerleştir (yeniden kullanılan sahnede değil).
         if (free && !reusedFreeScene) TryPasteImage();
+
+        // Isınma OnLoaded'da da tetiklenir; edit'e girince dilleri yeniden doğrula
+        if (!free)
+            KickTranslateWarmup();
+
         _canvas.Focus();
     }
 
@@ -1298,6 +1393,15 @@ public partial class CaptureOverlayWindow : Window
         ActionStack.Children.Clear();
         if (_mode == CaptureMode.Region)
             ActionStack.Children.Add(MakeGifSplitButton());
+        // Çevir: seçili bölgeyi Google Lens ile çevirip aynı yerde göster
+        if (_mode is CaptureMode.Region or CaptureMode.FullScreen)
+        {
+            string tgt = string.IsNullOrWhiteSpace(_settings.TranslateTargetLanguage)
+                ? "tr" : _settings.TranslateTargetLanguage.Trim().ToUpperInvariant();
+            ActionStack.Children.Add(MakeCmd("IconTranslate", "Çevir",
+                $"Seçili alanı çevir → {tgt}  (kaynak: ayarlar)",
+                () => _ = DoTranslateAsync()));
+        }
         ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala",
             _mode == CaptureMode.Free
                 ? "Dışa aktar / panoya kopyala · seçili öğe için Ctrl+C"
@@ -1309,6 +1413,501 @@ public partial class CaptureOverlayWindow : Window
             ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle (iç pano kalır)", DoClearScene));
         ActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
         ActionBar.Visibility = Visibility.Visible;
+    }
+
+    private void OnTranslateCloseClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        CloseTranslateView();
+    }
+
+    private void OnTranslateDimClick(object sender, MouseButtonEventArgs e)
+    {
+        // Görselin dışına tıklanınca kapat (host tıklamasını yutmasın diye host üstte)
+        if (e.OriginalSource == TranslateDim || ReferenceEquals(sender, TranslateDim))
+        {
+            CloseTranslateView();
+            e.Handled = true;
+        }
+    }
+
+    private void OnTranslateCopyClick(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_lastTranslatedText))
+        {
+            ShowToast("Kopyalanacak metin yok");
+            return;
+        }
+        try
+        {
+            Clipboard.SetText(_lastTranslatedText);
+            FlashCopyButtonFeedback();
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Kopyalanamadı: " + ex.Message);
+        }
+    }
+
+    /// <summary>Kopyala butonunda kısa süreli "Kopyalandı" geri bildirimi.</summary>
+    private async void FlashCopyButtonFeedback()
+    {
+        _copyFeedbackCts?.Cancel();
+        _copyFeedbackCts = new CancellationTokenSource();
+        var ct = _copyFeedbackCts.Token;
+
+        if (TranslateCopyLabel != null)
+            TranslateCopyLabel.Text = "Kopyalandı";
+        TranslateCopyButton.ToolTip = "Panoya kopyalandı";
+
+        try
+        {
+            await Task.Delay(1600, ct).ConfigureAwait(true);
+            if (ct.IsCancellationRequested) return;
+            if (TranslateCopyLabel != null)
+                TranslateCopyLabel.Text = "Metni kopyala";
+            TranslateCopyButton.ToolTip = "Çevrilmiş metni panoya kopyala";
+        }
+        catch (OperationCanceledException) { /* ignore */ }
+    }
+
+    private void ResetCopyButtonLabel()
+    {
+        _copyFeedbackCts?.Cancel();
+        if (TranslateCopyLabel != null)
+            TranslateCopyLabel.Text = "Metni kopyala";
+        TranslateCopyButton.ToolTip = "Çevrilmiş metni panoya kopyala";
+    }
+
+    private void OnTranslateHostMouseEnter(object sender, MouseEventArgs e)
+        => SetTranslateHostZoom(true);
+
+    private void OnTranslateHostMouseLeave(object sender, MouseEventArgs e)
+        => SetTranslateHostZoom(false);
+
+    /// <summary>
+    /// Hover zoom: ~1.35x, ekran içinde kalır (ortalanmış layout ile).
+    /// </summary>
+    private void SetTranslateHostZoom(bool zoomed)
+    {
+        if (TranslateHostScale == null) return;
+
+        double w = Math.Max(1, TranslateResultHost.Width);
+        double h = Math.Max(1, TranslateResultHost.Height);
+        const double margin = 20;
+
+        double s = 1.0;
+        if (zoomed)
+        {
+            double maxScale = Math.Min(
+                (ActualWidth - 2 * margin) / w,
+                (ActualHeight - 2 * margin) / h);
+            s = Math.Min(1.35, Math.Max(1.0, maxScale));
+            if (s < 1.05) s = 1.0;
+        }
+
+        TranslateHostScale.ScaleX = s;
+        TranslateHostScale.ScaleY = s;
+
+        // Merkez sabit: base zaten ekran ortası
+        double cx = ActualWidth / 2;
+        double cy = ActualHeight / 2;
+        double visW = w * s;
+        double visH = h * s;
+        double left = cx - visW / 2;
+        double top = cy - visH / 2;
+        left = Math.Clamp(left, margin, Math.Max(margin, ActualWidth - visW - margin));
+        top = Math.Clamp(top, margin, Math.Max(margin, ActualHeight - visH - margin));
+
+        // ScaleTransform origin 0.5,0.5 olduğu için Canvas sol-üst unscaled olmalı
+        Canvas.SetLeft(TranslateResultHost, left + (visW - w) / 2);
+        Canvas.SetTop(TranslateResultHost, top + (visH - h) / 2);
+        _translateBaseLeft = Canvas.GetLeft(TranslateResultHost);
+        _translateBaseTop = Canvas.GetTop(TranslateResultHost);
+
+        System.Windows.Controls.Panel.SetZIndex(TranslateResultHost, zoomed && s > 1.01 ? 1000 : 50);
+        System.Windows.Controls.Panel.SetZIndex(TranslateDim, 40);
+        System.Windows.Controls.Panel.SetZIndex(TranslateCloseButton, 1100);
+        System.Windows.Controls.Panel.SetZIndex(TranslateCopyButton, 1100);
+    }
+
+    /// <summary>
+    /// Seçim boyutuna yakın göster; biraz büyüt (okunaklılık) ama ekranı kaplamasın.
+    /// </summary>
+    private void LayoutCenteredTranslateImage(BitmapSource image)
+    {
+        double screenW = Math.Max(1, ActualWidth);
+        double screenH = Math.Max(1, ActualHeight);
+        double imgW = Math.Max(1, image.PixelWidth);
+        double imgH = Math.Max(1, image.PixelHeight);
+        double imgAspect = imgW / imgH;
+
+        // 1) Seçim kutusu (DIP) + hafif büyütme — Google zaten doğru punto basıyor
+        double hostW;
+        double hostH;
+        double selW = _selDip.Width;
+        double selH = _selDip.Height;
+        if (selW > 2 && selH > 2)
+        {
+            double s = Math.Min(selW / imgW, selH / imgH);
+            hostW = imgW * s * 1.08;
+            hostH = imgH * s * 1.08;
+        }
+        else
+        {
+            hostW = imgW;
+            hostH = imgH;
+        }
+
+        // 2) Min yükseklik: ekranın %14'ü
+        double minH = Math.Max(72, screenH * 0.14);
+        if (hostH < minH && hostH > 0.5)
+        {
+            double f = minH / hostH;
+            if (selH > 2)
+                f = Math.Min(f, 1.45);
+            hostW *= f;
+            hostH *= f;
+        }
+
+        // 3) Tavan
+        double maxW = screenW * 0.88;
+        double maxH = screenH * 0.75;
+        if (hostW > maxW || hostH > maxH)
+        {
+            double f = Math.Min(maxW / hostW, maxH / hostH);
+            hostW *= f;
+            hostH *= f;
+        }
+
+        // En-boy oranını kilitle
+        if (Math.Abs(hostW / hostH - imgAspect) > 0.01)
+        {
+            if (hostW / hostH > imgAspect) hostW = hostH * imgAspect;
+            else hostH = hostW / imgAspect;
+        }
+
+        _translateBaseLeft = (screenW - hostW) / 2;
+        _translateBaseTop = (screenH - hostH) / 2;
+        TranslateResultHost.Width = Math.Max(1, hostW);
+        TranslateResultHost.Height = Math.Max(1, hostH);
+        Canvas.SetLeft(TranslateResultHost, _translateBaseLeft);
+        Canvas.SetTop(TranslateResultHost, _translateBaseTop);
+
+        // Sağ üst kapat
+        Canvas.SetLeft(TranslateCloseButton, screenW - 40 - 20);
+        Canvas.SetTop(TranslateCloseButton, 20);
+        // Sağ alt kopyala
+        TranslateCopyButton.UpdateLayout();
+        double copyW = TranslateCopyButton.ActualWidth > 1 ? TranslateCopyButton.ActualWidth : 160;
+        Canvas.SetLeft(TranslateCopyButton, screenW - copyW - 24);
+        Canvas.SetTop(TranslateCopyButton, screenH - 40 - 24);
+    }
+
+    private void SuppressRegionSelectionChrome()
+    {
+        _selResizing = false;
+        _selResizeEdge = -1;
+        _dragging = false;
+        _pendingNewSelection = false;
+        _newSelectionArmed = false;
+        _windowClickPending = false;
+        try { if (IsMouseCaptured) ReleaseMouseCapture(); } catch { /* ignore */ }
+
+        SelectionBorder.Visibility = Visibility.Collapsed;
+        SelectionBorder.Opacity = 0.35;
+        SizeBadge.Visibility = Visibility.Collapsed;
+        WinHoverBorder.Visibility = Visibility.Collapsed;
+        Cursor = Cursors.Arrow;
+    }
+
+    private void CloseTranslateView()
+    {
+        // Çeviri sonucu kapatılınca yakalama oturumu da bitsin.
+        // Bölgesel seçim ekranına (ModeBar + "Alan seçmek…") geri dönmek istemiyoruz —
+        // kullanıcı X/Esc/dim ile işi bitirmiş oluyor.
+        _translateCts?.Cancel();
+        _translateViewOpen = false;
+        _suspendCaptureInput = true;
+        HideTranslateChrome();
+        try { Close(); } catch { /* already closing */ }
+    }
+
+    private void HideTranslateChrome()
+    {
+        SetTranslateHostZoom(false);
+        TranslateDim.Visibility = Visibility.Collapsed;
+        TranslateResultHost.Visibility = Visibility.Collapsed;
+        TranslateCloseButton.Visibility = Visibility.Collapsed;
+        TranslateCopyButton.Visibility = Visibility.Collapsed;
+        TranslateResultImage.Source = null;
+        _lastTranslatedText = null;
+        _lastTranslatedPng = null;
+        ResetCopyButtonLabel();
+    }
+
+    /// <summary>Çeviri sonucu açıkken Ctrl+C → çevrilmiş görseli panoya koy, sonra overlay'i kapat.</summary>
+    private void CopyTranslatedImageToClipboard()
+    {
+        if (_lastTranslatedPng is not { Length: > 32 } && TranslateResultImage.Source is not BitmapSource)
+        {
+            ShowToast("Kopyalanacak resim yok");
+            return;
+        }
+
+        try
+        {
+            if (_lastTranslatedPng is { Length: > 32 })
+            {
+                using var sk = SKBitmap.Decode(_lastTranslatedPng)
+                    ?? throw new InvalidOperationException("PNG çözülemedi.");
+                ImageExporter.CopyToClipboard(sk);
+            }
+            else if (TranslateResultImage.Source is BitmapSource bmp)
+            {
+                Clipboard.SetImage(bmp);
+            }
+
+            // Kopyala + kapat (normal kopyala akışı gibi)
+            CloseTranslateView();
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Kopyalanamadı: " + ex.Message);
+        }
+    }
+
+    private void ShowTranslateResult(BitmapSource image, WpfRect regionDip)
+    {
+        _ = regionDip; // artık seçim konumunda değil; ortalanmış layout
+        _translateViewOpen = true;
+        SuppressRegionSelectionChrome();
+
+        UpdateDimRects(WpfRect.Empty);
+        ModeBar.Visibility = Visibility.Collapsed;
+        HintBox.Visibility = Visibility.Collapsed;
+        Toolbar.Visibility = Visibility.Collapsed;
+        ActionBar.Visibility = Visibility.Collapsed;
+        OptionBar.Visibility = Visibility.Collapsed;
+        EditHost.Visibility = Visibility.Collapsed;
+        SelectionBorder.Visibility = Visibility.Collapsed;
+        SizeBadge.Visibility = Visibility.Collapsed;
+
+        // Tam ekran koyu
+        TranslateDim.Width = ActualWidth;
+        TranslateDim.Height = ActualHeight;
+        Canvas.SetLeft(TranslateDim, 0);
+        Canvas.SetTop(TranslateDim, 0);
+        TranslateDim.Visibility = Visibility.Visible;
+        TranslateDim.IsHitTestVisible = true;
+        System.Windows.Controls.Panel.SetZIndex(TranslateDim, 40);
+
+        TranslateResultImage.Source = image;
+        TranslateResultImage.Stretch = System.Windows.Media.Stretch.Uniform;
+        RenderOptions.SetBitmapScalingMode(TranslateResultImage, BitmapScalingMode.HighQuality);
+        LayoutCenteredTranslateImage(image);
+        TranslateResultHost.Visibility = Visibility.Visible;
+        System.Windows.Controls.Panel.SetZIndex(TranslateResultHost, 50);
+        SetTranslateHostZoom(false);
+
+        // Monitör köşeleri: kapat / kopyala
+        TranslateCloseButton.Visibility = Visibility.Visible;
+        TranslateCopyButton.Visibility = Visibility.Visible;
+        TranslateCopyButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastTranslatedText);
+        TranslateCopyButton.Opacity = TranslateCopyButton.IsEnabled ? 1.0 : 0.45;
+        ResetCopyButtonLabel();
+        System.Windows.Controls.Panel.SetZIndex(TranslateCloseButton, 1100);
+        System.Windows.Controls.Panel.SetZIndex(TranslateCopyButton, 1100);
+        // Kopyala butonu genişliğini ölçüp sağ alta hizala
+        TranslateCopyButton.UpdateLayout();
+        double copyW = Math.Max(160, TranslateCopyButton.ActualWidth);
+        Canvas.SetLeft(TranslateCopyButton, ActualWidth - copyW - 24);
+        Canvas.SetTop(TranslateCopyButton, ActualHeight - 40 - 24);
+        Canvas.SetLeft(TranslateCloseButton, ActualWidth - 40 - 20);
+        Canvas.SetTop(TranslateCloseButton, 20);
+
+        Focusable = true;
+        Activate();
+        Focus();
+        Keyboard.Focus(this);
+    }
+
+    /// <summary>
+    /// Çeviriye giden piksel: ekran kırpımının ham pikselleri.
+    /// Gerçek test (508×425 YouTube kartı): native → tarayıcıyla aynı punto/yerleşim;
+    /// upscale (1.5–2×) Google çıktısını bozuyor veya boş dönüyordu. Sadece dev kırpımı küçült.
+    /// </summary>
+    private SKBitmap CaptureSelectionBitmapForTranslate()
+    {
+        var region = ToPixelRegion(_selDip);
+        if (region.Width <= 0 || region.Height <= 0)
+            throw new InvalidOperationException("Seçim bölgesi boş.");
+
+        if (_mode == CaptureMode.FullScreen)
+            region = new Rectangle(0, 0, _screenshot.Width, _screenshot.Height);
+
+        using var cropped = ScreenCapture.Crop(_screenshot, region);
+        var sk = ToSkBitmap(cropped);
+
+        // Aşırı büyük (multi-monitor tam ekran vb.): Google limitine yaklaştır
+        int maxEdge = Math.Max(sk.Width, sk.Height);
+        if (maxEdge <= 2000 || maxEdge <= 0)
+            return sk;
+
+        double factor = 2000.0 / maxEdge;
+        int nw = Math.Max(1, (int)Math.Round(sk.Width * factor));
+        int nh = Math.Max(1, (int)Math.Round(sk.Height * factor));
+        var scaled = new SKBitmap(nw, nh, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using (var canvas = new SKCanvas(scaled))
+        {
+            canvas.Clear(SKColors.Transparent);
+            canvas.DrawBitmap(sk, SKRect.Create(nw, nh),
+                new SKSamplingOptions(SKCubicResampler.Mitchell));
+        }
+        sk.Dispose();
+        return scaled;
+    }
+
+    private async Task DoTranslateAsync()
+    {
+        if (_translateBusy || _phase != Phase.Edit) return;
+        if (_mode == CaptureMode.Free)
+        {
+            ShowToast("Çeviri serbest modda desteklenmiyor");
+            return;
+        }
+        if (_selDip.Width < 2 || _selDip.Height < 2)
+        {
+            ShowToast("Önce bir alan seçin");
+            return;
+        }
+
+        _translateBusy = true;
+        _translateCts?.Cancel();
+        _translateCts = new CancellationTokenSource();
+        var ct = _translateCts.Token;
+
+        try
+        {
+            string targetLang = string.IsNullOrWhiteSpace(_settings.TranslateTargetLanguage)
+                ? "tr" : _settings.TranslateTargetLanguage.Trim();
+            string? sourceLang = string.IsNullOrWhiteSpace(_settings.TranslateSourceLanguage)
+                || string.Equals(_settings.TranslateSourceLanguage, "auto", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : _settings.TranslateSourceLanguage.Trim();
+
+            ShowBusyToast(FormatTranslatingMessage(targetLang));
+
+            // Motor zaten ısınmış olmalı; yoksa arka planda başlat (UI'yi bloklama)
+            _visualClient ??= new GoogleTranslateVisualClient();
+            _lensClient ??= new GoogleLensClient();
+            _ = _visualClient.WarmupAsync(targetLang, sourceLang, ct);
+
+            // PNG hazırlığı arka planda — UI thread serbest
+            var (pngBytes, imgW, imgH) = await Task.Run(() =>
+            {
+                using var regionBmp = CaptureSelectionBitmapForTranslate();
+                int w = regionBmp.Width, h = regionBmp.Height;
+                using var skImage = SKImage.FromBitmap(regionBmp);
+                using var pngData = skImage.Encode(SKEncodedImageFormat.Png, 100)
+                    ?? throw new InvalidOperationException("PNG kodlanamadı.");
+                return (pngData.ToArray(), w, h);
+            }, ct).ConfigureAwait(true);
+
+            // Paralel: görsel (Google web) + metin (Lens, kopyala için)
+            var visualTask = _visualClient.TranslatePngAsync(pngBytes, targetLang, sourceLang, ct);
+            var lensTask = _lensClient.TranslateImageAsync(
+                pngBytes, imgW, imgH, targetLang, sourceLang, ct);
+
+            BitmapSource src;
+            string tip;
+            _lastTranslatedText = null;
+            _lastTranslatedPng = null;
+
+            try
+            {
+                byte[] translatedPng = await visualTask.ConfigureAwait(true);
+                if (ct.IsCancellationRequested) return;
+                _lastTranslatedPng = translatedPng;
+                src = PngBytesToBitmapSource(translatedPng);
+                tip = "Çeviri tamam · Ctrl+C resim";
+
+                try
+                {
+                    var lensFinished = await Task.WhenAny(lensTask, Task.Delay(2000, ct)).ConfigureAwait(true);
+                    if (lensFinished == lensTask && lensTask.IsCompletedSuccessfully)
+                    {
+                        var lr = await lensTask.ConfigureAwait(true);
+                        _lastTranslatedText = lr.TranslatedText ?? lr.OcrText;
+                    }
+                }
+                catch { /* metin opsiyonel */ }
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                ShowBusyToast("Yedek motorla çevriliyor…");
+                var result = await lensTask.ConfigureAwait(true);
+                if (ct.IsCancellationRequested) return;
+                _lastTranslatedText = result.TranslatedText ?? result.OcrText;
+                using var regionBmp = SKBitmap.Decode(pngBytes)
+                    ?? throw new InvalidOperationException("PNG çözülemedi.");
+                using var translated = TranslateOverlayRenderer.Render(regionBmp, result);
+                using var skImg = SKImage.FromBitmap(translated);
+                using var enc = skImg.Encode(SKEncodedImageFormat.Png, 100)
+                    ?? throw new InvalidOperationException("PNG kodlanamadı.");
+                _lastTranslatedPng = enc.ToArray();
+                src = PngBytesToBitmapSource(_lastTranslatedPng);
+                tip = string.IsNullOrWhiteSpace(_lastTranslatedText)
+                    ? "Çeviri tamam · Ctrl+C resim"
+                    : (_lastTranslatedText.Length > 80 ? _lastTranslatedText[..80] + "…" : _lastTranslatedText);
+            }
+
+            if (string.IsNullOrWhiteSpace(_lastTranslatedText) && !lensTask.IsCompleted)
+            {
+                _ = lensTask.ContinueWith(t =>
+                {
+                    if (!t.IsCompletedSuccessfully) return;
+                    _lastTranslatedText = t.Result.TranslatedText ?? t.Result.OcrText;
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        if (!_translateViewOpen) return;
+                        TranslateCopyButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastTranslatedText);
+                        TranslateCopyButton.Opacity = TranslateCopyButton.IsEnabled ? 1.0 : 0.45;
+                    });
+                }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            }
+
+            ShowTranslateResult(src, _selDip);
+            ShowToast(tip);
+        }
+        catch (OperationCanceledException) { /* ignore */ }
+        catch (Exception ex)
+        {
+            // Hata olursa panelleri geri getir
+            if (_translateViewOpen) CloseTranslateView();
+            ShowToast("Çeviri başarısız: " + ex.Message);
+        }
+        finally
+        {
+            _translateBusy = false;
+        }
+    }
+
+    private static BitmapSource SkiaToBitmapSource(SKBitmap bmp)
+    {
+        using var image = SKImage.FromBitmap(bmp);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100)
+            ?? throw new InvalidOperationException("Bitmap encode failed.");
+        return PngBytesToBitmapSource(data.ToArray());
+    }
+
+    private static BitmapSource PngBytesToBitmapSource(byte[] png)
+    {
+        var ms = new System.IO.MemoryStream(png);
+        var dec = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var frame = dec.Frames[0];
+        frame.Freeze();
+        return frame;
     }
 
     private FrameworkElement MakeGifSplitButton()
@@ -2284,17 +2883,83 @@ public partial class CaptureOverlayWindow : Window
         catch { }
     }
 
+    /// <summary>Hedef dil koduna göre "Türkçeye çevriliyor…" metni.</summary>
+    private static string FormatTranslatingMessage(string targetLangCode)
+    {
+        string code = (targetLangCode ?? "tr").Trim().ToLowerInvariant();
+        return code switch
+        {
+            "tr" => "Türkçeye çevriliyor…",
+            "en" => "İngilizceye çevriliyor…",
+            "de" => "Almancaya çevriliyor…",
+            "fr" => "Fransızcaya çevriliyor…",
+            "es" => "İspanyolcaya çevriliyor…",
+            "it" => "İtalyancaya çevriliyor…",
+            "pt" => "Portekizceye çevriliyor…",
+            "ru" => "Rusçaya çevriliyor…",
+            "ar" => "Arapçaya çevriliyor…",
+            "zh" or "zh-cn" or "zh-tw" => "Çinceye çevriliyor…",
+            "ja" => "Japoncaya çevriliyor…",
+            "ko" => "Koreceye çevriliyor…",
+            "nl" => "Felemenkçeye çevriliyor…",
+            "pl" => "Lehçeye çevriliyor…",
+            "uk" => "Ukraynacaya çevriliyor…",
+            "hi" => "Hintçeye çevriliyor…",
+            _ => $"{code.ToUpperInvariant()} diline çevriliyor…",
+        };
+    }
+
+    /// <summary>Spinner'lı kalıcı toast (çeviri sürerken). Sonraki ShowToast kapatır.</summary>
+    private void ShowBusyToast(string message)
+    {
+        _toastCts?.Cancel();
+        _toastCts = new CancellationTokenSource();
+
+        if (ToastSpinner != null)
+            ToastSpinner.Visibility = Visibility.Visible;
+        StartToastSpinner();
+
+        ToastText.Text = message;
+        ToastBanner.Visibility = Visibility.Visible;
+        PositionToastBanner();
+    }
+
+    private void StartToastSpinner()
+    {
+        if (ToastSpinnerRotate == null) return;
+        var anim = new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(850))
+        {
+            RepeatBehavior = RepeatBehavior.Forever,
+        };
+        ToastSpinnerRotate.BeginAnimation(RotateTransform.AngleProperty, anim);
+    }
+
+    private void StopToastSpinner()
+    {
+        if (ToastSpinnerRotate == null) return;
+        ToastSpinnerRotate.BeginAnimation(RotateTransform.AngleProperty, null);
+        ToastSpinnerRotate.Angle = 0;
+        if (ToastSpinner != null)
+            ToastSpinner.Visibility = Visibility.Collapsed;
+    }
+
+    private void PositionToastBanner()
+    {
+        ToastBanner.UpdateLayout();
+        Canvas.SetLeft(ToastBanner, Math.Round((ActualWidth - ToastBanner.ActualWidth) / 2));
+        Canvas.SetTop(ToastBanner, Math.Round(ActualHeight - ToastBanner.ActualHeight - 28));
+    }
+
     private async void ShowToast(string message, int ms = 1600)
     {
         _toastCts?.Cancel();
         _toastCts = new CancellationTokenSource();
         var token = _toastCts.Token;
 
+        StopToastSpinner();
         ToastText.Text = message;
         ToastBanner.Visibility = Visibility.Visible;
-        ToastBanner.UpdateLayout();
-        Canvas.SetLeft(ToastBanner, Math.Round((ActualWidth - ToastBanner.ActualWidth) / 2));
-        Canvas.SetTop(ToastBanner, Math.Round(ActualHeight - ToastBanner.ActualHeight - 28));
+        PositionToastBanner();
 
         try
         {
@@ -2650,6 +3315,25 @@ public partial class CaptureOverlayWindow : Window
     {
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+
+        // Çeviri sonucu açıkken: Esc kapat, Ctrl+C çevrilmiş RESMİ panoya al
+        if (_translateViewOpen)
+        {
+            if (e.Key == Key.Escape)
+            {
+                CloseTranslateView();
+                e.Handled = true;
+                return;
+            }
+            if (ctrl && e.Key == Key.C)
+            {
+                CopyTranslatedImageToClipboard();
+                e.Handled = true;
+                return;
+            }
+            e.Handled = true;
+            return;
+        }
 
         // Inline metin düzenleme açıkken: kısayolları TextBox'a bırak (Esc PreviewKeyDown'da ele alınır).
         if (_textEditing) return;
