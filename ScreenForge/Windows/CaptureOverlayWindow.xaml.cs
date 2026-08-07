@@ -2823,10 +2823,7 @@ public partial class CaptureOverlayWindow : Window
         if (ActionBar.ActualWidth <= 0) ActionBar.UpdateLayout();
         bool hasOpt = OptionBar.Visibility == Visibility.Visible;
 
-        // Üst aksiyon çubuğu: seçilen monitör (bölgeselde tercihen seçimin üstü).
-        PositionActionBar(mon);
-
-        // Araç çubuğu konumu
+        // Önce toolbar — ActionBar onunla çakışmamak için konumu bilmeli.
         bool fullLike = free || _mode == CaptureMode.FullScreen;
         if (fullLike)
         {
@@ -2848,23 +2845,38 @@ public partial class CaptureOverlayWindow : Window
         }
         else
         {
-            // Bölgesel: seçimin sağı; monitör dışına taşmasın.
-            double tbX = _selDip.Right + gap;
-            if (tbX + tbW > mon.Right - gap) tbX = _selDip.X - gap - tbW;
-            if (tbX < mon.Left + gap) tbX = Math.Max(mon.Left + gap, mon.Right - tbW - gap);
-            double tbY = _selDip.Bottom - tbH;
-            if (tbY < mon.Top + gap) tbY = _selDip.Y;
-            if (tbY + tbH > mon.Bottom - gap) tbY = mon.Bottom - tbH - gap;
-            if (tbY < mon.Top + gap) tbY = mon.Top + gap;
-            ClampToolbar(ref tbX, ref tbY, mon);
-            Canvas.SetLeft(Toolbar, tbX);
-            Canvas.SetTop(Toolbar, tbY);
+            PositionRegionToolbar(mon, gap, tbW, tbH);
         }
+
+        PositionActionBar(mon);
 
         if (CropActionBar.Visibility == Visibility.Visible)
             PositionCropActionBar(mon);
 
         if (hasOpt) PositionOptionBar(mon);
+    }
+
+    /// <summary>Bölgesel: araç şeridini seçimin yanına (küçük seçimde üste hizalı).</summary>
+    private void PositionRegionToolbar(WpfRect mon, double gap, double tbW, double tbH)
+    {
+        double tbX = _selDip.Right + gap;
+        if (tbX + tbW > mon.Right - gap)
+            tbX = _selDip.X - gap - tbW;
+        if (tbX < mon.Left + gap)
+            tbX = Math.Max(mon.Left + gap, mon.Right - tbW - gap);
+
+        // Küçük seçim: alta hizalamak toolbar'ı seçimin üstüne uzatır; üste hizala.
+        double tbY = _selDip.Height >= tbH
+            ? _selDip.Y + (_selDip.Height - tbH) / 2
+            : _selDip.Y;
+        if (tbY + tbH > mon.Bottom - gap)
+            tbY = mon.Bottom - tbH - gap;
+        if (tbY < mon.Top + gap)
+            tbY = mon.Top + gap;
+
+        ClampToolbar(ref tbX, ref tbY, mon);
+        Canvas.SetLeft(Toolbar, tbX);
+        Canvas.SetTop(Toolbar, tbY);
     }
 
     private void PositionActionBar(WpfRect mon)
@@ -2878,25 +2890,68 @@ public partial class CaptureOverlayWindow : Window
         bool hasLocalSel = _selDip.Width >= 2 && _selDip.Height >= 2
             && (_selDip.Width < ActualWidth - 2 || _selDip.Height < ActualHeight - 2);
 
-        double abX, abY;
-        if (hasLocalSel && _mode == CaptureMode.Region)
+        if (!(hasLocalSel && _mode == CaptureMode.Region))
         {
-            // Seçimin üst-ortası; sığmazsa seçimin altı; yine de monitör içinde.
-            abX = Math.Round(_selDip.X + (_selDip.Width - abW) / 2);
-            abY = _selDip.Y - abH - gap;
-            if (abY < mon.Top + gap)
-                abY = Math.Min(_selDip.Bottom + gap, mon.Bottom - abH - gap);
-        }
-        else
-        {
-            abX = Math.Round(mon.Left + (mon.Width - abW) / 2);
-            abY = mon.Top + 18;
+            PlaceTopCenterOnMonitor(ActionBar, mon, topInset: 18);
+            return;
         }
 
-        abX = Math.Clamp(abX, mon.Left + gap, Math.Max(mon.Left + gap, mon.Right - abW - gap));
-        abY = Math.Clamp(abY, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - abH - gap));
-        Canvas.SetLeft(ActionBar, abX);
-        Canvas.SetTop(ActionBar, abY);
+        // Toolbar ve seçim ile çakışmayan aday konumlar (öncelik sırasıyla).
+        WpfRect? tb = null;
+        if (Toolbar.Visibility == Visibility.Visible && Toolbar.ActualWidth > 0)
+            tb = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), Toolbar.ActualWidth, Toolbar.ActualHeight);
+
+        double cx = _selDip.X + _selDip.Width / 2;
+        var candidates = new List<(double x, double y)>
+        {
+            // 1) Seçimin üstü — ortalı
+            (cx - abW / 2, _selDip.Y - abH - gap),
+            // 2) Seçimin altı — ortalı
+            (cx - abW / 2, _selDip.Bottom + gap),
+            // 3) Seçimin solu (toolbar genelde sağda)
+            (_selDip.X - abW - gap, _selDip.Y),
+            // 4) Toolbar'ın karşı tarafı: toolbar sağdaysa seçimin solu zaten; sağa dene
+            (_selDip.Right + gap, _selDip.Y - abH - gap),
+            // 5) Monitör üstü — seçim X'ine hizalı (küçük alan / köşe yedek)
+            (cx - abW / 2, mon.Top + 18),
+            // 6) Monitör üst-orta (son çare)
+            (mon.Left + (mon.Width - abW) / 2, mon.Top + 18),
+        };
+
+        double bestX = mon.Left + (mon.Width - abW) / 2;
+        double bestY = mon.Top + 18;
+        double bestScore = double.NegativeInfinity;
+
+        foreach (var (rawX, rawY) in candidates)
+        {
+            double x = Math.Clamp(rawX, mon.Left + gap, Math.Max(mon.Left + gap, mon.Right - abW - gap));
+            double y = Math.Clamp(rawY, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - abH - gap));
+            var rect = new WpfRect(x, y, abW, abH);
+
+            // Monitör dışına taşma (clamp sonrası neredeyse 0)
+            double score = 0;
+            if (tb.HasValue && rect.IntersectsWith(tb.Value))
+                score -= 1000;
+            if (rect.IntersectsWith(_selDip))
+                score -= 400;
+            // Seçime yakınlık (daha yakın biraz daha iyi, ama çakışma ağır cezalı)
+            double dx = (rect.Left + rect.Width / 2) - cx;
+            double dy = (rect.Top + rect.Height / 2) - (_selDip.Y + _selDip.Height / 2);
+            score -= Math.Sqrt(dx * dx + dy * dy) * 0.05;
+            // Üst adayları hafif tercih
+            if (rect.Bottom <= _selDip.Y + 1) score += 30;
+            if (rect.Top >= _selDip.Bottom - 1) score += 20;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestX = x;
+                bestY = y;
+            }
+        }
+
+        Canvas.SetLeft(ActionBar, Math.Round(bestX));
+        Canvas.SetTop(ActionBar, Math.Round(bestY));
     }
 
     private void PositionCropActionBar(WpfRect? monOpt = null)
