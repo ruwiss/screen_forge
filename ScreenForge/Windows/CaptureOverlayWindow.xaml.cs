@@ -438,13 +438,14 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionTopBars()
     {
+        // Çoklu monitör: sanal masaüstü ortası değil, imlecin olduğu monitör.
+        var mon = GetUiMonitorDip();
         ModeBar.UpdateLayout();
-        Canvas.SetLeft(ModeBar, Math.Round((ActualWidth - ModeBar.ActualWidth) / 2));
-        Canvas.SetTop(ModeBar, 18);
+        PlaceTopCenterOnMonitor(ModeBar, mon, topInset: 18);
 
         HintBox.UpdateLayout();
-        Canvas.SetLeft(HintBox, Math.Round((ActualWidth - HintBox.ActualWidth) / 2));
-        Canvas.SetTop(HintBox, 18 + ModeBar.ActualHeight + 10);
+        double hintTop = Canvas.GetTop(ModeBar) + ModeBar.ActualHeight + 10;
+        PlaceTopCenterOnMonitor(HintBox, mon, topInset: hintTop - mon.Top);
     }
 
     // ===================== Faz 1: Seçim (sadece Bölgesel) =====================
@@ -2692,8 +2693,9 @@ public partial class CaptureOverlayWindow : Window
             HoverText.Text = text;
             HoverLabel.Visibility = Visibility.Visible;
             HoverLabel.UpdateLayout();
-            Canvas.SetLeft(HoverLabel, ActualWidth - HoverLabel.ActualWidth - 12);
-            Canvas.SetTop(HoverLabel, 12);
+            var mon = GetUiMonitorDip();
+            Canvas.SetLeft(HoverLabel, mon.Right - HoverLabel.ActualWidth - 12);
+            Canvas.SetTop(HoverLabel, mon.Top + 12);
         }
     }
 
@@ -2719,30 +2721,110 @@ public partial class CaptureOverlayWindow : Window
         }
     }
 
-    // Araç çubuğunu görünür alan içinde tutar.
-    private void ClampToolbar(ref double x, ref double y)
+    // Araç çubuğunu (tercihen hedef monitörde) görünür alan içinde tutar.
+    private void ClampToolbar(ref double x, ref double y, WpfRect? clampTo = null)
     {
         const double gap = 6;
         double w = Toolbar.ActualWidth, h = Toolbar.ActualHeight;
-        double maxX = Math.Max(gap, ActualWidth - w - gap);
-        double maxY = Math.Max(gap, ActualHeight - h - gap);
-        x = Math.Clamp(x, gap, maxX);
-        y = Math.Clamp(y, gap, maxY);
+        var area = clampTo ?? new WpfRect(0, 0, ActualWidth, ActualHeight);
+        double minX = area.Left + gap;
+        double minY = area.Top + gap;
+        double maxX = Math.Max(minX, area.Right - w - gap);
+        double maxY = Math.Max(minY, area.Bottom - h - gap);
+        x = Math.Clamp(x, minX, maxX);
+        y = Math.Clamp(y, minY, maxY);
+    }
+
+    /// <summary>
+    /// UI panelleri için hedef monitör (overlay DIP uzayı).
+    /// Bölgesel seçim varsa en çok örtüşen monitör; aksi halde imlecin monitörü.
+    /// </summary>
+    private WpfRect GetUiMonitorDip()
+    {
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        double sx = Math.Max(0.01, dpi.DpiScaleX);
+        double sy = Math.Max(0.01, dpi.DpiScaleY);
+
+        // Gerçek kısmi seçim mi (tüm sanal masaüstü değil)?
+        bool hasLocalSel = _selDip.Width >= 2 && _selDip.Height >= 2
+            && (_selDip.Width < ActualWidth - 2 || _selDip.Height < ActualHeight - 2);
+
+        Rectangle areaPx;
+        if (hasLocalSel)
+        {
+            areaPx = new Rectangle(
+                (int)Math.Round(_selDip.X * sx) + _virtualBounds.X,
+                (int)Math.Round(_selDip.Y * sy) + _virtualBounds.Y,
+                Math.Max(1, (int)Math.Round(_selDip.Width * sx)),
+                Math.Max(1, (int)Math.Round(_selDip.Height * sy)));
+        }
+        else
+        {
+            var p = System.Windows.Forms.Cursor.Position;
+            areaPx = new Rectangle(p.X, p.Y, 1, 1);
+        }
+
+        Screen best = Screen.PrimaryScreen ?? Screen.AllScreens[0];
+        if (areaPx.Width <= 1 && areaPx.Height <= 1)
+        {
+            best = Screen.FromPoint(new System.Drawing.Point(areaPx.X, areaPx.Y));
+        }
+        else
+        {
+            long bestArea = 0;
+            foreach (var s in Screen.AllScreens)
+            {
+                var inter = Rectangle.Intersect(s.Bounds, areaPx);
+                long area = (long)inter.Width * inter.Height;
+                if (area > bestArea)
+                {
+                    bestArea = area;
+                    best = s;
+                }
+            }
+            if (bestArea == 0)
+            {
+                best = Screen.FromPoint(new System.Drawing.Point(
+                    areaPx.X + areaPx.Width / 2,
+                    areaPx.Y + areaPx.Height / 2));
+            }
+        }
+
+        return new WpfRect(
+            (best.Bounds.X - _virtualBounds.X) / sx,
+            (best.Bounds.Y - _virtualBounds.Y) / sy,
+            best.Bounds.Width / sx,
+            best.Bounds.Height / sy);
+    }
+
+    /// <summary>Elemanı monitörün üst-ortasına yerleştirir (DIP).</summary>
+    private static void PlaceTopCenterOnMonitor(FrameworkElement el, WpfRect mon, double topInset = 18)
+    {
+        const double gap = 6;
+        double w = el.ActualWidth, h = el.ActualHeight;
+        double x = Math.Round(mon.Left + (mon.Width - w) / 2);
+        double y = mon.Top + topInset;
+        double maxX = Math.Max(mon.Left + gap, mon.Right - w - gap);
+        double maxY = Math.Max(mon.Top + gap, mon.Bottom - h - gap);
+        x = Math.Clamp(x, mon.Left + gap, maxX);
+        y = Math.Clamp(y, mon.Top + gap, maxY);
+        Canvas.SetLeft(el, x);
+        Canvas.SetTop(el, y);
     }
 
     private void PositionPanels()
     {
         const double gap = 10;
         bool free = _mode == CaptureMode.Free;
+        var mon = GetUiMonitorDip();
 
         double tbW = Toolbar.ActualWidth, tbH = Toolbar.ActualHeight;
         if (tbW <= 0 || tbH <= 0) { Toolbar.UpdateLayout(); tbW = Toolbar.ActualWidth; tbH = Toolbar.ActualHeight; }
         if (ActionBar.ActualWidth <= 0) ActionBar.UpdateLayout();
         bool hasOpt = OptionBar.Visibility == Visibility.Visible;
 
-        // Üst aksiyon çubuğu: üst-orta (modlar gizliyken).
-        Canvas.SetLeft(ActionBar, Math.Round((ActualWidth - ActionBar.ActualWidth) / 2));
-        Canvas.SetTop(ActionBar, 18);
+        // Üst aksiyon çubuğu: seçilen monitör (bölgeselde tercihen seçimin üstü).
+        PositionActionBar(mon);
 
         // Araç çubuğu konumu
         bool fullLike = free || _mode == CaptureMode.FullScreen;
@@ -2753,51 +2835,80 @@ public partial class CaptureOverlayWindow : Window
             {
                 // Kullanıcının sürüklediği konumu koru (ekrana yeniden sığdır)
                 tbX = _toolbarPos.X; tbY = _toolbarPos.Y;
+                ClampToolbar(ref tbX, ref tbY); // tüm sanal alan içinde kalsın
             }
             else
             {
-                tbX = Math.Round((ActualWidth - tbW) / 2);
-                tbY = ActualHeight - tbH - 24;
+                tbX = Math.Round(mon.Left + (mon.Width - tbW) / 2);
+                tbY = mon.Bottom - tbH - 24;
+                ClampToolbar(ref tbX, ref tbY, mon);
             }
-            ClampToolbar(ref tbX, ref tbY);
             Canvas.SetLeft(Toolbar, tbX);
             Canvas.SetTop(Toolbar, tbY);
         }
         else
         {
+            // Bölgesel: seçimin sağı; monitör dışına taşmasın.
             double tbX = _selDip.Right + gap;
-            if (tbX + tbW > ActualWidth) tbX = _selDip.X - gap - tbW;
-            if (tbX < 0) tbX = Math.Max(gap, ActualWidth - tbW - gap);
+            if (tbX + tbW > mon.Right - gap) tbX = _selDip.X - gap - tbW;
+            if (tbX < mon.Left + gap) tbX = Math.Max(mon.Left + gap, mon.Right - tbW - gap);
             double tbY = _selDip.Bottom - tbH;
-            if (tbY < gap) tbY = _selDip.Y;
-            if (tbY + tbH > ActualHeight) tbY = ActualHeight - tbH - gap;
-            if (tbY < gap) tbY = gap;
+            if (tbY < mon.Top + gap) tbY = _selDip.Y;
+            if (tbY + tbH > mon.Bottom - gap) tbY = mon.Bottom - tbH - gap;
+            if (tbY < mon.Top + gap) tbY = mon.Top + gap;
+            ClampToolbar(ref tbX, ref tbY, mon);
             Canvas.SetLeft(Toolbar, tbX);
             Canvas.SetTop(Toolbar, tbY);
         }
 
         if (CropActionBar.Visibility == Visibility.Visible)
-            PositionCropActionBar();
+            PositionCropActionBar(mon);
 
-        if (hasOpt) PositionOptionBar();
+        if (hasOpt) PositionOptionBar(mon);
     }
 
-    private void PositionCropActionBar()
+    private void PositionActionBar(WpfRect mon)
     {
         const double gap = 8;
+        ActionBar.UpdateLayout();
+        double abW = ActionBar.ActualWidth;
+        double abH = ActionBar.ActualHeight;
+        if (abW <= 0 || abH <= 0) return;
+
+        bool hasLocalSel = _selDip.Width >= 2 && _selDip.Height >= 2
+            && (_selDip.Width < ActualWidth - 2 || _selDip.Height < ActualHeight - 2);
+
+        double abX, abY;
+        if (hasLocalSel && _mode == CaptureMode.Region)
+        {
+            // Seçimin üst-ortası; sığmazsa seçimin altı; yine de monitör içinde.
+            abX = Math.Round(_selDip.X + (_selDip.Width - abW) / 2);
+            abY = _selDip.Y - abH - gap;
+            if (abY < mon.Top + gap)
+                abY = Math.Min(_selDip.Bottom + gap, mon.Bottom - abH - gap);
+        }
+        else
+        {
+            abX = Math.Round(mon.Left + (mon.Width - abW) / 2);
+            abY = mon.Top + 18;
+        }
+
+        abX = Math.Clamp(abX, mon.Left + gap, Math.Max(mon.Left + gap, mon.Right - abW - gap));
+        abY = Math.Clamp(abY, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - abH - gap));
+        Canvas.SetLeft(ActionBar, abX);
+        Canvas.SetTop(ActionBar, abY);
+    }
+
+    private void PositionCropActionBar(WpfRect? monOpt = null)
+    {
+        const double gap = 8;
+        var mon = monOpt ?? GetUiMonitorDip();
         CropActionBar.UpdateLayout();
         double cbW = CropActionBar.ActualWidth;
         double cbH = CropActionBar.ActualHeight;
         if (Toolbar.Visibility != Visibility.Visible)
         {
-            const double edgeGap = 8;
-            double cx = Math.Round((ActualWidth - cbW) / 2);
-            double cy = 18;
-            if (cx < edgeGap) cx = edgeGap;
-            if (cx + cbW > ActualWidth - edgeGap) cx = ActualWidth - cbW - edgeGap;
-            if (cy + cbH > ActualHeight - edgeGap) cy = Math.Max(edgeGap, ActualHeight - cbH - edgeGap);
-            Canvas.SetLeft(CropActionBar, cx);
-            Canvas.SetTop(CropActionBar, cy);
+            PlaceTopCenterOnMonitor(CropActionBar, mon, topInset: 18);
             return;
         }
 
@@ -2808,40 +2919,40 @@ public partial class CaptureOverlayWindow : Window
 
         double x = tbX + (tbW - cbW) / 2;
         double y = tbY - cbH - gap;
-        if (y < gap) y = tbY + tbH + gap;
-        if (x < gap) x = gap;
-        if (x + cbW > ActualWidth - gap) x = ActualWidth - cbW - gap;
-        if (y + cbH > ActualHeight - gap) y = Math.Max(gap, ActualHeight - cbH - gap);
+        if (y < mon.Top + gap) y = tbY + tbH + gap;
+        x = Math.Clamp(x, mon.Left + gap, Math.Max(mon.Left + gap, mon.Right - cbW - gap));
+        y = Math.Clamp(y, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - cbH - gap));
 
         Canvas.SetLeft(CropActionBar, Math.Round(x));
         Canvas.SetTop(CropActionBar, Math.Round(y));
     }
 
     /// <summary>Seçenek şeridini seçili öğenin (varsa) hemen altına; yoksa makul varsayılana konumlar.</summary>
-    private void PositionOptionBar()
+    private void PositionOptionBar(WpfRect? monOpt = null)
     {
         const double gap = 8;
-        // UpdateLayout sadece boyut henüz ölçülmemişse zorla; sürükleme sırasında AtualWidth geçerli
+        var mon = monOpt ?? GetUiMonitorDip();
+        // UpdateLayout sadece boyut henüz ölçülmemişse zorla; sürükleme sırasında ActualWidth geçerli
         double obW = OptionBar.ActualWidth, obH = OptionBar.ActualHeight;
         if (obW <= 0 || obH <= 0) { OptionBar.UpdateLayout(); obW = OptionBar.ActualWidth; obH = OptionBar.ActualHeight; }
 
-        // Çapa dikdörtgeni: seçili öğe varsa onun ekran kutusu; yoksa serbest=alt-orta, bölge=seçim.
+        // Çapa dikdörtgeni: seçili öğe varsa onun ekran kutusu; yoksa serbest=monitör alt-orta, bölge=seçim.
         WpfRect anchor;
         if (_canvas?.SelectedItem is { } sel)
             anchor = SceneRectToScreen(sel.Bounds);
         else if (_mode == CaptureMode.Free)
-            anchor = new WpfRect((ActualWidth - obW) / 2, ActualHeight - 120, obW, 0);
+            anchor = new WpfRect(mon.Left + (mon.Width - obW) / 2, mon.Bottom - 120, obW, 0);
         else
             anchor = _selDip;
 
         double obX = anchor.Left + (anchor.Width - obW) / 2;   // öğe altında ortalı
         double obY = anchor.Bottom + gap;
 
-        // Ekrana sığdır
-        if (obX < gap) obX = gap;
-        if (obX + obW > ActualWidth - gap) obX = ActualWidth - obW - gap;
-        if (obY + obH > ActualHeight - gap) obY = anchor.Top - gap - obH;  // alta sığmazsa üste
-        if (obY < gap) obY = gap;
+        // Hedef monitöre sığdır
+        if (obX < mon.Left + gap) obX = mon.Left + gap;
+        if (obX + obW > mon.Right - gap) obX = mon.Right - obW - gap;
+        if (obY + obH > mon.Bottom - gap) obY = anchor.Top - gap - obH;  // alta sığmazsa üste
+        if (obY < mon.Top + gap) obY = mon.Top + gap;
 
         // Araç çubuğuyla çakışırsa sola kaydır
         var tbRect = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), Toolbar.ActualWidth, Toolbar.ActualHeight);
@@ -2849,7 +2960,7 @@ public partial class CaptureOverlayWindow : Window
         if (tbRect.IntersectsWith(obRect))
         {
             double alt = tbRect.Left - gap - obW;
-            if (alt >= gap) obX = alt;
+            if (alt >= mon.Left + gap) obX = alt;
         }
 
         Canvas.SetLeft(OptionBar, obX);
@@ -3059,8 +3170,10 @@ public partial class CaptureOverlayWindow : Window
     private void PositionToastBanner()
     {
         ToastBanner.UpdateLayout();
-        Canvas.SetLeft(ToastBanner, Math.Round((ActualWidth - ToastBanner.ActualWidth) / 2));
-        Canvas.SetTop(ToastBanner, Math.Round(ActualHeight - ToastBanner.ActualHeight - 28));
+        var mon = GetUiMonitorDip();
+        double w = ToastBanner.ActualWidth, h = ToastBanner.ActualHeight;
+        Canvas.SetLeft(ToastBanner, Math.Round(mon.Left + (mon.Width - w) / 2));
+        Canvas.SetTop(ToastBanner, Math.Round(mon.Bottom - h - 28));
     }
 
     private async void ShowToast(string message, int ms = 1600)
