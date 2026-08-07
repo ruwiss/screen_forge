@@ -231,7 +231,11 @@ public partial class CaptureOverlayWindow : Window
         }
         else if (_canvas != null && _canvas.Tool != EditorTool.Select)
         {
-            _canvas.Tool = EditorTool.Select;
+            // Sticky araç: 1. Esc soft-select temizler, 2. Esc Select'e döner.
+            if (_canvas.Selection.Count > 0)
+                _canvas.ClearSelection();
+            else
+                _canvas.Tool = EditorTool.Select;
             e.Handled = true;
         }
         else
@@ -1107,7 +1111,10 @@ public partial class CaptureOverlayWindow : Window
                 IsChecked = tool == (_canvas?.Tool ?? EditorTool.Select),
             };
             btn.Click += (_, _) => { if (_canvas != null) _canvas.Tool = tool; };
-            AttachHint(btn, $"{name}  [{key}]");
+            string stickyHint = tool == EditorTool.Select
+                ? $"{name}  [{key}]"
+                : $"{name}  [{key}]  · sticky · Esc: seçimi kaldır · V: seçim aracı";
+            AttachHint(btn, stickyHint);
             _toolButtons[tool] = btn;
             ToolStack.Children.Add(btn);
         }
@@ -1364,6 +1371,21 @@ public partial class CaptureOverlayWindow : Window
             {
                 foreach (var s in all) if (s is BlurItem bi) bi.Pixelate = b;
                 style.BlurPixelate = b; _scene?.RaiseChanged();
+            });
+        }
+
+        // Opaklık (0–100 sayı) — seçili bileşen(ler) veya aktif çizim aracı default'u
+        if (hasSelection || tool is not EditorTool.Select)
+        {
+            AddSep();
+            double curOpacityPct = (hasSelection ? sel!.Opacity : (float)style.Opacity) * 100.0;
+            AddOpacityNumber(curOpacityPct, pct =>
+            {
+                float op = (float)Math.Clamp(pct / 100.0, 0, 1);
+                foreach (var s in all)
+                    s.Opacity = op;
+                style.Opacity = op;
+                _scene?.RaiseChanged();
             });
         }
 
@@ -2106,6 +2128,97 @@ public partial class CaptureOverlayWindow : Window
         s.ValueChanged += (_, e) => { onChange(e.NewValue); valLabel.Text = ((int)Math.Round(e.NewValue)).ToString(); };
         OptionStack.Children.Add(s);
         OptionStack.Children.Add(valLabel);
+    }
+
+    /// <summary>Opacity 0–100 sayı kutusu (slider yok).</summary>
+    private void AddOpacityNumber(double percent, Action<double> onChange)
+    {
+        var muted = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x9A, 0xA4, 0xB8));
+        OptionStack.Children.Add(new TextBlock
+        {
+            Text = "Op",
+            Foreground = muted,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(2, 0, 3, 0),
+        });
+
+        int display = (int)Math.Round(Math.Clamp(percent, 0, 100));
+        var box = new TextBox
+        {
+            Text = display.ToString(),
+            Width = 36,
+            Height = 24,
+            FontSize = 11,
+            Padding = new Thickness(4, 2, 2, 2),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 1, 0),
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1A, 0x1D, 0x26)),
+            Foreground = System.Windows.Media.Brushes.White,
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3A, 0x42, 0x54)),
+            BorderThickness = new Thickness(1),
+            CaretBrush = System.Windows.Media.Brushes.White,
+            MaxLength = 3,
+        };
+
+        void Apply()
+        {
+            string raw = box.Text.Trim().TrimEnd('%');
+            if (!int.TryParse(raw, out int v))
+            {
+                box.Text = display.ToString();
+                return;
+            }
+            v = Math.Clamp(v, 0, 100);
+            display = v;
+            box.Text = v.ToString();
+            onChange(v);
+        }
+
+        box.PreviewTextInput += (_, e) =>
+        {
+            e.Handled = e.Text.Any(ch => !char.IsDigit(ch));
+        };
+        System.Windows.DataObject.AddPastingHandler(box, (_, e) =>
+        {
+            if (e.DataObject.GetDataPresent(System.Windows.DataFormats.Text))
+            {
+                string t = (e.DataObject.GetData(System.Windows.DataFormats.Text) as string ?? "").Trim();
+                if (t.Length == 0 || t.Any(ch => !char.IsDigit(ch)))
+                    e.CancelCommand();
+            }
+            else e.CancelCommand();
+        });
+        box.LostKeyboardFocus += (_, _) => Apply();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                Apply();
+                // Odak tuvalde kalsın — kısayollar bozulmasın
+                _canvas?.Focus();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                box.Text = display.ToString();
+                _canvas?.Focus();
+                e.Handled = true;
+            }
+        };
+
+        OptionStack.Children.Add(box);
+        OptionStack.Children.Add(new TextBlock
+        {
+            Text = "%",
+            Foreground = muted,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 2, 0),
+        });
+        AttachHint(box, "Opaklık (0–100)");
     }
 
     private static readonly string[] Fonts = { "Segoe UI", "Arial", "Calibri", "Consolas", "Comic Sans MS", "Georgia", "Impact", "Verdana" };

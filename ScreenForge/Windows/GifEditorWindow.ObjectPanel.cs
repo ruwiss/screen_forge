@@ -208,14 +208,58 @@ public sealed partial class GifEditorWindow
 
     private void AddOpacityControl(List<SceneItem> items)
     {
-        AddLabel("Saydamlık");
-        AddSlider(10, 100, items[0].Opacity * 100, value =>
+        AddLabel("Opaklık %");
+        int display = (int)Math.Round(Math.Clamp(items[0].Opacity * 100f, 0f, 100f));
+        var box = new TextBox
         {
-            foreach (var item in items)
-                item.Opacity = (float)(value / 100.0);
+            Text = display.ToString(),
+            Width = 48,
+            Height = 26,
+            MaxLength = 3,
+            Margin = new Thickness(0, 0, 4, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Right,
+            Style = TryFindResource("EditorTextBox") as Style,
+        };
 
+        void Apply()
+        {
+            string raw = box.Text.Trim().TrimEnd('%');
+            if (!int.TryParse(raw, out int v))
+            {
+                box.Text = display.ToString();
+                return;
+            }
+            v = Math.Clamp(v, 0, 100);
+            display = v;
+            box.Text = v.ToString();
+            float op = v / 100f;
+            foreach (var item in items)
+                item.Opacity = op;
+            _toolStyle.Opacity = op;
             CommitObjectChange();
-        });
+        }
+
+        box.PreviewTextInput += (_, e) =>
+        {
+            e.Handled = e.Text.Any(ch => !char.IsDigit(ch));
+        };
+        box.LostKeyboardFocus += (_, _) => Apply();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                Apply();
+                e.Handled = true;
+            }
+            else if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                box.Text = display.ToString();
+                e.Handled = true;
+            }
+        };
+
+        ObjectPropertyPanel.Children.Add(box);
     }
 
     private void AddOrderControls()

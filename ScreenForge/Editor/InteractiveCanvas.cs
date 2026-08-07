@@ -40,6 +40,7 @@ public sealed class InteractiveCanvas : SKElement
         get => _tool;
         set
         {
+            var prev = _tool;
             _tool = value;
             // Araç değişince yarım kalan çizim/etkileşimi temizle (aksi halde fare yakalı kalıp
             // araç çubuğu tıklamalarını bloke edebilir).
@@ -48,7 +49,12 @@ public sealed class InteractiveCanvas : SKElement
             _moving = false;
             _activeHandle = -1;
             if (IsMouseCaptured) ReleaseMouseCapture();
-            if (_tool != EditorTool.Select) ClearSelection();
+            // Sticky araçlar: create sonrası soft-select kalır.
+            // Seçim yalnızca farklı bir çizim aracına geçerken temizlenir.
+            // Select'e geçişte soft-select → tam seçim (tutamaçlar) olur; seçim korunur.
+            // Aynı araca tekrar atamada soft-select bozulmaz.
+            if (value != EditorTool.Select && value != prev)
+                ClearSelection();
             InvalidateVisual();
             ToolChanged?.Invoke();
         }
@@ -315,6 +321,19 @@ public sealed class InteractiveCanvas : SKElement
             // Marquee (sürükle-kutu)
             if (_marqueeActive)
                 DrawMarquee(canvas, scale);
+        }
+        else if (SelectedItem != null)
+        {
+            // Sticky soft-select: tam tutamaçlar (resize/rotate/move) — yeni çizim boş alandan.
+            if (Selection.Count > 1)
+            {
+                foreach (var it in Selection) DrawItemOutline(canvas, it.Bounds, scale);
+                DrawHandles(canvas, SelectionBounds(), scale);
+            }
+            else
+            {
+                DrawSelection(canvas, SelectedItem, scale);
+            }
         }
 
         canvas.Restore();
@@ -609,47 +628,9 @@ public sealed class InteractiveCanvas : SKElement
                     return;
                 }
             }
-            else if (SelectedItem != null)
+            else if (TryBeginSingleSelectionEdit(p))
             {
-                // Ok bend tutamacı (handle 8)
-                if (SelectedItem is ArrowItem arrowHit)
-                {
-                    float bendTol = 10f / _scale;
-                    if (SKPoint.Distance(p, arrowHit.BendHandlePos) <= bendTol)
-                    {
-                        _activeHandle = 8;
-                        _beforeState = SelectedItem.Clone();
-                        return;
-                    }
-                }
-                // Rotation tutamacı (handle 10)
-                {
-                    float rotTol = 10f / _scale;
-                    var rotPos = RotationHandlePos(SelectedItem, _scale);
-                    if (SKPoint.Distance(p, rotPos) <= rotTol)
-                    { _activeHandle = 10; _beforeState = SelectedItem.Clone(); return; }
-                }
-                // Corner radius tutamacı (handle 9)
-                {
-                    float cr = -1f;
-                    SKRect crBounds = default;
-                    if (SelectedItem is RectItem rectHit) { cr = rectHit.CornerRadius; crBounds = rectHit.Bounds; }
-                    else if (SelectedItem is TextItem textHit && textHit.Ribbon) { cr = textHit.RibbonRadius; crBounds = textHit.Bounds; }
-                    if (cr >= 0)
-                    {
-                        float crTol = 11f / _scale;
-                        var crPt = CornerRadiusHandlePoint(crBounds, _scale);
-                        if (SKPoint.Distance(p, crPt) <= crTol)
-                        { _activeHandle = 9; _beforeState = SelectedItem.Clone(); return; }
-                    }
-                }
-                // Tek öğe tutamacı
-                _activeHandle = HitHandle(p);
-                if (_activeHandle >= 0)
-                {
-                    _beforeState = SelectedItem.Clone();
-                    return;
-                }
+                return;
             }
 
             var hit = Scene.HitTest(p);
@@ -688,9 +669,81 @@ public sealed class InteractiveCanvas : SKElement
             return;
         }
 
+        // Sticky soft-select: tutamaç / gövde → düzenle; boş alan → yeni çizim.
+        if (TryBeginSingleSelectionEdit(p))
+            return;
+
         // Araç ile yeni öğe oluştur
         BeginDraft(p);
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Soft-select / tek seçim: tutamaç, döndürme, köşe yarıçapı, gövde taşıma.
+    /// Başarılı olursa etkileşim bayraklarını ayarlar.
+    /// </summary>
+    private bool TryBeginSingleSelectionEdit(SKPoint p)
+    {
+        if (SelectedItem == null || Selection.Count != 1) return false;
+
+        // Ok bend tutamacı (handle 8)
+        if (SelectedItem is ArrowItem arrowHit)
+        {
+            float bendTol = 10f / _scale;
+            if (SKPoint.Distance(p, arrowHit.BendHandlePos) <= bendTol)
+            {
+                _activeHandle = 8;
+                _beforeState = SelectedItem.Clone();
+                return true;
+            }
+        }
+        // Rotation tutamacı (handle 10)
+        {
+            float rotTol = 10f / _scale;
+            var rotPos = RotationHandlePos(SelectedItem, _scale);
+            if (SKPoint.Distance(p, rotPos) <= rotTol)
+            {
+                _activeHandle = 10;
+                _beforeState = SelectedItem.Clone();
+                return true;
+            }
+        }
+        // Corner radius tutamacı (handle 9)
+        {
+            float cr = -1f;
+            SKRect crBounds = default;
+            if (SelectedItem is RectItem rectHit) { cr = rectHit.CornerRadius; crBounds = rectHit.Bounds; }
+            else if (SelectedItem is TextItem textHit && textHit.Ribbon) { cr = textHit.RibbonRadius; crBounds = textHit.Bounds; }
+            if (cr >= 0)
+            {
+                float crTol = 11f / _scale;
+                var crPt = CornerRadiusHandlePoint(crBounds, _scale);
+                if (SKPoint.Distance(p, crPt) <= crTol)
+                {
+                    _activeHandle = 9;
+                    _beforeState = SelectedItem.Clone();
+                    return true;
+                }
+            }
+        }
+        // Boyutlandırma tutamaçları
+        _activeHandle = HitHandle(p);
+        if (_activeHandle >= 0)
+        {
+            _beforeState = SelectedItem.Clone();
+            return true;
+        }
+
+        // Gövde: hit-test veya bounds (stroke-only şekillerde bounds daha cömert)
+        if (SelectedItem.HitTest(p) || SelectedItem.Bounds.Contains(p.X, p.Y))
+        {
+            _moving = true;
+            _beforeStates = Selection.Select(s => s.Clone()).ToList();
+            InvalidateVisual();
+            return true;
+        }
+
+        return false;
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -736,9 +789,12 @@ public sealed class InteractiveCanvas : SKElement
             return;
         }
 
-        if (_tool == EditorTool.Select)
+        // Select modu veya sticky soft-select düzenlemesi (resize/move)
+        bool selectionDrag = _tool == EditorTool.Select
+            || _activeHandle >= 0 || _moving || _groupResize;
+        if (selectionDrag)
         {
-            if (_marqueeActive)
+            if (_tool == EditorTool.Select && _marqueeActive)
             {
                 _marqueeCur = p;
             }
@@ -814,23 +870,25 @@ public sealed class InteractiveCanvas : SKElement
 
         if (IsCropping) { _activeHandle = -1; return; }
 
-        if (_tool == EditorTool.Select)
+        // Select marquee yalnızca Select araçta
+        if (_tool == EditorTool.Select && _marqueeActive)
         {
-            if (_marqueeActive)
-            {
-                _marqueeActive = false;
-                var box = new SKRect(Math.Min(_dragStart.X, p.X), Math.Min(_dragStart.Y, p.Y),
-                                     Math.Max(_dragStart.X, p.X), Math.Max(_dragStart.Y, p.Y));
-                // Süzgeç burada da geçerli; görünmeyen öğeler kement seçimine girmemeli.
-                var inside = Scene.Items
-                    .Where(it => Scene.HitFilter == null || Scene.HitFilter(it))
-                    .Where(it => box.Contains(it.Bounds) || box.IntersectsWith(it.Bounds))
-                    .ToList();
-                SetSelection(inside);
-                InvalidateVisual();
-                return;
-            }
+            _marqueeActive = false;
+            var box = new SKRect(Math.Min(_dragStart.X, p.X), Math.Min(_dragStart.Y, p.Y),
+                                 Math.Max(_dragStart.X, p.X), Math.Max(_dragStart.Y, p.Y));
+            // Süzgeç burada da geçerli; görünmeyen öğeler kement seçimine girmemeli.
+            var inside = Scene.Items
+                .Where(it => Scene.HitFilter == null || Scene.HitFilter(it))
+                .Where(it => box.Contains(it.Bounds) || box.IntersectsWith(it.Bounds))
+                .ToList();
+            SetSelection(inside);
+            InvalidateVisual();
+            return;
+        }
 
+        // Select veya sticky soft-select: resize/move/rotate commit
+        if (_groupResize || _activeHandle >= 0 || _moving)
+        {
             if (_groupResize)
             {
                 CommitGroupModify();
@@ -853,6 +911,9 @@ public sealed class InteractiveCanvas : SKElement
             _activeHandle = -1; _moving = false; _beforeState = null; _beforeStates = new();
             return;
         }
+
+        if (_tool == EditorTool.Select)
+            return;
 
         CommitDraft(p);
     }
@@ -906,6 +967,8 @@ public sealed class InteractiveCanvas : SKElement
     // ===================== Taslak oluşturma =====================
     private void BeginDraft(SKPoint p)
     {
+        // Yeni çizim başlarken soft-select düşer; option bar tool default'larına döner.
+        ClearSelection();
         switch (_tool)
         {
             case EditorTool.Rectangle:
@@ -930,7 +993,13 @@ public sealed class InteractiveCanvas : SKElement
                 hl.AddPoint(p); _draftItem = hl;
                 break;
             case EditorTool.Blur:
-                _draftItem = new BlurItem { Bounds = new SKRect(p.X, p.Y, p.X, p.Y), Strength = (float)ToolStyle.BlurStrength, Pixelate = ToolStyle.BlurPixelate };
+                _draftItem = new BlurItem
+                {
+                    Bounds = new SKRect(p.X, p.Y, p.X, p.Y),
+                    Strength = (float)ToolStyle.BlurStrength,
+                    Pixelate = ToolStyle.BlurPixelate,
+                    Opacity = (float)ToolStyle.Opacity,
+                };
                 break;
             case EditorTool.Text:
                 CreateTextAt(p);
@@ -986,17 +1055,9 @@ public sealed class InteractiveCanvas : SKElement
         {
             var item = _draftItem;
             Scene.Apply(new AddItemAction(item));
-            // Dörtgen/Daire/Çizgi/Ok/Blur: Select'e geç + öğeyi seç (resize edilebilsin).
-            // Diğerleri (Kalem/Highlight): araç aktif kalır → çoklu kullanım.
-            if (_tool is EditorTool.Rectangle or EditorTool.Ellipse or EditorTool.Line or EditorTool.Arrow or EditorTool.Blur)
-            {
-                Tool = EditorTool.Select;
-                SetSelection(item);
-            }
-            else
-            {
-                ClearSelection();
-            }
+            // Sticky tool: araç aktif kalır (üst üste hızlı ekleme).
+            // Soft-select + tutamaçlar: option bar ve resize/move doğrudan kullanılabilir.
+            SetSelection(item);
         }
         _draftItem = null;
         InvalidateVisual();
@@ -1020,8 +1081,9 @@ public sealed class InteractiveCanvas : SKElement
             StrokeColor = ColorFromHex(ToolStyle.TextColor),
             TextAlignment = ToolStyle.TextAlignment,
         };
+        t.Opacity = (float)ToolStyle.Opacity;
         Scene.Apply(new AddItemAction(t));
-        Tool = EditorTool.Select;
+        // Sticky Text: düzenleme bittikten sonra tekrar tıklayınca yeni metin.
         SetSelection(t);
         TextEditRequested?.Invoke(t);
     }
@@ -1036,11 +1098,12 @@ public sealed class InteractiveCanvas : SKElement
             BadgeColor = ColorFromHex(ToolStyle.StepColor),
             NumberColor = ColorFromHex(ToolStyle.StepTextColor),
             Diameter = (float)ToolStyle.StepSize,
+            Opacity = (float)ToolStyle.Opacity,
         };
         s.SyncBounds();
         Scene.Apply(new AddItemAction(s));
-        // Step araçı aktif kalır (çoklu kullanım); seçim yok.
-        ClearSelection();
+        // Sticky step + soft-select (renk/şekil/boyut option bar'dan ayarlanır).
+        SetSelection(s);
         InvalidateVisual();
     }
 
@@ -1562,7 +1625,12 @@ public sealed class InteractiveCanvas : SKElement
             return;
         }
 
-        if (_tool != EditorTool.Select) { SetCursor(Cursors.Cross); return; }
+        // Sticky soft-select: seçili öğe üzerinde de tutamaç imleçleri göster.
+        if (_tool != EditorTool.Select && SelectedItem == null)
+        {
+            SetCursor(Cursors.Cross);
+            return;
+        }
 
         if (SelectedItem != null)
         {
@@ -1592,8 +1660,16 @@ public sealed class InteractiveCanvas : SKElement
 
                 int h = HitHandle(p);
                 if (h >= 0) { SetCursor(h is 0 or 4 ? Cursors.SizeNWSE : h is 2 or 6 ? Cursors.SizeNESW : h is 1 or 5 ? Cursors.SizeNS : Cursors.SizeWE); return; }
-                if (SelectedItem.Bounds.Contains(p.X, p.Y)) { SetCursor(Cursors.SizeAll); return; }
+                if (SelectedItem.Bounds.Contains(p.X, p.Y) || SelectedItem.HitTest(p))
+                { SetCursor(Cursors.SizeAll); return; }
             }
+        }
+
+        // Sticky çizim aracı: boş alan = yeni çizim imleci
+        if (_tool != EditorTool.Select)
+        {
+            SetCursor(Cursors.Cross);
+            return;
         }
 
         SetCursor(Scene.HitTest(p) != null ? Cursors.SizeAll : Cursors.Arrow);

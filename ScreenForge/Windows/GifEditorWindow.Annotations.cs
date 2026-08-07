@@ -132,8 +132,8 @@ public sealed partial class GifEditorWindow
         SetStatus(tool switch
         {
             EditorTool.Select => "Seç — nesneyi sürükleyin, kenarlarından boyutlandırın",
-            EditorTool.Text => "Metin — eklemek istediğiniz yere tıklayın",
-            _ => $"{ToolName(tool)} — sürükleyerek çizin",
+            EditorTool.Text => "Metin — tıklayın · araç sticky kalır · V = seçim",
+            _ => $"{ToolName(tool)} — sürükleyerek çizin · sticky · V = seçim",
         });
     }
 
@@ -970,7 +970,13 @@ public sealed partial class GifEditorWindow
                 return TryDuplicateAnnotationSelection();
 
             case Key.Escape:
-                canvas.ClearSelection();
+                // Sticky araç: soft-select varsa temizle; yoksa Select'e dön.
+                if (canvas.Selection.Count > 0)
+                    canvas.ClearSelection();
+                else if (canvas.Tool != EditorTool.Select)
+                    SelectTool(EditorTool.Select);
+                else
+                    canvas.ClearSelection();
                 return true;
 
             case Key.Left or Key.Right or Key.Up or Key.Down when !ctrl:
