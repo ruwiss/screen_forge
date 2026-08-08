@@ -11,8 +11,40 @@ public sealed class Scene
     /// <summary>Öğeler, çizim sırası = z-sıra (son = en üstte).</summary>
     public List<SceneItem> Items { get; } = new();
 
+    private SKBitmap? _background;
+    private SKImage? _backgroundImage;
+
     /// <summary>Tek arka plan görüntüsü (bölge/tam ekran editörü). Kolajda null olabilir.</summary>
-    public SKBitmap? Background { get; set; }
+    public SKBitmap? Background
+    {
+        get => _background;
+        set
+        {
+            if (ReferenceEquals(_background, value)) return;
+            _backgroundImage?.Dispose();
+            _backgroundImage = null;
+            _background = value;
+        }
+    }
+
+    /// <summary>
+    /// Arka plan için önbelleklenmiş SKImage — her paint'te FromBitmap yapmayı önler
+    /// (sürükleme sırasında donma/crash). Scene başına; statik değil.
+    /// </summary>
+    internal SKImage? GetBackgroundImage()
+    {
+        if (_background == null) return null;
+        try
+        {
+            if (_background.IsEmpty) return null;
+            return _backgroundImage ??= SKImage.FromBitmap(_background);
+        }
+        catch
+        {
+            _backgroundImage = null;
+            return null;
+        }
+    }
 
     /// <summary>Arka plan boş olduğunda kullanılan tuval boyutu (kolaj).</summary>
     public SKSize CanvasSize { get; set; }
@@ -56,15 +88,27 @@ public sealed class Scene
 
     public event Action? Changed;
 
+    /// <summary>
+    /// İçerik nesli: blur snapshot önbelleğini geçersiz kılmak için artar.
+    /// Apply / Undo / Redo / RaiseChanged yollarında güncellenir.
+    /// </summary>
+    public int ContentVersion { get; private set; }
+
     /// <summary>Undo/Redo sonrası hangi öğelerin seçili olması gerektiğini bildirir (boş = seçimi temizle).</summary>
     public event Action<IReadOnlyList<SceneItem>>? SelectionRestore;
+
+    private void NotifyChanged()
+    {
+        ContentVersion++;
+        Changed?.Invoke();
+    }
 
     public void Apply(IUndoableAction action)
     {
         action.Do(this);
         _undo.Push(action);
         _redo.Clear();
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     public void Undo()
@@ -73,7 +117,7 @@ public sealed class Scene
         var a = _undo.Pop();
         a.Undo(this);
         _redo.Push(a);
-        Changed?.Invoke();
+        NotifyChanged();
         SelectionRestore?.Invoke(a.SelectAfterUndo(this));
     }
 
@@ -83,11 +127,11 @@ public sealed class Scene
         var a = _redo.Pop();
         a.Do(this);
         _undo.Push(a);
-        Changed?.Invoke();
+        NotifyChanged();
         SelectionRestore?.Invoke(a.SelectAfterDo(this));
     }
 
-    public void RaiseChanged() => Changed?.Invoke();
+    public void RaiseChanged() => NotifyChanged();
 
     // ---- Z-sıra işlemleri ----
     public void BringToFront(SceneItem item)

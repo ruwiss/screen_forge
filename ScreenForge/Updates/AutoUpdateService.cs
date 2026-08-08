@@ -43,7 +43,8 @@ public static class AutoUpdateService
             if (manager.UpdatePendingRestart is { } pending)
             {
                 WriteLog($"Bekleyen güncelleme uygulanacak. Version={pending.Version}");
-                notify("Güncelleme hazır", "ScreenForge güncellemesi uygulanıyor.");
+                // Ara bildirim yok — yalnızca tek final bildirim.
+                notify("Uygulama güncellendi", $"ScreenForge {pending.Version} yüklendi.");
                 await ApplyAndRestartAsync(manager, pending, shutdown);
                 return;
             }
@@ -56,11 +57,12 @@ public static class AutoUpdateService
             }
 
             WriteLog($"Güncelleme bulundu. TargetVersion={update.TargetFullRelease.Version}");
-            notify("Güncelleme bulundu", "Yeni ScreenForge sürümü indiriliyor.");
+            // İndirme/hazırlık sessiz — kullanıcıyı spam'leme.
             await manager.DownloadUpdatesAsync(update);
 
             WriteLog("Güncelleme indirildi. Yeniden başlatma hazırlanıyor.");
-            notify("Güncelleme hazır", "ScreenForge yeniden başlatılıp güncellenecek.");
+            notify("Uygulama güncellendi",
+                $"ScreenForge {update.TargetFullRelease.Version} yüklendi.");
             await ApplyAndRestartAsync(manager, update.TargetFullRelease, shutdown);
         }
         catch (Exception ex)

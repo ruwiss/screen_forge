@@ -214,7 +214,8 @@ public sealed partial class GifEditorWindow : Window
 
         // İlk sığdırma yerleşim tamamlandıktan sonra yapılmalı; aksi hâlde
         // görüntü alanı henüz 0 olduğu için ölçek hesaplanamaz.
-        Loaded += (_, _) => Dispatcher.BeginInvoke(ZoomToFit, DispatcherPriority.Loaded);
+        // BeginInvoke(method, priority) params-args tuzağına düşmesin (TargetParameterCountException).
+        Loaded += (_, _) => Dispatcher.BeginInvoke(() => ZoomToFit(), DispatcherPriority.Loaded);
 
         CropCanvas.MouseLeftButtonDown += OnCropMouseDown;
         CropCanvas.MouseMove += OnCropMouseMove;

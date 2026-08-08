@@ -65,7 +65,10 @@ public sealed class AppSettings
                 var json = File.ReadAllText(SettingsPath);
                 var loaded = Deserialize(json);
                 if (loaded != null)
+                {
+                    loaded.Normalize();
                     return loaded;
+                }
             }
         }
         catch
@@ -79,10 +82,18 @@ public sealed class AppSettings
     internal static AppSettings? Deserialize(string json)
         => JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
 
+    /// <summary>Eski kayıtlardan gelen ve artık kalıcı olmayan alanları sıfırlar.</summary>
+    public void Normalize()
+    {
+        // Opacity kaydedilmez; her oturumda varsayılan %100.
+        ToolStyles.Opacity = 1.0;
+    }
+
     public void Save()
     {
         try
         {
+            Normalize();
             Directory.CreateDirectory(SettingsDirectory);
             var json = JsonSerializer.Serialize(this, JsonOptions);
             File.WriteAllText(SettingsPath, json);
@@ -200,6 +211,7 @@ public sealed class ToolStyleMemory
     public string FillColor { get; set; } = "#00000000";     // şeffaf (varsayılan boş)
     public string FreeBackgroundColor { get; set; } = "#FF1F2430";
     public double StrokeWidth { get; set; } = 4;
+    /// <summary>Kullanılmıyor (geriye dönük JSON uyumu). Her zaman 1.0 sayılır; kaydedilmez.</summary>
     public double Opacity { get; set; } = 1.0;
 
     // Ok başı boyut çarpanı (kalınlıktan bağımsız)

@@ -279,6 +279,23 @@ public sealed class InteractiveCanvas : SKElement
     protected override void OnPaintSurface(SKPaintSurfaceEventArgs e)
     {
         if (e.Info.Width <= 0 || e.Info.Height <= 0) return;
+        try
+        {
+            PaintSurfaceCore(e);
+        }
+        catch
+        {
+            // Skia native AV yakalanamaz; yönetilen hatalarda en azından süreci öldürme.
+            try
+            {
+                e.Surface.Canvas.Clear(new SKColor(0x16, 0x1A, 0x22));
+            }
+            catch { /* ignore */ }
+        }
+    }
+
+    private void PaintSurfaceCore(SKPaintSurfaceEventArgs e)
+    {
         var canvas = e.Surface.Canvas;
 
         // Katman olarak kullanıldığında alttaki görüntü görünmeye devam etmeli.
@@ -291,8 +308,8 @@ public sealed class InteractiveCanvas : SKElement
         canvas.Translate(offset.X, offset.Y);
         canvas.Scale(scale);
 
-        bool dragging = _interacting && (_moving || _activeHandle >= 0 || _marqueeActive || _draftItem != null);
-        SceneRenderer.RenderContent(canvas, Scene, skipBlurSnapshot: dragging);
+        // Paint yolu blur pişirmez — yalnızca DrawImage (ImageItem gibi).
+        SceneRenderer.RenderContent(canvas, Scene);
 
         // Taslak (oluşturulan) öğe
         _draftItem?.Render(canvas);
@@ -625,6 +642,7 @@ public sealed class InteractiveCanvas : SKElement
                     _activeHandle = gh;
                     _groupStartBounds = SelectionBounds();
                     _beforeStates = Selection.Select(s => s.Clone()).ToList();
+                    BeginBlurDragPreview();
                     return;
                 }
             }
@@ -648,6 +666,7 @@ public sealed class InteractiveCanvas : SKElement
                 if (!Selection.Contains(hit)) SetSelection(hit);
                 _moving = true;
                 _beforeStates = Selection.Select(s => s.Clone()).ToList();
+                BeginBlurDragPreview();
                 InvalidateVisual();
                 return;
             }
@@ -657,6 +676,7 @@ public sealed class InteractiveCanvas : SKElement
             {
                 _moving = true;
                 _beforeStates = Selection.Select(s => s.Clone()).ToList();
+                BeginBlurDragPreview();
                 InvalidateVisual();
                 return;
             }
@@ -731,6 +751,7 @@ public sealed class InteractiveCanvas : SKElement
         if (_activeHandle >= 0)
         {
             _beforeState = SelectedItem.Clone();
+            BeginBlurDragPreview();
             return true;
         }
 
@@ -739,11 +760,27 @@ public sealed class InteractiveCanvas : SKElement
         {
             _moving = true;
             _beforeStates = Selection.Select(s => s.Clone()).ToList();
+            BeginBlurDragPreview();
             InvalidateVisual();
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>Seçili blur'larda sürükleme cam önizlemesini açar.</summary>
+    private void BeginBlurDragPreview()
+    {
+        foreach (var s in Selection)
+            if (s is BlurItem b) b.DragPreview = true;
+    }
+
+    private void EndBlurDragPreview()
+    {
+        foreach (var s in Selection)
+            if (s is BlurItem b) b.DragPreview = false;
+        foreach (var it in Scene.Items)
+            if (it is BlurItem b) b.DragPreview = false;
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -889,10 +926,18 @@ public sealed class InteractiveCanvas : SKElement
         // Select veya sticky soft-select: resize/move/rotate commit
         if (_groupResize || _activeHandle >= 0 || _moving)
         {
+            // Blur: cam önizlemeyi kapat, bırakınca yeniden bake.
+            EndBlurDragPreview();
+            if (SelectedItem is BlurItem biDirty)
+                biDirty.NeedsBake = true;
+            foreach (var s in Selection)
+                if (s is BlurItem b) b.NeedsBake = true;
+
             if (_groupResize)
             {
                 CommitGroupModify();
                 _groupResize = false; _activeHandle = -1;
+                // Apply → OnSceneChanged → BakeDirtyBlurs (!_interacting)
                 return;
             }
 
@@ -998,7 +1043,7 @@ public sealed class InteractiveCanvas : SKElement
                     Bounds = new SKRect(p.X, p.Y, p.X, p.Y),
                     Strength = (float)ToolStyle.BlurStrength,
                     Pixelate = ToolStyle.BlurPixelate,
-                    Opacity = (float)ToolStyle.Opacity,
+                    Opacity = 1f, // opaklık kalıcı değil; her yeni öğe %100
                 };
                 break;
             case EditorTool.Text:
@@ -1038,6 +1083,8 @@ public sealed class InteractiveCanvas : SKElement
                     dRight = dLeft + side; dBottom = dTop + side;
                 }
                 _draftItem.Bounds = new SKRect(dLeft, dTop, dRight, dBottom);
+                // Taslak blur: sürüklerken snapshot YOK (placeholder).
+                // Her mouse-move'da allocate/dispose native crash + donma yapıyordu.
                 break;
         }
     }
@@ -1081,7 +1128,7 @@ public sealed class InteractiveCanvas : SKElement
             StrokeColor = ColorFromHex(ToolStyle.TextColor),
             TextAlignment = ToolStyle.TextAlignment,
         };
-        t.Opacity = (float)ToolStyle.Opacity;
+        t.Opacity = 1f; // opaklık ayarı kaydedilmez; her yeni öğe %100
         Scene.Apply(new AddItemAction(t));
         // Sticky Text: düzenleme bittikten sonra tekrar tıklayınca yeni metin.
         SetSelection(t);
@@ -1098,7 +1145,7 @@ public sealed class InteractiveCanvas : SKElement
             BadgeColor = ColorFromHex(ToolStyle.StepColor),
             NumberColor = ColorFromHex(ToolStyle.StepTextColor),
             Diameter = (float)ToolStyle.StepSize,
-            Opacity = (float)ToolStyle.Opacity,
+            Opacity = 1f,
         };
         s.SyncBounds();
         Scene.Apply(new AddItemAction(s));
@@ -1112,7 +1159,7 @@ public sealed class InteractiveCanvas : SKElement
         item.StrokeColor = ColorFromHex(ToolStyle.StrokeColor);
         item.FillColor = ColorFromHex(ToolStyle.FillColor);
         item.StrokeWidth = (float)ToolStyle.StrokeWidth;
-        item.Opacity = (float)ToolStyle.Opacity;
+        item.Opacity = 1f; // ToolStyle.Opacity kalıcı değil
         return item;
     }
 
@@ -1309,6 +1356,9 @@ public sealed class InteractiveCanvas : SKElement
     private void OnSceneChanged()
     {
         PruneSelection();
+        // Sürükleme sırasında asla bake etme — yalnızca commit sonrası (NeedsBake).
+        if (!_interacting)
+            SceneRenderer.BakeDirtyBlurs(Scene);
         InvalidateVisual();
     }
 

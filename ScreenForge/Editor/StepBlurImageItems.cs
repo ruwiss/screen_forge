@@ -12,7 +12,7 @@ public sealed class StepItem : SceneItem
     public SKColor NumberColor { get; set; } = SKColors.White;
     public float Diameter { get; set; } = 32f;
 
-    public SKPoint Position { get; set; } // merkez
+    public SKPoint Position { get; set; }
 
     private static SKTypeface? _cachedTypeface;
     private static SKTypeface StepTypeface =>
@@ -50,7 +50,6 @@ public sealed class StepItem : SceneItem
             case StepShape.Bubble:
                 var bub = new SKRect(Position.X - r, Position.Y - r, Position.X + r, Position.Y + r);
                 canvas.DrawRoundRect(bub, r * 0.9f, r * 0.9f, fill);
-                // kuyruk
                 using (var tail = new SKPath())
                 {
                     tail.MoveTo(Position.X - r * 0.3f, Position.Y + r * 0.7f);
@@ -60,13 +59,12 @@ public sealed class StepItem : SceneItem
                     canvas.DrawPath(tail, fill);
                 }
                 break;
-            default: // Circle
+            default:
                 canvas.DrawCircle(Position.X, Position.Y, r, fill);
                 canvas.DrawCircle(Position.X, Position.Y, r, ring);
                 break;
         }
 
-        // Numara
         using var font = new SKFont(StepTypeface, Diameter * 0.55f);
         using var textPaint = new SKPaint { Color = NumberColor.WithAlpha(AlphaByte), IsAntialias = true };
         string s = Number.ToString();
@@ -98,66 +96,152 @@ public sealed class StepItem : SceneItem
 }
 
 // ===================== Bulanıklaştırma / Pikselleştirme =====================
+/// <summary>
+/// Blur, ImageItem gibi çalışır: içerik bir kez "pişirilir" (Baked),
+/// taşıma/resize yalnızca Bounds + DrawImage. Paint yolunda asla
+/// snapshot capture / Resize / CreateBlur yok → sürüklerken crash olmaz.
+/// </summary>
 public sealed class BlurItem : SceneItem
 {
-    public float Strength { get; set; } = 8f;
-    public bool Pixelate { get; set; } = false;
+    private float _strength = 8f;
+    private bool _pixelate;
+    private SKBitmap? _baked;
+    private SKImage? _drawImage;
 
-    /// <summary>Altındaki sahneyi içeren anlık görüntü (kompozisyon sırasında atanır).</summary>
-    public SKBitmap? SourceSnapshot { get; set; }
+    public float Strength
+    {
+        get => _strength;
+        set
+        {
+            float v = Math.Clamp(value, 1f, 64f);
+            if (Math.Abs(_strength - v) < 0.01f) return;
+            _strength = v;
+            NeedsBake = true;
+        }
+    }
+
+    public bool Pixelate
+    {
+        get => _pixelate;
+        set
+        {
+            if (_pixelate == value) return;
+            _pixelate = value;
+            NeedsBake = true;
+        }
+    }
+
+    /// <summary>true ise bir sonraki BakeDirtyBlurs içeriği yeniden üretir.</summary>
+    public bool NeedsBake { get; set; } = true;
+
+    /// <summary>
+    /// Taşıma/resize sürüklerken true: eski baked yerine yarı saydam cam önizleme
+    /// (alt içerik hafif görünür). Bırakınca false + bake.
+    /// </summary>
+    public bool DragPreview { get; set; }
+
+    /// <summary>Test / dış okuma: pişmiş bitmap (yoksa null).</summary>
+    public SKBitmap? BakedBitmap => _baked;
+
+    /// <summary>Eski API uyumu — bazı testler SourceSnapshot arıyordu.</summary>
+    public SKBitmap? SourceSnapshot => _baked;
+
+    public void ClearBaked()
+    {
+        _drawImage?.Dispose();
+        _drawImage = null;
+        _baked?.Dispose();
+        _baked = null;
+        NeedsBake = true;
+    }
+
+    /// <summary>Bake sonucu — ownership BlurItem'a geçer.</summary>
+    public void SetBaked(SKBitmap? bmp)
+    {
+        _drawImage?.Dispose();
+        _drawImage = null;
+        if (_baked != null && !ReferenceEquals(_baked, bmp))
+        {
+            try { _baked.Dispose(); } catch { /* ignore */ }
+        }
+        _baked = bmp;
+        NeedsBake = bmp == null;
+    }
 
     public override void Render(SKCanvas canvas)
     {
         if (Bounds.Width < 1 || Bounds.Height < 1) return;
+
         canvas.Save();
-        ApplyRotation(canvas);
-        canvas.ClipRoundRect(new SKRoundRect(Bounds, 6, 6), antialias: true);
-
-        if (SourceSnapshot != null)
+        try
         {
-            int bw = SourceSnapshot.Width, bh = SourceSnapshot.Height;
-            var src = new SKRectI(
-                Math.Clamp((int)Bounds.Left, 0, bw),
-                Math.Clamp((int)Bounds.Top, 0, bh),
-                Math.Clamp((int)Bounds.Right, 0, bw),
-                Math.Clamp((int)Bounds.Bottom, 0, bh));
+            ApplyRotation(canvas);
+            using var rr = new SKRoundRect(Bounds, 6, 6);
+            canvas.ClipRoundRect(rr, antialias: true);
 
-            if (src.Width < 1 || src.Height < 1) { canvas.Restore(); return; }
-
-            using var cropped = new SKBitmap(src.Width, src.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
-            SourceSnapshot.ExtractSubset(cropped, src);
-
-            if (Pixelate)
+            // Sürükleme: yarı saydam cam — arkadaki sahne görünsün; baked çizme.
+            if (DragPreview || _baked == null)
             {
-                int sw = Math.Max(1, (int)(src.Width / Strength));
-                int sh = Math.Max(1, (int)(src.Height / Strength));
-                using var small = cropped.Resize(new SKImageInfo(sw, sh), SKSamplingOptions.Default);
-                if (small != null)
-                {
-                    using var img = SKImage.FromBitmap(small);
-                    using var paint = new SKPaint { Color = SKColors.White.WithAlpha(AlphaByte) };
-                    canvas.DrawImage(img, Bounds, new SKSamplingOptions(SKFilterMode.Nearest), paint);
-                }
+                DrawGhostPreview(canvas);
+                return;
             }
-            else
+
+            _drawImage ??= SKImage.FromBitmap(_baked);
+            using var paint = new SKPaint
             {
-                using var img = SKImage.FromBitmap(cropped);
-                using var filter = SKImageFilter.CreateBlur(Strength, Strength);
-                using var paint = new SKPaint { ImageFilter = filter, IsAntialias = true, Color = SKColors.White.WithAlpha(AlphaByte) };
-                canvas.DrawImage(img, Bounds, SKSamplingOptions.Default, paint);
-            }
+                Color = SKColors.White.WithAlpha(AlphaByte),
+                IsAntialias = true,
+            };
+            canvas.DrawImage(_drawImage, Bounds, new SKSamplingOptions(SKFilterMode.Linear), paint);
         }
-        else
+        catch
         {
-            using var ph = new SKPaint { Color = new SKColor(40, 40, 50, (byte)(180 * Opacity)), IsAntialias = true };
-            canvas.DrawRect(Bounds, ph);
+            try { DrawGhostPreview(canvas); } catch { /* ignore */ }
         }
-        canvas.Restore();
+        finally
+        {
+            canvas.Restore();
+        }
+    }
+
+    /// <summary>Yarı saydam buzlu cam + ince kenar — alt içerik okunabilir kalsın.</summary>
+    private void DrawGhostPreview(SKCanvas canvas)
+    {
+        byte fillA = (byte)Math.Clamp(95 * Opacity, 20, 160);
+        byte strokeA = (byte)Math.Clamp(140 * Opacity, 40, 200);
+
+        using var fill = new SKPaint
+        {
+            Style = SKPaintStyle.Fill,
+            Color = new SKColor(28, 32, 42, fillA),
+            IsAntialias = true,
+        };
+        canvas.DrawRoundRect(Bounds, 6, 6, fill);
+
+        // Hafif “blur maskesi” hissi için ikinci yarı saydam katman
+        using var tint = new SKPaint
+        {
+            Style = SKPaintStyle.Fill,
+            Color = new SKColor(180, 190, 210, (byte)Math.Clamp(35 * Opacity, 10, 80)),
+            IsAntialias = true,
+        };
+        canvas.DrawRoundRect(Bounds, 6, 6, tint);
+
+        using var stroke = new SKPaint
+        {
+            Style = SKPaintStyle.Stroke,
+            Color = new SKColor(255, 255, 255, strokeA),
+            StrokeWidth = 1.25f,
+            IsAntialias = true,
+            PathEffect = SKPathEffect.CreateDash(new[] { 5f, 4f }, 0),
+        };
+        canvas.DrawRoundRect(Bounds, 6, 6, stroke);
     }
 
     public override SceneItem Clone()
     {
-        var c = new BlurItem { Strength = Strength, Pixelate = Pixelate, SourceSnapshot = SourceSnapshot };
+        // Baked kopyalanmaz — ağır ve dispose riski. Clone sadece stil/bounds.
+        var c = new BlurItem { Strength = Strength, Pixelate = Pixelate, NeedsBake = true };
         CopyBaseTo(c);
         return c;
     }
@@ -165,7 +249,13 @@ public sealed class BlurItem : SceneItem
     public override void RestoreFrom(SceneItem other)
     {
         base.RestoreFrom(other);
-        if (other is BlurItem b) { Strength = b.Strength; Pixelate = b.Pixelate; }
+        if (other is BlurItem b)
+        {
+            _strength = b._strength;
+            _pixelate = b._pixelate;
+        }
+        // Bounds / stil değişti → yeniden pişir (taşı/resize commit, undo).
+        NeedsBake = true;
     }
 }
 
@@ -183,12 +273,10 @@ public sealed class ImageItem : SceneItem
 
     public ImageItem()
     {
-        // Resimlerde varsayılan çerçeve yok (kolaj için temiz görünüm).
         StrokeWidth = 0;
         StrokeColor = SKColors.Transparent;
     }
 
-    /// <summary>Kırpma dikdörtgeni (Bitmap piksel uzayında). Null = tüm resim.</summary>
     public SKRect? CropRect { get; set; }
 
     public override void Render(SKCanvas canvas)
@@ -207,7 +295,6 @@ public sealed class ImageItem : SceneItem
         else
             canvas.DrawImage(img, Bounds, hq, paint);
 
-        // ince çerçeve
         if (StrokeWidth > 0 && StrokeColor.Alpha > 0)
         {
             using var border = new SKPaint { Style = SKPaintStyle.Stroke, Color = StrokeColor.WithAlpha(AlphaByte), StrokeWidth = StrokeWidth, IsAntialias = true };
@@ -218,7 +305,6 @@ public sealed class ImageItem : SceneItem
 
     public override SceneItem Clone()
     {
-        // Derin kopya: bitmap paylaşma → bir kopyayı kırp/sil diğerini bozar.
         var c = new ImageItem { CropRect = CropRect };
         if (_bitmap != null)
             c.Bitmap = _bitmap.Copy() ?? _bitmap;
@@ -231,7 +317,6 @@ public sealed class ImageItem : SceneItem
         base.RestoreFrom(other);
         if (other is ImageItem im)
         {
-            // Undo/redo aynı bitmap örneğini paylaşabilir (snapshot zaten Clone ile ayrıldı).
             Bitmap = im.Bitmap;
             CropRect = im.CropRect;
         }

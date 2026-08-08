@@ -432,7 +432,7 @@ public partial class CaptureOverlayWindow : Window
             HintBox.Visibility = Visibility.Visible;
             CropActionBar.Visibility = Visibility.Collapsed;
             // Ölçüm kesinleşsin diye yerleşimi bir sonraki layout turunda yap.
-            Dispatcher.BeginInvoke(PositionTopBars, System.Windows.Threading.DispatcherPriority.Loaded);
+            Dispatcher.BeginInvoke(() => PositionTopBars(), System.Windows.Threading.DispatcherPriority.Loaded);
         }
     }
 
@@ -958,7 +958,11 @@ public partial class CaptureOverlayWindow : Window
         canvas.CropRequested += img => canvas.BeginCrop(img);
         canvas.SelectionChanged += () => BuildOptionBar();
         canvas.ToolChanged += () => { SyncToolButtons(); BuildOptionBar(); };
-        canvas.ItemMoved += () => Dispatcher.BeginInvoke(PositionOptionBar, System.Windows.Threading.DispatcherPriority.Render);
+        // DİKKAT: BeginInvoke(method, priority) params object[] overload'ına düşerse
+        // priority metod argümanı sanılır → TargetParameterCountException (sürüklerken crash).
+        canvas.ItemMoved += () => Dispatcher.BeginInvoke(
+            () => PositionOptionBar(),
+            System.Windows.Threading.DispatcherPriority.Render);
         canvas.SceneCropCommitted += OnSceneCropCommitted;
         canvas.MouseMove += TrackCanvasPointer;
     }
@@ -1375,17 +1379,21 @@ public partial class CaptureOverlayWindow : Window
             });
         }
 
-        // Opaklık (0–100 sayı) — seçili bileşen(ler) veya aktif çizim aracı default'u
-        if (hasSelection || tool is not EditorTool.Select)
+        // Opaklık — sadece seçili öğe(ler); kaydedilmez, yeni öğe her zaman %100.
+        // Blur için gizle.
+        bool blurOnly = (!multi && (tool == EditorTool.Blur || sel is BlurItem))
+            || (multi && allBlur);
+        if (!blurOnly && hasSelection)
         {
             AddSep();
-            double curOpacityPct = (hasSelection ? sel!.Opacity : (float)style.Opacity) * 100.0;
+            double curOpacityPct = sel!.Opacity * 100.0;
             AddOpacityNumber(curOpacityPct, pct =>
             {
                 float op = (float)Math.Clamp(pct / 100.0, 0, 1);
                 foreach (var s in all)
-                    s.Opacity = op;
-                style.Opacity = op;
+                    if (s is not BlurItem)
+                        s.Opacity = op;
+                // style.Opacity'ye yazma — kalıcı hafızada tutulmaz
                 _scene?.RaiseChanged();
             });
         }
@@ -1397,7 +1405,7 @@ public partial class CaptureOverlayWindow : Window
             OptionStack.Children.RemoveAt(OptionStack.Children.Count - 1);
 
         OptionBar.Visibility = OptionStack.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        Dispatcher.BeginInvoke(PositionPanels, System.Windows.Threading.DispatcherPriority.Loaded);
+        Dispatcher.BeginInvoke(() => PositionPanels(), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     // ---- Üst aksiyon çubuğu (Kopyala/Kaydet/Yükle) ----

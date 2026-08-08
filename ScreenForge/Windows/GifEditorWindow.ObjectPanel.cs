@@ -59,8 +59,12 @@ public sealed partial class GifEditorWindow
         if (first is BlurItem)
             AddBlurControls(items);
 
-        AddSeparator();
-        AddOpacityControl(items);
+        // Blur için opaklık anlamsız — gösterme.
+        if (first is not BlurItem)
+        {
+            AddSeparator();
+            AddOpacityControl(items);
+        }
         AddOrderControls();
     }
 
@@ -236,7 +240,7 @@ public sealed partial class GifEditorWindow
             float op = v / 100f;
             foreach (var item in items)
                 item.Opacity = op;
-            _toolStyle.Opacity = op;
+            // Opacity kaydedilmez; yalnızca seçili öğeye uygulanır.
             CommitObjectChange();
         }
 
