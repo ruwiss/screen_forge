@@ -547,12 +547,20 @@
         </Setter>
     </Style>
 
-    <!-- ===================== GIF editörü ===================== -->
-
+    <!--
+        Hallmark · genre: modern-minimal · macrostructure: Workbench
+        · theme: ScreenForge (warm-orange / dark paper) · designed-as-app
+        · nav: N3 · footer: Ft2
+    -->
     <Color x:Key="EditorCanvasColor">#12151E</Color>
+    <Color x:Key="EditorWellColor">#0E1118</Color>
     <SolidColorBrush x:Key="EditorCanvasBrush" Color="{StaticResource EditorCanvasColor}" />
+    <SolidColorBrush x:Key="EditorWellBrush" Color="{StaticResource EditorWellColor}" />
     <SolidColorBrush x:Key="EditorChromeBrush" Color="#171B26" />
     <SolidColorBrush x:Key="EditorPanelBrush" Color="#1C2130" />
+    <SolidColorBrush x:Key="EditorDuplicateBrush" Color="#5BC8F5" />
+    <SolidColorBrush x:Key="EditorHitBrush" Color="#01000000" />
+
 
     <!-- Düzenleyici ikonu: tek boyut, tek çizgi kalınlığı -->
     <Style x:Key="EditorIcon" TargetType="Path">
@@ -635,13 +643,35 @@
         </Setter>
     </Style>
 
-    <!-- Oynatma denetimleri: kare ikon düğmeler -->
     <Style x:Key="EditorTransportButton" TargetType="Button" BasedOn="{StaticResource EditorToolButton}">
         <Setter Property="Width" Value="30" />
         <Setter Property="Height" Value="26" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="FontSize" Value="13" />
     </Style>
+
+    <Style x:Key="EditorPlayButton" TargetType="Button" BasedOn="{StaticResource EditorTransportButton}">
+        <Setter Property="Width" Value="34" />
+        <Setter Property="Height" Value="30" />
+    </Style>
+
+    <Style x:Key="EditorRailButton" TargetType="Button" BasedOn="{StaticResource EditorToolButton}">
+        <Setter Property="Width" Value="36" />
+        <Setter Property="Height" Value="36" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0,1" />
+    </Style>
+
+    <Style x:Key="EditorRailDangerButton" TargetType="Button" BasedOn="{StaticResource EditorRailButton}">
+        <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+    </Style>
+
+    <Style x:Key="EditorRailToggle" TargetType="ToggleButton" BasedOn="{StaticResource EditorToolToggle}">
+        <Setter Property="Width" Value="36" />
+        <Setter Property="Height" Value="36" />
+        <Setter Property="Margin" Value="0,1" />
+    </Style>
+
 
     <!-- Zaman çizelgesindeki kare kutusu -->
     <Style x:Key="EditorFrameItem" TargetType="ListBoxItem">

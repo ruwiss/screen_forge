@@ -18,9 +18,9 @@ public sealed class AppSettings
 
     // ---- Klavye kısayolları ----
     public HotkeyConfig RegionHotkey { get; set; } = new() { Modifiers = ModifierKeys.Alt | ModifierKeys.Shift, Key = "S" };
-    public HotkeyConfig FullScreenHotkey { get; set; } = new() { Modifiers = ModifierKeys.Windows | ModifierKeys.Alt, Key = "F" };
-    public HotkeyConfig FullScreenUploadHotkey { get; set; } = new() { Modifiers = ModifierKeys.Windows | ModifierKeys.Alt, Key = "U" };
-    public HotkeyConfig CollageHotkey { get; set; } = new() { Modifiers = ModifierKeys.Windows | ModifierKeys.Alt, Key = "C" };
+    public HotkeyConfig FullScreenHotkey { get; set; } = new();
+    public HotkeyConfig FullScreenUploadHotkey { get; set; } = new();
+    public HotkeyConfig CollageHotkey { get; set; } = new();
 
     // ---- Çıktı ----
     public ImageFormat OutputFormat { get; set; } = ImageFormat.Png;

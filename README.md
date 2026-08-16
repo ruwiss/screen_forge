@@ -69,9 +69,9 @@ Arrow, step numbers, highlight, text, ellipse, and blur over the selection.
 | Action | Default |
 |--------|---------|
 | Capture region | `Alt + Shift + S` |
-| Fullscreen | `Win + Alt + F` |
-| Fullscreen + upload | `Win + Alt + U` |
-| Freeform / collage | `Win + Alt + C` |
+| Fullscreen | unset |
+| Fullscreen + upload | unset |
+| Freeform / collage | unset |
 
 Change shortcuts under **Settings → Hotkeys**.
 

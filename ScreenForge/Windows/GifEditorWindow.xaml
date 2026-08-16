@@ -8,8 +8,15 @@
         Background="{StaticResource EditorCanvasBrush}"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
 
+    <!--
+        Hallmark · genre: modern-minimal · macrostructure: Workbench
+        · theme: ScreenForge (warm-orange / dark paper) · enrichment: none
+        · nav: N3 side-rail · footer: Ft2 inline single line
+        · tone: utilitarian · designed-as-app
+        · pre-emit critique: P4 H5 E4 S4 R5 V4
+    -->
+
     <Window.Resources>
-        <!-- İnce, sade kaydırma çubuğu: içeriğe yer bırakır -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
@@ -24,11 +31,11 @@
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Border x:Name="tb" CornerRadius="3" Margin="2"
-                                                        Background="#3A4254" />
+                                                        Background="{StaticResource BorderBrush}" />
                                                 <ControlTemplate.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
                                                         <Setter TargetName="tb" Property="Background"
-                                                                Value="#556080" />
+                                                                Value="{StaticResource SurfaceHoverBrush}" />
                                                     </Trigger>
                                                 </ControlTemplate.Triggers>
                                             </ControlTemplate>
@@ -57,7 +64,6 @@
             </Setter>
         </Style>
 
-        <!-- Araç çubuğu düğmesi içeriği: ikon + isteğe bağlı etiket -->
         <Style x:Key="ToolbarIcon" TargetType="Path" BasedOn="{StaticResource EditorIcon}" />
 
         <Style x:Key="ToolbarLabel" TargetType="TextBlock">
@@ -72,271 +78,232 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <!-- başlık çubuğu -->
-            <RowDefinition Height="Auto" />
-            <!-- araç çubuğu -->
             <RowDefinition Height="*" />
-            <!-- tuval + yan panel -->
             <RowDefinition Height="Auto" />
-            <!-- zaman çizelgesi -->
             <RowDefinition Height="Auto" />
-            <!-- durum çubuğu -->
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" MinWidth="360" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition x:Name="SidePanelColumn" Width="292" MinWidth="248" MaxWidth="440" />
+        </Grid.ColumnDefinitions>
 
-        <!-- ═══════════ Başlık çubuğu ═══════════ -->
-        <Grid x:Name="TitleBar" Grid.Row="0" Height="36" Background="{StaticResource EditorChromeBrush}">
+        <!-- N9-leaning mast: wordmark left, metrics, primary save, chrome right -->
+        <Grid x:Name="TitleBar" Grid.Row="0" Grid.ColumnSpan="4" Height="40"
+              Background="{StaticResource EditorChromeBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
-                <TextBlock Text="GIF Düzenleyici" Foreground="{StaticResource TextBrush}"
-                           FontFamily="{StaticResource UiFont}" FontSize="12.5" FontWeight="SemiBold"
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                <Border Width="8" Height="8" CornerRadius="1.5" VerticalAlignment="Center"
+                        Background="{StaticResource AccentBrush}" Margin="0,0,10,0" />
+                <TextBlock Text="ScreenForge" Foreground="{StaticResource TextBrush}"
+                           FontFamily="{StaticResource UiFont}" FontSize="13" FontWeight="SemiBold"
                            VerticalAlignment="Center" />
-                <TextBlock x:Name="TitleSummary" Margin="12,0,0,0" Foreground="{StaticResource TextMutedBrush}"
+                <TextBlock Text="GIF" Margin="8,0,0,0" Foreground="{StaticResource TextMutedBrush}"
+                           FontFamily="{StaticResource UiFont}" FontSize="11" VerticalAlignment="Center" />
+                <Border Width="1" Height="12" Margin="12,0"
+                        Background="{StaticResource BorderBrush}" />
+                <TextBlock x:Name="TitleSummary" Foreground="{StaticResource TextMutedBrush}"
                            FontFamily="{StaticResource UiFont}" FontSize="11" VerticalAlignment="Center" />
             </StackPanel>
 
             <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="ExportButton" Style="{StaticResource PrimaryButton}"
+                        Content="GIF Kaydet" Padding="14,5" Margin="0,0,8,0" FontSize="12"
+                        VerticalAlignment="Center" ToolTip="Ctrl+S" />
                 <Button x:Name="MinimizeButton" Style="{StaticResource EditorToolButton}"
-                        Width="44" Height="36" Content="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                        Width="44" Height="40" Content="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                         ToolTip="Simge durumuna küçült" />
                 <Button x:Name="MaximizeButton" Style="{StaticResource EditorToolButton}"
-                        Width="44" Height="36" Content="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                        Width="44" Height="40" Content="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                         ToolTip="Büyüt" />
                 <Button x:Name="CloseButton" Style="{StaticResource EditorDangerButton}"
-                        Width="46" Height="36" Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                        Width="46" Height="40" Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                         ToolTip="Kapat (Esc)" />
             </StackPanel>
         </Grid>
 
-        <!-- ═══════════ Araç çubuğu ═══════════ -->
-        <Border x:Name="Toolbar" Grid.Row="1" Background="{StaticResource EditorChromeBrush}"
-                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,1">
-            <Grid Margin="8,5">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+        <!-- N3 side-rail: çizim + kare işlemleri, yakalama overlay ile aynı dil -->
+        <Border x:Name="Toolbar" Grid.Row="1" Grid.RowSpan="2" Grid.Column="0"
+                Background="{StaticResource EditorChromeBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,1,0"
+                Padding="6,10,6,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel HorizontalAlignment="Center">
 
-                <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
-                    <StackPanel Orientation="Horizontal">
+                    <Button x:Name="UndoButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Geri al (Ctrl+Z)">
+                        <Path Data="{StaticResource IconUndo}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
+                    <Button x:Name="RedoButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Yinele (Ctrl+Y)">
+                        <Path Data="{StaticResource IconRedo}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
 
-                        <Button x:Name="UndoButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Geri al (Ctrl+Z)">
-                            <StackPanel Orientation="Horizontal">
-                                <Path Data="{StaticResource IconUndo}" Style="{StaticResource ToolbarIcon}" />
-                                <TextBlock Text="Geri Al" Style="{StaticResource ToolbarLabel}" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="RedoButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Yinele (Ctrl+Y)">
-                            <StackPanel Orientation="Horizontal">
-                                <Path Data="{StaticResource IconRedo}" Style="{StaticResource ToolbarIcon}" />
-                                <TextBlock Text="Yinele" Style="{StaticResource ToolbarLabel}" />
-                            </StackPanel>
-                        </Button>
+                    <Border Height="1" Background="{StaticResource BorderBrush}" Margin="6,8" />
 
-                        <Border Width="1" Background="{StaticResource BorderBrush}" Margin="7,5" />
+                    <Button x:Name="DeleteButton" Style="{StaticResource EditorRailDangerButton}"
+                            ToolTip="Seçili kareleri sil (Delete)">
+                        <Path Data="{StaticResource IconTrash}" Style="{StaticResource ToolbarIcon}"
+                              Stroke="{StaticResource DangerBrush}" />
+                    </Button>
+                    <Button x:Name="DuplicateButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Seçili kareleri çoğalt (Ctrl+D)">
+                        <Path Data="{StaticResource IconDuplicate}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
+                    <Button x:Name="ReverseButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Kare sırasını tersine çevir">
+                        <Path Data="{StaticResource IconReverse}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
 
-                        <Button x:Name="DeleteButton" Style="{StaticResource EditorDangerButton}"
-                                ToolTip="Seçili kareleri sil (Delete)">
-                            <StackPanel Orientation="Horizontal">
-                                <Path Data="{StaticResource IconTrash}" Style="{StaticResource ToolbarIcon}"
-                                      Stroke="#FF9A9E" />
-                                <TextBlock Text="Sil" Style="{StaticResource ToolbarLabel}" Foreground="#FF9A9E" />
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="DuplicateButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Seçili kareleri çoğalt (Ctrl+D)">
-                            <StackPanel Orientation="Horizontal">
-                                <Path Data="{StaticResource IconDuplicate}" Style="{StaticResource ToolbarIcon}" />
-                                <TextBlock Text="Çoğalt" Style="{StaticResource ToolbarLabel}" />
-                            </StackPanel>
-                        </Button>
+                    <Border Height="1" Background="{StaticResource BorderBrush}" Margin="6,8" />
 
-                        <Border Width="1" Background="{StaticResource BorderBrush}" Margin="7,5" />
+                    <Button x:Name="RotateLeftButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Sola 90° döndür">
+                        <Path Data="{StaticResource IconRotateLeft}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
+                    <Button x:Name="RotateRightButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Sağa 90° döndür">
+                        <Path Data="{StaticResource IconRotateRight}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
+                    <Button x:Name="CropButton" Style="{StaticResource EditorRailButton}"
+                            ToolTip="Bir alan seçip kırp (Ctrl+Shift+X)">
+                        <Path Data="{StaticResource IconCrop}" Style="{StaticResource ToolbarIcon}" />
+                    </Button>
 
-                        <Button x:Name="ReverseButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Kare sırasını tersine çevir">
-                            <StackPanel Orientation="Horizontal">
-                                <Path Data="{StaticResource IconReverse}" Style="{StaticResource ToolbarIcon}" />
-                                <TextBlock Text="Ters Çevir" Style="{StaticResource ToolbarLabel}" />
-                            </StackPanel>
-                        </Button>
-                        <Border Width="1" Background="{StaticResource BorderBrush}" Margin="7,5" />
+                    <Border Height="1" Background="{StaticResource BorderBrush}" Margin="6,8" />
 
-                        <Button x:Name="RotateLeftButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Sola 90° döndür">
-                            <Path Data="{StaticResource IconRotateLeft}" Style="{StaticResource ToolbarIcon}" />
-                        </Button>
-                        <Button x:Name="RotateRightButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Sağa 90° döndür">
-                            <Path Data="{StaticResource IconRotateRight}" Style="{StaticResource ToolbarIcon}" />
-                        </Button>
-                        <Button x:Name="CropButton" Style="{StaticResource EditorToolButton}"
-                                ToolTip="Bir alan seçip kırp (Ctrl+Shift+X)">
-                            <StackPanel Orientation="Horizontal">
-                                <Path Data="{StaticResource IconCrop}" Style="{StaticResource ToolbarIcon}" />
-                                <TextBlock Text="Kırp" Style="{StaticResource ToolbarLabel}" />
-                            </StackPanel>
-                        </Button>
-
-                        <Border Width="1" Background="{StaticResource BorderBrush}" Margin="7,5" />
-
-                        <!-- Çizim araçları: seçili katmana uygulanır -->
-                        <ToggleButton x:Name="ToolSelect" Style="{StaticResource EditorToolToggle}"
-                                      IsChecked="True" ToolTip="Seç ve taşı (V)">
-                            <Path Data="{StaticResource IconCursor}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ToolRect" Style="{StaticResource EditorToolToggle}"
-                                      ToolTip="Dikdörtgen (R)">
-                            <Path Data="{StaticResource IconSquare}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ToolEllipse" Style="{StaticResource EditorToolToggle}"
-                                      ToolTip="Elips (E)">
-                            <Path Data="{StaticResource IconCircle}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ToolArrow" Style="{StaticResource EditorToolToggle}"
-                                      ToolTip="Ok (A)">
-                            <Path Data="{StaticResource IconArrow}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ToolPen" Style="{StaticResource EditorToolToggle}"
-                                      ToolTip="Kalem (P)">
-                            <Path Data="{StaticResource IconPen}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ToolText" Style="{StaticResource EditorToolToggle}"
-                                      ToolTip="Metin (T)">
-                            <Path Data="{StaticResource IconText}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                        <ToggleButton x:Name="ToolStep" Style="{StaticResource EditorToolToggle}"
-                                      ToolTip="Adım numarası (S)">
-                            <Path Data="{StaticResource IconStep}" Style="{StaticResource ToolbarIcon}" />
-                        </ToggleButton>
-                    </StackPanel>
-                </ScrollViewer>
-
-                <Button x:Name="ExportButton" Grid.Column="1" Style="{StaticResource PrimaryButton}"
-                        Content="GIF Kaydet" Padding="16,6" Margin="10,0,0,0" FontSize="12" ToolTip="Ctrl+S" />
-            </Grid>
+                    <ToggleButton x:Name="ToolSelect" Style="{StaticResource EditorRailToggle}"
+                                  IsChecked="True" ToolTip="Seç ve taşı (V)">
+                        <Path Data="{StaticResource IconCursor}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ToolRect" Style="{StaticResource EditorRailToggle}"
+                                  ToolTip="Dikdörtgen (R)">
+                        <Path Data="{StaticResource IconSquare}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ToolEllipse" Style="{StaticResource EditorRailToggle}"
+                                  ToolTip="Elips (E)">
+                        <Path Data="{StaticResource IconCircle}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ToolArrow" Style="{StaticResource EditorRailToggle}"
+                                  ToolTip="Ok (A)">
+                        <Path Data="{StaticResource IconArrow}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ToolPen" Style="{StaticResource EditorRailToggle}"
+                                  ToolTip="Kalem (P)">
+                        <Path Data="{StaticResource IconPen}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ToolText" Style="{StaticResource EditorRailToggle}"
+                                  ToolTip="Metin (T)">
+                        <Path Data="{StaticResource IconText}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ToolStep" Style="{StaticResource EditorRailToggle}"
+                                  ToolTip="Adım numarası (S)">
+                        <Path Data="{StaticResource IconStep}" Style="{StaticResource ToolbarIcon}" />
+                    </ToggleButton>
+                </StackPanel>
+            </ScrollViewer>
         </Border>
 
-        <!-- ═══════════ Tuval + yan panel ═══════════ -->
-        <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" MinWidth="360" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition x:Name="SidePanelColumn" Width="308" MinWidth="248" MaxWidth="440" />
-            </Grid.ColumnDefinitions>
-
-            <!-- Önizleme tuvali -->
-            <Grid Grid.Column="0" Background="{StaticResource EditorCanvasBrush}" ClipToBounds="True">
-                <ScrollViewer x:Name="CanvasScroll" HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto" Padding="16">
-                    <!-- Border tam olarak görüntü boyutunda kalır; kaplama ve kırpma
-                         tuvalleri aynı hücreyi paylaştığı için koordinatlar birebir eşleşir. -->
-                    <Border x:Name="CanvasHost" BorderBrush="#33FFFFFF" BorderThickness="1"
-                            HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <Grid x:Name="CanvasSurface">
-                            <Image x:Name="PreviewImage" Stretch="Fill"
-                                   RenderOptions.BitmapScalingMode="HighQuality" />
-                            <!-- Çizim yüzeyi: seçili katmanın sahnesi burada düzenlenir -->
-                            <ContentControl x:Name="AnnotationHost" />
-                            <!-- Metin düzenlerken yalnızca caret ve seçim görünür; boş alanlar
-                                 alttaki çizim tuvaline fare olaylarını geçirmeye devam eder. -->
-                            <Canvas x:Name="TextEditLayer" ClipToBounds="True" />
-                            <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False" ClipToBounds="True" />
-                            <Canvas x:Name="CropCanvas" Visibility="Collapsed" Background="#01000000"
-                                    Cursor="Cross" ClipToBounds="True" />
-                        </Grid>
-                    </Border>
-                </ScrollViewer>
-
-                <!-- Seçili nesnenin özellikleri: tuvalin altında belirir -->
-                <Border x:Name="ObjectProperties" Visibility="Collapsed" VerticalAlignment="Bottom"
-                        HorizontalAlignment="Center" Margin="0,0,0,14" CornerRadius="8"
-                        Background="#F21A1F2C" BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1" Padding="10,7">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.55" Color="Black" />
-                    </Border.Effect>
-                    <StackPanel x:Name="ObjectPropertyPanel" Orientation="Horizontal" />
+        <!-- Workbench sahne: kare merkeze, çerçeve ayırıcı -->
+        <Grid Grid.Row="1" Grid.Column="1" Background="{StaticResource EditorCanvasBrush}" ClipToBounds="True">
+            <ScrollViewer x:Name="CanvasScroll" HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto" Padding="28">
+                <Border x:Name="CanvasHost" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{StaticResource EditorWellBrush}">
+                    <Grid x:Name="CanvasSurface">
+                        <Image x:Name="PreviewImage" Stretch="Fill"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                        <ContentControl x:Name="AnnotationHost" />
+                        <Canvas x:Name="TextEditLayer" ClipToBounds="True" />
+                        <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False" ClipToBounds="True" />
+                        <Canvas x:Name="CropCanvas" Visibility="Collapsed" Background="{StaticResource EditorHitBrush}"
+                                Cursor="Cross" ClipToBounds="True" />
+                    </Grid>
                 </Border>
+            </ScrollViewer>
 
-                <!-- Kısa bildirim: yapılan işlemi doğrular. Köşede durur ki
-                     tuvalin ortasındaki içeriği ve özellik panelini kapatmasın. -->
-                <Border x:Name="Toast" Visibility="Collapsed" VerticalAlignment="Top"
-                        HorizontalAlignment="Right" Margin="0,14,18,0" CornerRadius="6"
-                        Background="#F2161B28" BorderBrush="{StaticResource AccentBrush}"
-                        BorderThickness="1" Padding="13,7" IsHitTestVisible="False">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.5" Color="Black" />
-                    </Border.Effect>
-                    <TextBlock x:Name="ToastText" Foreground="{StaticResource TextBrush}"
-                               FontFamily="{StaticResource UiFont}" FontSize="11.5" />
-                </Border>
+            <Border x:Name="ObjectProperties" Visibility="Collapsed" VerticalAlignment="Bottom"
+                    HorizontalAlignment="Center" Margin="0,0,0,16" CornerRadius="8"
+                    Background="{StaticResource EditorChromeBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1" Padding="10,7">
+                <StackPanel x:Name="ObjectPropertyPanel" Orientation="Horizontal" />
+            </Border>
 
-                <!-- Boş durum -->
-                <TextBlock x:Name="EmptyHint" Text="Kare yok"
-                           Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource UiFont}"
-                           FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"
-                           Visibility="Collapsed" />
+            <Border x:Name="Toast" Visibility="Collapsed" VerticalAlignment="Top"
+                    HorizontalAlignment="Right" Margin="0,16,18,0" CornerRadius="6"
+                    Background="{StaticResource EditorChromeBrush}"
+                    BorderBrush="{StaticResource AccentBrush}"
+                    BorderThickness="1" Padding="13,7" IsHitTestVisible="False">
+                <TextBlock x:Name="ToastText" Foreground="{StaticResource TextBrush}"
+                           FontFamily="{StaticResource UiFont}" FontSize="11.5" />
+            </Border>
 
-                <!-- Kırpma ipucu -->
-                <Border x:Name="CropHint" Visibility="Collapsed" VerticalAlignment="Top"
-                        HorizontalAlignment="Center" Margin="0,14,0,0" CornerRadius="8"
-                        Background="#E60E1118" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
-                        Padding="14,8">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock x:Name="CropHintText" Text="Kırpılacak alanı sürükleyerek seçin"
-                                   Foreground="White" FontFamily="{StaticResource UiFont}" FontSize="11.5"
-                                   VerticalAlignment="Center" />
-                        <Button x:Name="CropApplyButton" Content="Uygula" Margin="14,0,0,0"
-                                Style="{StaticResource PrimaryButton}" Padding="12,4" FontSize="11" />
-                        <Button x:Name="CropCancelButton" Content="İptal" Margin="4,0,0,0"
-                                Style="{StaticResource EditorToolButton}" />
-                    </StackPanel>
-                </Border>
-            </Grid>
+            <TextBlock x:Name="EmptyHint" Text="Kayıtta kare yok"
+                       Foreground="{StaticResource TextMutedBrush}" FontFamily="{StaticResource UiFont}"
+                       FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Visibility="Collapsed" />
 
-            <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch"
-                          Background="{StaticResource BorderBrush}" ResizeBehavior="PreviousAndNext" />
-
-            <!-- Yan panel -->
-            <Border Grid.Column="2" Background="{StaticResource EditorPanelBrush}">
-                <TabControl x:Name="SidePanel" Style="{StaticResource SettingsTab}" Background="Transparent"
-                            BorderThickness="0">
-                    <TabItem Header="Dışa Aktar" Style="{StaticResource SettingsTabItem}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel x:Name="ExportPanel" Margin="12,10" />
-                        </ScrollViewer>
-                    </TabItem>
-                    <TabItem Header="Kare" Style="{StaticResource SettingsTabItem}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel x:Name="FramePanel" Margin="12,10" />
-                        </ScrollViewer>
-                    </TabItem>
-                    <TabItem Header="Kaplama" Style="{StaticResource SettingsTabItem}">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel x:Name="OverlayPanel" Margin="12,10" />
-                        </ScrollViewer>
-                    </TabItem>
-                </TabControl>
+            <Border x:Name="CropHint" Visibility="Collapsed" VerticalAlignment="Top"
+                    HorizontalAlignment="Center" Margin="0,16,0,0" CornerRadius="8"
+                    Background="{StaticResource EditorChromeBrush}"
+                    BorderBrush="{StaticResource AccentBrush}" BorderThickness="1"
+                    Padding="14,8">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="CropHintText" Text="Kırpılacak alanı sürükleyerek seçin"
+                               Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UiFont}"
+                               FontSize="11.5" VerticalAlignment="Center" />
+                    <Button x:Name="CropApplyButton" Content="Uygula" Margin="14,0,0,0"
+                            Style="{StaticResource PrimaryButton}" Padding="12,4" FontSize="11" />
+                    <Button x:Name="CropCancelButton" Content="İptal" Margin="4,0,0,0"
+                            Style="{StaticResource EditorToolButton}" />
+                </StackPanel>
             </Border>
         </Grid>
 
-        <!-- ═══════════ Zaman çizelgesi ═══════════ -->
-        <Grid Grid.Row="3" Background="{StaticResource EditorChromeBrush}">
+        <GridSplitter Grid.Row="1" Grid.RowSpan="2" Grid.Column="2" Width="4"
+                      HorizontalAlignment="Stretch"
+                      Background="{StaticResource BorderBrush}" ResizeBehavior="PreviousAndNext" />
+
+        <Border Grid.Row="1" Grid.RowSpan="2" Grid.Column="3"
+                Background="{StaticResource EditorPanelBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+            <TabControl x:Name="SidePanel" Style="{StaticResource SettingsTab}" Background="Transparent"
+                        BorderThickness="0" Margin="10,10,10,8">
+                <TabItem Header="Dışa Aktar" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="ExportPanel" Margin="2,4,2,8" />
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Kare" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="FramePanel" Margin="2,4,2,8" />
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Kaplama" Style="{StaticResource SettingsTabItem}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="OverlayPanel" Margin="2,4,2,8" />
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+        </Border>
+
+        <!-- Zaman çizelgesi: sahnenin altındaki iş şeridi -->
+        <Grid Grid.Row="2" Grid.Column="1" Background="{StaticResource EditorChromeBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- Oynatma denetimleri -->
             <Border Grid.Row="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,1">
-                <Grid Margin="8,4">
+                <Grid Margin="8,5">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
@@ -354,7 +321,7 @@
                             <Path Data="{StaticResource IconPrevFrame}" Style="{StaticResource EditorIcon}"
                                   Width="13" Height="13" Fill="{StaticResource TextBrush}" />
                         </Button>
-                        <Button x:Name="PlayButton" Style="{StaticResource EditorTransportButton}"
+                        <Button x:Name="PlayButton" Style="{StaticResource EditorPlayButton}"
                                 ToolTip="Oynat / Duraklat (Boşluk)">
                             <Path x:Name="PlayIcon" Data="{StaticResource IconPlay}"
                                   Style="{StaticResource EditorIcon}" Width="15" Height="15"
@@ -376,7 +343,6 @@
                                   FontFamily="{StaticResource UiFont}" FontSize="11" />
                     </StackPanel>
 
-                    <!-- Aralık işaretleri -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
                         <Button x:Name="MarkInButton" Style="{StaticResource EditorToolButton}"
@@ -399,7 +365,6 @@
                         </Button>
                     </StackPanel>
 
-                    <!-- Yakınlaştırma -->
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                         <Slider x:Name="ZoomSlider" Width="104" Minimum="10" Maximum="400" Value="100"
                                 Style="{StaticResource ToolSlider}" VerticalAlignment="Center"
@@ -415,8 +380,6 @@
                 </Grid>
             </Border>
 
-            <!-- Kare şeridi. Soldaki 150px boşluk klip adları sütunuyla aynı
-                 genişliktedir; böylece kareler ve klipler tam alt alta durur. -->
             <ListBox x:Name="Timeline" Grid.Row="1" Height="104" Margin="150,0,0,0"
                      Background="{StaticResource EditorCanvasBrush}"
                      BorderThickness="0" SelectionMode="Extended" Focusable="True"
@@ -455,12 +418,10 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <!-- Kare işlemleri karenin kendisinde: fareyle üzerine
-                             gelince çoğalt/sil düğmeleri belirir. -->
                         <Grid x:Name="Root" Width="78" Margin="2" Background="Transparent">
                             <StackPanel>
                                 <Border x:Name="Thumb" CornerRadius="3" ClipToBounds="True" Height="54"
-                                        Background="#0D1017" BorderBrush="Transparent" BorderThickness="0">
+                                        Background="{StaticResource EditorWellBrush}" BorderBrush="Transparent" BorderThickness="0">
                                     <Image Source="{Binding Thumbnail}" Stretch="Uniform"
                                            RenderOptions.BitmapScalingMode="LowQuality" />
                                 </Border>
@@ -470,12 +431,14 @@
                                                Foreground="{StaticResource TextMutedBrush}"
                                                FontFamily="{StaticResource UiFont}" />
                                     <TextBlock Text="{Binding DelayText}" FontSize="9.5" Margin="5,0,0,0"
-                                               Foreground="#5B6880" FontFamily="{StaticResource UiFont}" />
+                                               Foreground="{StaticResource TextMutedBrush}"
+                                               FontFamily="{StaticResource UiFont}" />
                                 </StackPanel>
                             </StackPanel>
 
                             <Border x:Name="Actions" VerticalAlignment="Top" HorizontalAlignment="Center"
-                                    Margin="0,3,0,0" CornerRadius="4" Background="#E00E1118"
+                                    Margin="0,3,0,0" CornerRadius="4"
+                                    Background="{StaticResource EditorChromeBrush}"
                                     Opacity="0" IsHitTestVisible="False">
                                 <StackPanel Orientation="Horizontal">
                                     <Button Style="{StaticResource FrameChipButton}"
@@ -489,7 +452,7 @@
                                             ToolTip="Bu kareyi sil">
                                         <Path Data="{StaticResource IconTrash}"
                                               Style="{StaticResource EditorIcon}" Width="12" Height="12"
-                                              Stroke="#FF9A9E" />
+                                              Stroke="{StaticResource DangerBrush}" />
                                     </Button>
                                 </StackPanel>
                             </Border>
@@ -500,10 +463,8 @@
                                 <Setter TargetName="Actions" Property="Opacity" Value="1" />
                                 <Setter TargetName="Actions" Property="IsHitTestVisible" Value="True" />
                             </Trigger>
-
-                            <!-- Çoğaltılan kare: kaynağından ayırt edilsin -->
                             <DataTrigger Binding="{Binding IsDuplicate}" Value="True">
-                                <Setter TargetName="Thumb" Property="BorderBrush" Value="#5BC8F5" />
+                                <Setter TargetName="Thumb" Property="BorderBrush" Value="{StaticResource EditorDuplicateBrush}" />
                                 <Setter TargetName="Thumb" Property="BorderThickness" Value="1.5" />
                             </DataTrigger>
                         </DataTemplate.Triggers>
@@ -511,7 +472,6 @@
                 </ListBox.ItemTemplate>
             </ListBox>
 
-            <!-- ═══ Nesne şeridi: karelerle hizalı klipler ═══ -->
             <Border x:Name="ClipStrip" Grid.Row="2" Visibility="Collapsed"
                     Background="{StaticResource EditorCanvasBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
@@ -525,7 +485,6 @@
                         <RowDefinition Height="Auto" MaxHeight="118" />
                     </Grid.RowDefinitions>
 
-                    <!-- Kare komutları -->
                     <Border Grid.Row="0" Grid.ColumnSpan="2"
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                         <StackPanel Orientation="Horizontal" Margin="8,2">
@@ -533,14 +492,12 @@
                                        Margin="0,0,5,0" />
                             <TextBlock x:Name="FrameObjectsLabel" Style="{StaticResource EditorFieldLabel}"
                                        Foreground="{StaticResource TextBrush}" Margin="0,0,10,0" />
-
                             <Button x:Name="ClearFrameButton" Content="Temizle"
                                     Style="{StaticResource EditorDangerButton}"
                                     ToolTip="Bu karedeki nesneleri kaldır" />
                         </StackPanel>
                     </Border>
 
-                    <!-- Nesne adları -->
                     <ScrollViewer x:Name="ClipLabelScroll" Grid.Row="1" Grid.Column="0"
                                   VerticalScrollBarVisibility="Hidden"
                                   HorizontalScrollBarVisibility="Disabled">
@@ -563,7 +520,6 @@
                                             </CheckBox.RenderTransform>
                                         </CheckBox>
 
-                                        <!-- Nesnenin şeritteki rengi -->
                                         <Rectangle Grid.Column="1" Width="3" Height="11" Margin="5,0,0,0"
                                                    RadiusX="1.5" RadiusY="1.5" Fill="{Binding Swatch}"
                                                    VerticalAlignment="Center" />
@@ -579,7 +535,8 @@
                                         <DataTrigger Binding="{Binding Selected}" Value="True">
                                             <Setter TargetName="Label" Property="Foreground"
                                                     Value="{StaticResource TextBrush}" />
-                                            <Setter TargetName="Row" Property="Background" Value="#1C2130" />
+                                            <Setter TargetName="Row" Property="Background"
+                                                    Value="{StaticResource EditorPanelBrush}" />
                                         </DataTrigger>
                                     </DataTemplate.Triggers>
                                 </DataTemplate>
@@ -587,20 +544,20 @@
                         </ItemsControl>
                     </ScrollViewer>
 
-                    <!-- Klipler: kare şeridiyle aynı ölçek ve kaydırma -->
                     <ScrollViewer x:Name="ClipScroll" Grid.Row="1" Grid.Column="1"
                                   HorizontalScrollBarVisibility="Hidden"
                                   VerticalScrollBarVisibility="Auto"
-                                  Background="#0D1017">
+                                  Background="{StaticResource EditorWellBrush}">
                         <Canvas x:Name="ClipCanvas" HorizontalAlignment="Left" MinHeight="18" />
                     </ScrollViewer>
                 </Grid>
             </Border>
         </Grid>
 
-        <!-- ═══════════ Durum çubuğu ═══════════ -->
-        <Border Grid.Row="4" Background="#0F121C" BorderBrush="{StaticResource BorderBrush}"
-                BorderThickness="0,1,0,0">
+        <!-- Ft2: tek satır durum -->
+        <Border Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                Background="{StaticResource EditorChromeBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
             <Grid Height="26">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" />
@@ -623,12 +580,13 @@
 
                 <ProgressBar x:Name="ExportProgress" Grid.Row="1" Grid.ColumnSpan="2" Height="3"
                              Visibility="Collapsed" BorderThickness="0"
-                             Foreground="{StaticResource AccentBrush}" Background="#222A3A" />
+                             Foreground="{StaticResource AccentBrush}"
+                             Background="{StaticResource SurfaceAltBrush}" />
 
-                <!-- Uzun süren düzenlemelerde belirsiz ilerleme -->
                 <ProgressBar x:Name="BusyBar" Grid.Row="1" Grid.ColumnSpan="2" Height="3"
                              Visibility="Collapsed" BorderThickness="0" IsIndeterminate="True"
-                             Foreground="{StaticResource AccentBrush}" Background="#222A3A" />
+                             Foreground="{StaticResource AccentBrush}"
+                             Background="{StaticResource SurfaceAltBrush}" />
             </Grid>
         </Border>
     </Grid>

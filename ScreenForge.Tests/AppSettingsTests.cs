@@ -24,4 +24,18 @@ public sealed class AppSettingsTests
         Assert.Equal(9, settings.ToolStyles.StrokeWidth);
         Assert.Equal(48, settings.ToolStyles.StepSize);
     }
+
+    [Fact]
+    public void Defaults_OnlyRegionHotkeyIsAssigned()
+    {
+        var settings = new AppSettings();
+
+        Assert.True(settings.RegionHotkey.IsValid);
+        Assert.Equal("S", settings.RegionHotkey.Key);
+        Assert.Equal(ModifierKeys.Alt | ModifierKeys.Shift, settings.RegionHotkey.Modifiers);
+
+        Assert.False(settings.FullScreenHotkey.IsValid);
+        Assert.False(settings.FullScreenUploadHotkey.IsValid);
+        Assert.False(settings.CollageHotkey.IsValid);
+    }
 }
