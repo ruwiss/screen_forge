@@ -68,6 +68,7 @@ public partial class CaptureOverlayWindow : Window
     private bool _textEditing;   // inline metin düzenleme açıkken araç kısayollarını engelle
     private PendingFreeExportAction? _pendingFreeExportAction;
     private bool _pendingFreeExportTransparent;
+    private SKRect? _pendingExportCrop;
     /// <summary>Serbest modda Ctrl+C ile kopyalanan sahne öğeleri (çoklu seçim, z-sırası).</summary>
     private List<SceneItem>? _itemClipboard;
     /// <summary>Tuval üzerinde son bilinen fare noktası (alan dışı yapıştırmada kullanılır).</summary>
@@ -93,6 +94,9 @@ public partial class CaptureOverlayWindow : Window
     private static System.Windows.Input.Cursor? _regionCursor;
     private bool _translateViewOpen;
     private bool _translateBusy;
+    private bool _panelsPosQueued;
+    private int _lastSizeW = int.MinValue, _lastSizeH = int.MinValue;
+    private double _pixelScaleX = 1, _pixelScaleY = 1;
     /// <summary>
     /// Çeviri kapatılırken (X/Esc/dim) aynı tıklamanın MouseUp'ı seçimi yeniden
     /// açmasın / araçları geri getirmesin diye kısa süreli giriş kilidi.
@@ -169,6 +173,9 @@ public partial class CaptureOverlayWindow : Window
         double dy = pos.Y - _toolbarDragStart.Y;
         double nx = Canvas.GetLeft(Toolbar) + dx;
         double ny = Canvas.GetTop(Toolbar) + dy;
+        Canvas.SetLeft(Toolbar, nx);
+        Canvas.SetTop(Toolbar, ny);
+        ApplyOverlayChromeScale();
         ClampToolbar(ref nx, ref ny);
         Canvas.SetLeft(Toolbar, nx);
         Canvas.SetTop(Toolbar, ny);
@@ -186,6 +193,22 @@ public partial class CaptureOverlayWindow : Window
         _toolbarDragging = false;
         ToolbarGrip.ReleaseMouseCapture();
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Serbest kırpma + bekleyen Kopyala iken Ctrl+C = Onayla.
+    /// Save/Upload kırpmasında Ctrl+C no-op kalır.
+    /// </summary>
+    internal static bool ShouldCommitSceneCropOnCopyHotkey(
+        bool isSceneCropping,
+        bool pendingCopy,
+        Key key,
+        ModifierKeys modifiers)
+    {
+        return isSceneCropping
+            && pendingCopy
+            && key == Key.C
+            && (modifiers & ModifierKeys.Control) == ModifierKeys.Control;
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -210,6 +233,16 @@ public partial class CaptureOverlayWindow : Window
             if (e.Key == Key.Escape)
             {
                 CancelSceneCropUi();
+                e.Handled = true;
+                return;
+            }
+            if (ShouldCommitSceneCropOnCopyHotkey(
+                isSceneCropping: true,
+                pendingCopy: _pendingFreeExportAction == PendingFreeExportAction.Copy,
+                key: e.Key,
+                modifiers: Keyboard.Modifiers))
+            {
+                CommitSceneCropUi();
                 e.Handled = true;
                 return;
             }
@@ -329,16 +362,15 @@ public partial class CaptureOverlayWindow : Window
     {
         ScreenImage.Width = ActualWidth;
         ScreenImage.Height = ActualHeight;
+        ScreenImage.CacheMode = new BitmapCache { RenderAtScale = 1, SnapsToDevicePixels = true };
+        CachePixelScale();
         UpdateDimRects(WpfRect.Empty);
         BuildModeBar();
         ApplyMode();
         Activate();
         Focus();
         BuildWindowList();
-
-        // Çeviri motorunu hemen ısıt (edit fazını bekleme) — ilk "Çevir" daha çabuk başlar
-        if (_mode != CaptureMode.Free)
-            KickTranslateWarmup();
+        // Çeviri ısınması seçim sırasında UI'yi kasmaması için edit fazına bırakıldı.
     }
 
     /// <summary>WebView2 + Google Images sayfasını arka planda hazırla.</summary>
@@ -348,12 +380,7 @@ public partial class CaptureOverlayWindow : Window
         {
             try
             {
-                string tl = string.IsNullOrWhiteSpace(_settings.TranslateTargetLanguage)
-                    ? "tr" : _settings.TranslateTargetLanguage.Trim();
-                string? sl = string.IsNullOrWhiteSpace(_settings.TranslateSourceLanguage)
-                    || string.Equals(_settings.TranslateSourceLanguage, "auto", StringComparison.OrdinalIgnoreCase)
-                    ? null
-                    : _settings.TranslateSourceLanguage.Trim();
+                var (tl, sl) = TranslateLanguageRouter.ImageRoute(_settings.TranslateNativeLanguage);
                 _visualClient ??= new GoogleTranslateVisualClient();
                 await _visualClient.WarmupAsync(tl, sl).ConfigureAwait(true);
             }
@@ -439,12 +466,13 @@ public partial class CaptureOverlayWindow : Window
     private void PositionTopBars()
     {
         // Çoklu monitör: sanal masaüstü ortası değil, imlecin olduğu monitör.
+        ApplyOverlayChromeScale();
         var mon = GetUiMonitorDip();
         ModeBar.UpdateLayout();
         PlaceTopCenterOnMonitor(ModeBar, mon, topInset: 18);
 
         HintBox.UpdateLayout();
-        double hintTop = Canvas.GetTop(ModeBar) + ModeBar.ActualHeight + 10;
+        double hintTop = Canvas.GetTop(ModeBar) + ChromeScale.LayoutSize(ModeBar).Height + 10;
         PlaceTopCenterOnMonitor(HintBox, mon, topInset: hintTop - mon.Top);
     }
 
@@ -575,7 +603,10 @@ public partial class CaptureOverlayWindow : Window
         }
 
         if (_phase == Phase.Select || _pendingNewSelection)
+        {
+            HideSelectChrome();
             UpdateSelectionVisual(MakeRect(_start, pos));
+        }
     }
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
@@ -656,7 +687,12 @@ public partial class CaptureOverlayWindow : Window
         ReleaseMouseCapture();
 
         var rect = MakeRect(_start, e.GetPosition(Root));
-        if (!IsUsableSelection(rect)) { ResetSelection(); return; }
+        if (!IsUsableSelection(rect))
+        {
+            ResetSelection();
+            ShowSelectChrome();
+            return;
+        }
 
         _selDip = rect;
         _pixelRegion = ToPixelRegion(rect);
@@ -722,7 +758,7 @@ public partial class CaptureOverlayWindow : Window
         }
         _selDip = new WpfRect(Math.Min(l, r), Math.Min(t, b), Math.Abs(r - l), Math.Abs(b - t));
         UpdateSelectionVisual(_selDip);
-        PositionPanels();
+        QueuePositionPanels();
     }
 
     private void LeaveEditPhase()
@@ -806,6 +842,22 @@ public partial class CaptureOverlayWindow : Window
         Canvas.SetLeft(DimRight, rightX); Canvas.SetTop(DimRight, hole.Y);
     }
 
+    private void HideSelectChrome()
+    {
+        if (ModeBar.Visibility == Visibility.Visible)
+            ModeBar.Visibility = Visibility.Collapsed;
+        if (HintBox.Visibility == Visibility.Visible)
+            HintBox.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowSelectChrome()
+    {
+        if (_phase != Phase.Select || _mode != CaptureMode.Region) return;
+        ModeBar.Visibility = Visibility.Visible;
+        HintBox.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(() => PositionTopBars(), System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
     private void UpdateSelectionVisual(WpfRect rect)
     {
         UpdateDimRects(rect);
@@ -817,7 +869,12 @@ public partial class CaptureOverlayWindow : Window
         Canvas.SetTop(SelectionBorder, rect.Y);
 
         var px = ToPixelRegion(rect);
-        SizeText.Text = $"{px.Width} × {px.Height}";
+        if (px.Width != _lastSizeW || px.Height != _lastSizeH)
+        {
+            _lastSizeW = px.Width;
+            _lastSizeH = px.Height;
+            SizeText.Text = $"{px.Width} × {px.Height}";
+        }
         SizeBadge.Visibility = Visibility.Visible;
         double by = rect.Y - 26 < 0 ? rect.Y + 6 : rect.Y - 26;
         Canvas.SetLeft(SizeBadge, rect.X);
@@ -831,10 +888,24 @@ public partial class CaptureOverlayWindow : Window
         SizeBadge.Visibility = Visibility.Collapsed;
     }
 
+    private void CachePixelScale()
+    {
+        if (ActualWidth > 0 && ActualHeight > 0)
+        {
+            _pixelScaleX = _screenshot.Width / ActualWidth;
+            _pixelScaleY = _screenshot.Height / ActualHeight;
+        }
+    }
+
     private Rectangle ToPixelRegion(WpfRect rect)
     {
-        double sx = _screenshot.Width / ActualWidth;
-        double sy = _screenshot.Height / ActualHeight;
+        double sx = _pixelScaleX, sy = _pixelScaleY;
+        if (sx <= 0 || sy <= 0)
+        {
+            CachePixelScale();
+            sx = _pixelScaleX;
+            sy = _pixelScaleY;
+        }
         var r = new Rectangle(
             (int)Math.Round(rect.X * sx), (int)Math.Round(rect.Y * sy),
             (int)Math.Round(rect.Width * sx), (int)Math.Round(rect.Height * sy));
@@ -884,6 +955,7 @@ public partial class CaptureOverlayWindow : Window
                 _scene = new Scene { CanvasSize = new SKSize((float)_selDip.Width, (float)_selDip.Height) };
                 FreeSceneSink?.Invoke(_scene);
             }
+            SyncFreeCanvasToOverlay();
             EnsureFreeBackgroundColor(_scene);
         }
         else
@@ -971,6 +1043,14 @@ public partial class CaptureOverlayWindow : Window
     {
         if (_mode != CaptureMode.Free || _scene == null) return;
 
+        // Dışa aktarma kırpması sahneyi küçültmez — iptal edilince tuval tam kalır.
+        if (_pendingFreeExportAction != null)
+        {
+            _pendingExportCrop = cropRect;
+            FinishPendingFreeExport();
+            return;
+        }
+
         _selDip = new WpfRect(
             _selDip.X + cropRect.Left,
             _selDip.Y + cropRect.Top,
@@ -983,12 +1063,6 @@ public partial class CaptureOverlayWindow : Window
         EditHost.Height = _selDip.Height;
 
         SyncPlaceholder();
-        if (_pendingFreeExportAction != null)
-        {
-            FinishPendingFreeExport();
-            return;
-        }
-
         BuildOptionBar();
         PositionPanels();
         _canvas?.Focus();
@@ -1005,6 +1079,19 @@ public partial class CaptureOverlayWindow : Window
     {
         if (scene.BackgroundColor.Alpha == 0)
             scene.BackgroundColor = CurrentFreeBackgroundColor();
+    }
+
+    /// <summary>Önceki kırpma oturumundan kalan küçük tuvali tam overlay'e geri açar.</summary>
+    private void SyncFreeCanvasToOverlay()
+    {
+        if (_scene == null || _mode != CaptureMode.Free) return;
+        var size = new SKSize((float)_selDip.Width, (float)_selDip.Height);
+        if (Math.Abs(_scene.CanvasSize.Width - size.Width) > 0.5f
+            || Math.Abs(_scene.CanvasSize.Height - size.Height) > 0.5f)
+        {
+            _scene.CanvasSize = size;
+            _scene.RaiseChanged();
+        }
     }
 
     private void BeginSceneCropUi()
@@ -1030,11 +1117,12 @@ public partial class CaptureOverlayWindow : Window
         if (_canvas == null) return;
         CropActionBar.Visibility = Visibility.Collapsed;
         bool hadPendingAction = _pendingFreeExportAction != null;
-        bool applied = _canvas.CommitSceneCrop();
+        bool applied = _canvas.CommitSceneCrop(persist: !hadPendingAction);
         if (!applied)
         {
             _pendingFreeExportAction = null;
             _pendingFreeExportTransparent = false;
+            _pendingExportCrop = null;
             RestoreAfterSceneCropUi();
             return;
         }
@@ -1053,6 +1141,7 @@ public partial class CaptureOverlayWindow : Window
         CropActionBar.Visibility = Visibility.Collapsed;
         _pendingFreeExportAction = null;
         _pendingFreeExportTransparent = false;
+        _pendingExportCrop = null;
         RestoreAfterSceneCropUi();
         _canvas.Focus();
     }
@@ -1137,8 +1226,8 @@ public partial class CaptureOverlayWindow : Window
         var color = CurrentFreeBackgroundColor();
         var swatch = new Border
         {
-            Width = 16,
-            Height = 16,
+            Width = 18,
+            Height = 18,
             CornerRadius = new CornerRadius(3),
             Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(color.Alpha, color.Red, color.Green, color.Blue)),
             BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(210, 255, 255, 255)),
@@ -1148,8 +1237,8 @@ public partial class CaptureOverlayWindow : Window
         var btn = new Button
         {
             Style = TryFindResource("ActionChip") as Style,
-            Width = 32,
-            Height = 32,
+            Width = 36,
+            Height = 36,
             Margin = new Thickness(2),
             Padding = new Thickness(0),
             Background = System.Windows.Media.Brushes.Transparent,
@@ -1427,8 +1516,8 @@ public partial class CaptureOverlayWindow : Window
         // Çevir: seçili bölgeyi Google Lens ile çevirip aynı yerde göster
         if (_mode is CaptureMode.Region or CaptureMode.FullScreen)
         {
-            string tgt = string.IsNullOrWhiteSpace(_settings.TranslateTargetLanguage)
-                ? "tr" : _settings.TranslateTargetLanguage.Trim().ToUpperInvariant();
+            string tgt = string.IsNullOrWhiteSpace(_settings.TranslateNativeLanguage)
+                ? "tr" : _settings.TranslateNativeLanguage.Trim().ToUpperInvariant();
             ActionStack.Children.Add(MakeCmd("IconTranslate", "Çevir",
                 $"Seçili alanı çevir → {tgt}  (kaynak: ayarlar)",
                 () => _ = DoTranslateAsync()));
@@ -1820,12 +1909,7 @@ public partial class CaptureOverlayWindow : Window
 
         try
         {
-            string targetLang = string.IsNullOrWhiteSpace(_settings.TranslateTargetLanguage)
-                ? "tr" : _settings.TranslateTargetLanguage.Trim();
-            string? sourceLang = string.IsNullOrWhiteSpace(_settings.TranslateSourceLanguage)
-                || string.Equals(_settings.TranslateSourceLanguage, "auto", StringComparison.OrdinalIgnoreCase)
-                ? null
-                : _settings.TranslateSourceLanguage.Trim();
+            var (targetLang, sourceLang) = TranslateLanguageRouter.ImageRoute(_settings.TranslateNativeLanguage);
 
             ShowBusyToast(FormatTranslatingMessage(targetLang));
 
@@ -2684,9 +2768,41 @@ public partial class CaptureOverlayWindow : Window
     private double SceneScaleX => _scene == null || _scene.Width <= 0 ? 1 : _selDip.Width / _scene.Width;
     private double SceneScaleY => _scene == null || _scene.Height <= 0 ? 1 : _selDip.Height / _scene.Height;
 
-    private WpfRect SceneRectToScreen(SKRect r) => new(
-        _selDip.X + r.Left * SceneScaleX, _selDip.Y + r.Top * SceneScaleY,
-        r.Width * SceneScaleX, r.Height * SceneScaleY);
+    private WpfRect SceneRectToScreen(SKRect r)
+    {
+        // Tuvalin kendi (uniform) dönüşümü — bağımsız X/Y ölçeği opacity barını resmin altına kaçırıyordu.
+        if (_canvas != null && _canvas.ActualWidth > 0 && _canvas.ActualHeight > 0)
+        {
+            var local = _canvas.SceneRectToWpf(r);
+            return new WpfRect(_selDip.X + local.X, _selDip.Y + local.Y, local.Width, local.Height);
+        }
+
+        double sx = SceneScaleX, sy = SceneScaleY;
+        return new WpfRect(
+            _selDip.X + r.Left * sx, _selDip.Y + r.Top * sy,
+            r.Width * sx, r.Height * sy);
+    }
+
+    private (double sx, double sy) SceneViewScale()
+    {
+        if (_canvas != null && _canvas.ActualWidth > 0 && _scene is { Width: > 0, Height: > 0 })
+        {
+            var local = _canvas.SceneRectToWpf(new SKRect(0, 0, _scene.Width, _scene.Height));
+            return (local.Width / _scene.Width, local.Height / _scene.Height);
+        }
+        return (SceneScaleX, SceneScaleY);
+    }
+
+    private void QueuePositionPanels()
+    {
+        if (_panelsPosQueued) return;
+        _panelsPosQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _panelsPosQueued = false;
+            if (IsVisible) PositionPanels();
+        }, System.Windows.Threading.DispatcherPriority.Render);
+    }
 
     // ---- Panel konumlandırma ----
     // ===================== Hover etiket =====================
@@ -2733,7 +2849,8 @@ public partial class CaptureOverlayWindow : Window
     private void ClampToolbar(ref double x, ref double y, WpfRect? clampTo = null)
     {
         const double gap = 6;
-        double w = Toolbar.ActualWidth, h = Toolbar.ActualHeight;
+        var tb = ChromeScale.LayoutSize(Toolbar);
+        double w = tb.Width, h = tb.Height;
         var area = clampTo ?? new WpfRect(0, 0, ActualWidth, ActualHeight);
         double minX = area.Left + gap;
         double minY = area.Top + gap;
@@ -2805,11 +2922,50 @@ public partial class CaptureOverlayWindow : Window
             best.Bounds.Height / sy);
     }
 
+    /// <summary>
+    /// Overlay chrome'una monitör/pencere DPI oranı. Yakalama koordinatlarına dokunmaz.
+    /// </summary>
+    private void ApplyOverlayChromeScale()
+    {
+        double scale = OverlayChromeScale();
+        ChromeScale.Apply(Toolbar, scale);
+        ChromeScale.Apply(ActionBar, scale);
+        ChromeScale.Apply(ModeBar, scale);
+        ChromeScale.Apply(CropActionBar, scale);
+        ChromeScale.Apply(OptionBar, scale);
+        ChromeScale.Apply(ToastBanner, scale);
+    }
+
+    private double OverlayChromeScale()
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        double dipX, dipY;
+        if (Toolbar.Visibility == Visibility.Visible
+            && _toolbarMoved
+            && !double.IsNaN(Canvas.GetLeft(Toolbar))
+            && !double.IsNaN(Canvas.GetTop(Toolbar)))
+        {
+            dipX = Canvas.GetLeft(Toolbar);
+            dipY = Canvas.GetTop(Toolbar);
+        }
+        else
+        {
+            var mon = GetUiMonitorDip();
+            dipX = mon.Left + mon.Width / 2;
+            dipY = mon.Top + 40;
+        }
+
+        int sx = _virtualBounds.X + (int)Math.Round(dipX * dpi.DpiScaleX);
+        int sy = _virtualBounds.Y + (int)Math.Round(dipY * dpi.DpiScaleY);
+        return ChromeScale.ForScreenPoint(this, sx, sy);
+    }
+
     /// <summary>Elemanı monitörün üst-ortasına yerleştirir (DIP).</summary>
     private static void PlaceTopCenterOnMonitor(FrameworkElement el, WpfRect mon, double topInset = 18)
     {
         const double gap = 6;
-        double w = el.ActualWidth, h = el.ActualHeight;
+        var sz = ChromeScale.LayoutSize(el);
+        double w = sz.Width, h = sz.Height;
         double x = Math.Round(mon.Left + (mon.Width - w) / 2);
         double y = mon.Top + topInset;
         double maxX = Math.Max(mon.Left + gap, mon.Right - w - gap);
@@ -2824,10 +2980,12 @@ public partial class CaptureOverlayWindow : Window
     {
         const double gap = 10;
         bool free = _mode == CaptureMode.Free;
+        ApplyOverlayChromeScale();
         var mon = GetUiMonitorDip();
 
-        double tbW = Toolbar.ActualWidth, tbH = Toolbar.ActualHeight;
-        if (tbW <= 0 || tbH <= 0) { Toolbar.UpdateLayout(); tbW = Toolbar.ActualWidth; tbH = Toolbar.ActualHeight; }
+        Toolbar.UpdateLayout();
+        var tb = ChromeScale.LayoutSize(Toolbar);
+        double tbW = tb.Width, tbH = tb.Height;
         if (ActionBar.ActualWidth <= 0) ActionBar.UpdateLayout();
         bool hasOpt = OptionBar.Visibility == Visibility.Visible;
 
@@ -2891,8 +3049,9 @@ public partial class CaptureOverlayWindow : Window
     {
         const double gap = 8;
         ActionBar.UpdateLayout();
-        double abW = ActionBar.ActualWidth;
-        double abH = ActionBar.ActualHeight;
+        var ab = ChromeScale.LayoutSize(ActionBar);
+        double abW = ab.Width;
+        double abH = ab.Height;
         if (abW <= 0 || abH <= 0) return;
 
         bool hasLocalSel = _selDip.Width >= 2 && _selDip.Height >= 2
@@ -2907,7 +3066,10 @@ public partial class CaptureOverlayWindow : Window
         // Toolbar ve seçim ile çakışmayan aday konumlar (öncelik sırasıyla).
         WpfRect? tb = null;
         if (Toolbar.Visibility == Visibility.Visible && Toolbar.ActualWidth > 0)
-            tb = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), Toolbar.ActualWidth, Toolbar.ActualHeight);
+        {
+            var tbSize = ChromeScale.LayoutSize(Toolbar);
+            tb = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), tbSize.Width, tbSize.Height);
+        }
 
         double cx = _selDip.X + _selDip.Width / 2;
         var candidates = new List<(double x, double y)>
@@ -2965,10 +3127,12 @@ public partial class CaptureOverlayWindow : Window
     private void PositionCropActionBar(WpfRect? monOpt = null)
     {
         const double gap = 8;
+        ApplyOverlayChromeScale();
         var mon = monOpt ?? GetUiMonitorDip();
         CropActionBar.UpdateLayout();
-        double cbW = CropActionBar.ActualWidth;
-        double cbH = CropActionBar.ActualHeight;
+        var cb = ChromeScale.LayoutSize(CropActionBar);
+        double cbW = cb.Width;
+        double cbH = cb.Height;
         if (Toolbar.Visibility != Visibility.Visible)
         {
             PlaceTopCenterOnMonitor(CropActionBar, mon, topInset: 18);
@@ -2977,8 +3141,9 @@ public partial class CaptureOverlayWindow : Window
 
         double tbX = Canvas.GetLeft(Toolbar);
         double tbY = Canvas.GetTop(Toolbar);
-        double tbW = Toolbar.ActualWidth;
-        double tbH = Toolbar.ActualHeight;
+        var tbSize = ChromeScale.LayoutSize(Toolbar);
+        double tbW = tbSize.Width;
+        double tbH = tbSize.Height;
 
         double x = tbX + (tbW - cbW) / 2;
         double y = tbY - cbH - gap;
@@ -2994,10 +3159,12 @@ public partial class CaptureOverlayWindow : Window
     private void PositionOptionBar(WpfRect? monOpt = null)
     {
         const double gap = 8;
+        ApplyOverlayChromeScale();
         var mon = monOpt ?? GetUiMonitorDip();
         // UpdateLayout sadece boyut henüz ölçülmemişse zorla; sürükleme sırasında ActualWidth geçerli
-        double obW = OptionBar.ActualWidth, obH = OptionBar.ActualHeight;
-        if (obW <= 0 || obH <= 0) { OptionBar.UpdateLayout(); obW = OptionBar.ActualWidth; obH = OptionBar.ActualHeight; }
+        OptionBar.UpdateLayout();
+        var ob = ChromeScale.LayoutSize(OptionBar);
+        double obW = ob.Width, obH = ob.Height;
 
         // Çapa dikdörtgeni: seçili öğe varsa onun ekran kutusu; yoksa serbest=monitör alt-orta, bölge=seçim.
         WpfRect anchor;
@@ -3018,7 +3185,8 @@ public partial class CaptureOverlayWindow : Window
         if (obY < mon.Top + gap) obY = mon.Top + gap;
 
         // Araç çubuğuyla çakışırsa sola kaydır
-        var tbRect = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), Toolbar.ActualWidth, Toolbar.ActualHeight);
+        var tbSize = ChromeScale.LayoutSize(Toolbar);
+        var tbRect = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), tbSize.Width, tbSize.Height);
         var obRect = new WpfRect(obX, obY, obW, obH);
         if (tbRect.IntersectsWith(obRect))
         {
@@ -3083,10 +3251,12 @@ public partial class CaptureOverlayWindow : Window
                 return;
             }
 
-            if (!Clipboard.ContainsImage()) return;
-            var src = Clipboard.GetImage();
-            if (src == null) return;
-            var sk = BitmapSourceToSk(src);
+            var sk = ImageExporter.TryGetClipboardBitmap();
+            if (sk == null && Clipboard.ContainsImage())
+            {
+                var src = Clipboard.GetImage();
+                if (src != null) sk = BitmapSourceToSk(src);
+            }
             if (sk == null) return;
 
             float maxW = _scene.Width * 0.6f, maxH = _scene.Height * 0.6f;
@@ -3232,9 +3402,11 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionToastBanner()
     {
+        ApplyOverlayChromeScale();
         ToastBanner.UpdateLayout();
         var mon = GetUiMonitorDip();
-        double w = ToastBanner.ActualWidth, h = ToastBanner.ActualHeight;
+        var sz = ChromeScale.LayoutSize(ToastBanner);
+        double w = sz.Width, h = sz.Height;
         Canvas.SetLeft(ToastBanner, Math.Round(mon.Left + (mon.Width - w) / 2));
         Canvas.SetTop(ToastBanner, Math.Round(mon.Bottom - h - 28));
     }
@@ -3267,7 +3439,7 @@ public partial class CaptureOverlayWindow : Window
             int w = conv.PixelWidth, h = conv.PixelHeight, stride = w * 4;
             var buf = new byte[stride * h];
             conv.CopyPixels(buf, stride, 0);
-            var sk = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+            var sk = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
             System.Runtime.InteropServices.Marshal.Copy(buf, 0, sk.GetPixels(), buf.Length);
             return sk;
         }
@@ -3291,7 +3463,7 @@ public partial class CaptureOverlayWindow : Window
         _editCommitted = false;
         item.Measure();
 
-        double scaleY = SceneScaleY;
+        double scaleY = SceneViewScale().sy;
         // WYSIWYG: gerçek metni TextItem render eder (ribbon/gölge/renk). TextBox üstte saydam metinli,
         // yalnız caret+seçim görünür; yazdıkça item.Text güncellenir → kutu/ribbon büyür.
         var box = new TextBox
@@ -3352,12 +3524,20 @@ public partial class CaptureOverlayWindow : Window
     {
         if (_textBox == null || _editingItem == null) return;
         var size = _editingItem.Measure();
-        _textBox.Width = Math.Max(8, size.Width * SceneScaleX + 4);
-        _textBox.Height = Math.Max(16, size.Height * SceneScaleY + 4);
-        double sx = _selDip.X + _editingItem.Position.X * SceneScaleX;
-        double sy = _selDip.Y + _editingItem.Position.Y * SceneScaleY;
-        Canvas.SetLeft(_textBox, sx);
-        Canvas.SetTop(_textBox, sy);
+        var (sx, sy) = SceneViewScale();
+        _textBox.Width = Math.Max(8, size.Width * sx + 4);
+        _textBox.Height = Math.Max(16, size.Height * sy + 4);
+        if (_canvas != null && _canvas.ActualWidth > 0)
+        {
+            var p = _canvas.ScenePointToWpf(_editingItem.Position);
+            Canvas.SetLeft(_textBox, _selDip.X + p.X);
+            Canvas.SetTop(_textBox, _selDip.Y + p.Y);
+        }
+        else
+        {
+            Canvas.SetLeft(_textBox, _selDip.X + _editingItem.Position.X * sx);
+            Canvas.SetTop(_textBox, _selDip.Y + _editingItem.Position.Y * sy);
+        }
     }
 
     private static string NormalizeEditorText(string text)
@@ -3408,6 +3588,7 @@ public partial class CaptureOverlayWindow : Window
         _scene.Items.Clear();
         _scene.ClearHistory();
         _scene.ResetStepCounter();
+        SyncFreeCanvasToOverlay();
         _canvas?.ClearSelection();
         _scene.RaiseChanged();
     }
@@ -3429,7 +3610,14 @@ public partial class CaptureOverlayWindow : Window
                 _scene.BackgroundColor = SkiaSharp.SKColors.Transparent;
             else if (savedBg.Alpha == 0)
                 _scene.BackgroundColor = CurrentFreeBackgroundColor();
-            return SceneRenderer.RenderToBitmap(_scene);
+            var bmp = SceneRenderer.RenderToBitmap(_scene);
+            if (_pendingExportCrop is { } crop && crop.Width >= 1 && crop.Height >= 1)
+            {
+                var cropped = SceneRenderer.CropBitmap(bmp, crop);
+                bmp.Dispose();
+                return cropped;
+            }
+            return bmp;
         }
         finally
         {
@@ -3537,7 +3725,12 @@ public partial class CaptureOverlayWindow : Window
         bool transparent = _pendingFreeExportTransparent;
         _pendingFreeExportAction = null;
         _pendingFreeExportTransparent = false;
-        if (action == null) { RestoreAfterSceneCropUi(); return; }
+        if (action == null)
+        {
+            _pendingExportCrop = null;
+            RestoreAfterSceneCropUi();
+            return;
+        }
 
         bool finished = action.Value switch
         {
@@ -3546,6 +3739,7 @@ public partial class CaptureOverlayWindow : Window
             PendingFreeExportAction.Upload => await StartUploadRenderedAsync(transparent),
             _ => false,
         };
+        _pendingExportCrop = null;
 
         if (!finished && IsVisible)
         {

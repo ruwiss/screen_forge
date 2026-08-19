@@ -809,7 +809,7 @@ public sealed partial class GifEditorWindow
         if (set.Progress.HasWork)
         {
             int count = Math.Max(1, _document.FrameCount);
-            double fraction = count <= 1 ? 1 : (SelectedIndex + 1) / (double)count;
+            double fraction = count <= 1 ? 1 : (CurrentFrame + 1) / (double)count;
 
             if (set.Progress.Style == ProgressStyle.Bar)
             {
@@ -832,11 +832,11 @@ public sealed partial class GifEditorWindow
             {
                 // Yazı biçimi de önizlenmeli; yoksa ayar seçilince hiçbir şey görünmez.
                 // Biçimlendirme dışa aktarımla aynı yerden gelir ki metin birebir eşleşsin.
-                long elapsed = (long)_document.TimeUpTo(SelectedIndex).TotalMilliseconds;
+                long elapsed = (long)_document.TimeUpTo(CurrentFrame).TotalMilliseconds;
                 long total = (long)_document.Current.TotalDuration.TotalMilliseconds;
 
                 string text = OverlayRenderer.FormatReadout(set.Progress,
-                    SelectedIndex, count, elapsed, total, fraction);
+                    CurrentFrame, count, elapsed, total, fraction);
 
                 AddTextPreview(text, set.Progress.FontSize, set.Progress.Placement,
                     Colors.White, Color.FromArgb(170, 0, 0, 0), width, height, set.Progress.Margin);

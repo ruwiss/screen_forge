@@ -55,7 +55,15 @@ public sealed partial class GifEditorWindow : Window
             set { _isDuplicate = value; Raise(nameof(IsDuplicate)); }
         }
 
+        /// <summary>Oynatma kafasını seçimden ayırır; yalnızca oynarken yanar.</summary>
+        public bool IsPlayhead
+        {
+            get => _isPlayhead;
+            set { _isPlayhead = value; Raise(nameof(IsPlayhead)); }
+        }
+
         private bool _isDuplicate;
+        private bool _isPlayhead;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -63,6 +71,39 @@ public sealed partial class GifEditorWindow : Window
     }
 
     private const int ThumbnailWidth = 76;
+    private const double TimelineItemWidthBase = 78;
+    private const double TimelineThumbHeightBase = 54;
+    private const double TimelineStripExtra = 50;
+
+    public static readonly DependencyProperty TimelineItemWidthProperty =
+        DependencyProperty.Register(nameof(TimelineItemWidth), typeof(double), typeof(GifEditorWindow),
+            new PropertyMetadata(TimelineItemWidthBase));
+
+    public static readonly DependencyProperty TimelineThumbHeightProperty =
+        DependencyProperty.Register(nameof(TimelineThumbHeight), typeof(double), typeof(GifEditorWindow),
+            new PropertyMetadata(TimelineThumbHeightBase));
+
+    public static readonly DependencyProperty TimelineStripHeightProperty =
+        DependencyProperty.Register(nameof(TimelineStripHeight), typeof(double), typeof(GifEditorWindow),
+            new PropertyMetadata(TimelineThumbHeightBase + TimelineStripExtra));
+
+    public double TimelineItemWidth
+    {
+        get => (double)GetValue(TimelineItemWidthProperty);
+        set => SetValue(TimelineItemWidthProperty, value);
+    }
+
+    public double TimelineThumbHeight
+    {
+        get => (double)GetValue(TimelineThumbHeightProperty);
+        set => SetValue(TimelineThumbHeightProperty, value);
+    }
+
+    public double TimelineStripHeight
+    {
+        get => (double)GetValue(TimelineStripHeightProperty);
+        set => SetValue(TimelineStripHeightProperty, value);
+    }
 
     private readonly GifRecorder _recorder;
     private readonly AppSettings? _settings;
@@ -80,6 +121,7 @@ public sealed partial class GifEditorWindow : Window
     // Oynatma
     private DispatcherTimer? _playTimer;
     private bool _playing;
+    private int _playheadIndex;
 
     // Dışa aktarma
     private bool _exporting;
@@ -133,6 +175,21 @@ public sealed partial class GifEditorWindow : Window
     }
 
     private int SelectedIndex => Timeline.SelectedIndex < 0 ? 0 : Timeline.SelectedIndex;
+
+    /// <summary>
+    /// Önizlemede görünen kare. Oynatırken seçim sabit kalır, kafa ayrı yürür.
+    /// </summary>
+    private int CurrentFrame
+    {
+        get
+        {
+            int last = Math.Max(0, _document.FrameCount - 1);
+            if (_playing)
+                return Math.Clamp(_playheadIndex, 0, last);
+            int sel = Timeline.SelectedIndex;
+            return sel < 0 ? 0 : Math.Min(sel, last);
+        }
+    }
 
     /// <summary>Seçili kare indeksleri; seçim yoksa geçerli kare.</summary>
     private List<int> SelectedIndexes()
@@ -208,6 +265,8 @@ public sealed partial class GifEditorWindow : Window
 
         Timeline.SelectionChanged += OnTimelineSelectionChanged;
         Timeline.MouseDoubleClick += (_, _) => StopPlayback();
+        Timeline.PreviewMouseWheel += OnTimelineZoomWheel;
+        ClipScroll.PreviewMouseWheel += OnTimelineZoomWheel;
 
         CanvasScroll.PreviewMouseWheel += OnCanvasWheel;
         CanvasScroll.SizeChanged += (_, _) => { if (_fitOnNextLayout) ZoomToFit(); };
@@ -542,6 +601,8 @@ public sealed partial class GifEditorWindow : Window
             item.Thumbnail = _thumbnails.Get(frames[i].Pixels);
             item.IsDuplicate = _duplicatedPixels.Contains(frames[i].Pixels);
         }
+
+        RefreshPlayheadMarks();
     }
 
     private void UpdatePreview()
@@ -555,7 +616,7 @@ public sealed partial class GifEditorWindow : Window
 
         EmptyHint.Visibility = Visibility.Collapsed;
 
-        int index = Math.Clamp(SelectedIndex, 0, _document.FrameCount - 1);
+        int index = Math.Clamp(CurrentFrame, 0, _document.FrameCount - 1);
         var frame = _document.Frames[index];
 
         // Etkin katman tuvalde canlı düzenlendiği için burada yalnızca
@@ -588,7 +649,10 @@ public sealed partial class GifEditorWindow : Window
         Timeline.SelectedIndex = index;
         _suppressSelectionSync = false;
 
+        _playheadIndex = index;
+        RefreshPlayheadMarks();
         Timeline.ScrollIntoView(_timelineItems[index]);
+
         UpdatePreview();
         UpdateChrome();
     }
@@ -606,7 +670,9 @@ public sealed partial class GifEditorWindow : Window
 
         _suppressSelectionSync = false;
 
-        Timeline.ScrollIntoView(_timelineItems[Math.Clamp(indexes[0], 0, _timelineItems.Count - 1)]);
+        _playheadIndex = Math.Clamp(indexes[0], 0, _timelineItems.Count - 1);
+        RefreshPlayheadMarks();
+        Timeline.ScrollIntoView(_timelineItems[_playheadIndex]);
         UpdatePreview();
         UpdateChrome();
     }
@@ -684,6 +750,11 @@ public sealed partial class GifEditorWindow : Window
         if (_suppressSelectionSync)
             return;
 
+        if (_playing)
+            StopPlayback();
+
+        _playheadIndex = SelectedIndex;
+        RefreshPlayheadMarks();
         UpdatePreview();
         UpdateChrome();
     }
@@ -719,6 +790,8 @@ public sealed partial class GifEditorWindow : Window
             return;
 
         _playing = true;
+        _playheadIndex = SelectedIndex;
+        RefreshPlayheadMarks();
         PlayIcon.Data = (Geometry)FindResource("IconPause");
         PlayIcon.Fill = Brushes.Transparent;
 
@@ -729,7 +802,7 @@ public sealed partial class GifEditorWindow : Window
             _playTimer.Tick += (_, _) => AdvancePlayback();
         }
 
-        _playTimer.Interval = TimeSpan.FromMilliseconds(CurrentDelay(SelectedIndex));
+        _playTimer.Interval = TimeSpan.FromMilliseconds(CurrentDelay(CurrentFrame));
         _playTimer.Start();
     }
 
@@ -741,7 +814,7 @@ public sealed partial class GifEditorWindow : Window
             return;
         }
 
-        int next = SelectedIndex + 1;
+        int next = _playheadIndex + 1;
 
         // Aralık işaretlenmişse yalnızca o bölümü oynat.
         if (next > _rangeEnd || next >= _document.FrameCount)
@@ -755,7 +828,11 @@ public sealed partial class GifEditorWindow : Window
             next = _rangeStart;
         }
 
-        SelectFrame(next);
+        _playheadIndex = next;
+        RefreshPlayheadMarks();
+        KeepPlayheadVisible(next);
+        UpdatePreview();
+        UpdateChrome();
         _playTimer!.Interval = TimeSpan.FromMilliseconds(CurrentDelay(next));
     }
 
@@ -766,8 +843,12 @@ public sealed partial class GifEditorWindow : Window
 
         _playing = false;
         _playTimer?.Stop();
+        StopPlayheadFollow();
         PlayIcon.Data = (Geometry)FindResource("IconPlay");
         PlayIcon.Fill = (Brush)FindResource("AccentBrush");
+        RefreshPlayheadMarks();
+        UpdatePreview();
+        UpdateChrome();
     }
 
     private int CurrentDelay(int index)
@@ -932,7 +1013,14 @@ public sealed partial class GifEditorWindow : Window
         TrimButton.Visibility = partialRange ? Visibility.Visible : Visibility.Collapsed;
         RangeResetButton.Visibility = partialRange ? Visibility.Visible : Visibility.Collapsed;
 
-        StatsLabel.Text = count == 0 ? "" : $"{SelectedIndex + 1} / {count}";
+        FrameCountLabel.Text = count switch
+        {
+            0 => "—",
+            1 => "1 kare",
+            _ => $"{count} kare",
+        };
+
+        StatsLabel.Text = count == 0 ? "" : $"{CurrentFrame + 1} / {count}";
         StatsLabel.ToolTip = count == 0
             ? null
             : $"Toplam {snapshot.TotalDuration.TotalSeconds:0.0} sn · ortalama {snapshot.AverageDelay:0} ms · " +

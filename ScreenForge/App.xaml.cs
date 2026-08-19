@@ -85,6 +85,7 @@ public partial class App : Application
         _hotkeys.Register(Settings.FullScreenHotkey, OnCaptureFullScreen, "Tam ekran yakalama");
         _hotkeys.Register(Settings.FullScreenUploadHotkey, OnCaptureFullScreenUpload, "Tam ekran anında yükleme");
         _hotkeys.Register(Settings.CollageHotkey, OnCollage, "Kolaj / yerleştirme");
+        _hotkeys.Register(Settings.QuickTranslateHotkey, OnQuickTranslate, "Hızlı çeviri");
 
         if (_hotkeys.FailedRegistrations.Count > 0)
         {
@@ -207,6 +208,39 @@ public partial class App : Application
 
     private Windows.SettingsWindow? _settingsWindow;
     private Windows.AboutWindow? _aboutWindow;
+    private Windows.QuickTranslateWindow? _quickTranslate;
+
+    private async void OnQuickTranslate()
+    {
+        string? selected = null;
+        try
+        {
+            selected = await Translate.ForegroundSelectionReader.TryCaptureAsync();
+        }
+        catch
+        {
+            selected = null;
+        }
+
+        try
+        {
+            if (_quickTranslate != null)
+            {
+                _quickTranslate.UseIncomingText(selected);
+                return;
+            }
+
+            _quickTranslate = new Windows.QuickTranslateWindow(Settings, selected);
+            _quickTranslate.Closed += (_, _) => _quickTranslate = null;
+            _quickTranslate.Show();
+            _quickTranslate.Activate();
+        }
+        catch
+        {
+            _quickTranslate?.Close();
+            _quickTranslate = null;
+        }
+    }
 
     private void OnSettings()
     {

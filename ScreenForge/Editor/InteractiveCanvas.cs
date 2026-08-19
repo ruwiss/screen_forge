@@ -302,6 +302,8 @@ public sealed class InteractiveCanvas : SKElement
         canvas.Clear(TransparentBackground ? SKColors.Transparent : new SKColor(0x16, 0x1A, 0x22));
 
         // Tuvali pencereye sığacak şekilde ölçekle + ortala
+        _paintPxW = e.Info.Width;
+        _paintPxH = e.Info.Height;
         var (scale, offset) = ComputeTransform(e.Info.Width, e.Info.Height);
         EnsureScalePaints(scale);
         canvas.Save();
@@ -358,31 +360,38 @@ public sealed class InteractiveCanvas : SKElement
 
     private float _scale = 1f;
     private SKPoint _offset;
+    private int _paintPxW;
+    private int _paintPxH;
 
     private (float scale, SKPoint offset) ComputeTransform(int pxW, int pxH)
     {
-        float cw = Scene.Width, ch = Scene.Height;
-        if (cw <= 0 || ch <= 0) return (1f, new SKPoint(0, 0));
+        var t = CanvasViewTransform.Compute(Layout, Scene.Width, Scene.Height, pxW, pxH, (float)DpiScale);
+        _scale = t.Scale;
+        _offset = t.Offset;
+        return t;
+    }
 
-        // OneToOne: canvas, sahne ile aynı DIP boyutunda yerleştirildiğinden, cihaz pikseli ölçeği
-        // = DPI ölçeği. Böylece bölge görüntüsü ekrandaki gerçek yerine bire bir oturur.
-        if (Layout == LayoutMode.OneToOne)
+    private void EnsureViewTransform()
+    {
+        int w = _paintPxW;
+        int h = _paintPxH;
+        if (w <= 0 || h <= 0)
         {
-            float s = pxW > 0 && cw > 0 ? pxW / cw : 1f;
-            if (s <= 0 || float.IsNaN(s)) s = (float)DpiScale;
-            _scale = s; _offset = new SKPoint(0, 0);
-            return (s, new SKPoint(0, 0));
+            double dpi = DpiScale;
+            w = Math.Max(1, (int)Math.Round(Math.Max(ActualWidth, 1) * dpi));
+            h = Math.Max(1, (int)Math.Round(Math.Max(ActualHeight, 1) * dpi));
         }
+        ComputeTransform(w, h);
+    }
 
-        float margin = 24f * (float)DpiScale;
-        float availW = pxW - margin * 2, availH = pxH - margin * 2;
-        float scale = Math.Min(availW / cw, availH / ch);
-        scale = Math.Min(scale, 4f);
-        if (scale <= 0 || float.IsNaN(scale)) scale = 1f;
-        float ox = (pxW - cw * scale) / 2f;
-        float oy = (pxH - ch * scale) / 2f;
-        _scale = scale; _offset = new SKPoint(ox, oy);
-        return (scale, new SKPoint(ox, oy));
+    private (int pxW, int pxH) PaintPixelSize()
+    {
+        if (_paintPxW > 0 && _paintPxH > 0)
+            return (_paintPxW, _paintPxH);
+        double dpi = DpiScale;
+        return (
+            Math.Max(1, (int)Math.Round(Math.Max(ActualWidth, 1) * dpi)),
+            Math.Max(1, (int)Math.Round(Math.Max(ActualHeight, 1) * dpi)));
     }
 
     private double _dpiScale = 1.0;
@@ -404,11 +413,31 @@ public sealed class InteractiveCanvas : SKElement
     /// <summary>WPF fare noktası → sahne (içerik piksel) koordinatı.</summary>
     public SKPoint PointToScene(Point wpf) => ToScene(wpf);
 
+    /// <summary>Sahne dikdörtgeni → tuval DIP (EditHost yerel koordinatı).</summary>
+    public Rect SceneRectToWpf(SKRect r)
+    {
+        EnsureViewTransform();
+        var (pxW, pxH) = PaintPixelSize();
+        var (l, t) = CanvasViewTransform.SceneToWpf(r.Left, r.Top, ActualWidth, ActualHeight, pxW, pxH, _scale, _offset);
+        var (rt, b) = CanvasViewTransform.SceneToWpf(r.Right, r.Bottom, ActualWidth, ActualHeight, pxW, pxH, _scale, _offset);
+        return new Rect(l, t, Math.Max(0, rt - l), Math.Max(0, b - t));
+    }
+
+    /// <summary>Sahne noktası → tuval DIP.</summary>
+    public Point ScenePointToWpf(SKPoint p)
+    {
+        EnsureViewTransform();
+        var (pxW, pxH) = PaintPixelSize();
+        var (x, y) = CanvasViewTransform.SceneToWpf(p.X, p.Y, ActualWidth, ActualHeight, pxW, pxH, _scale, _offset);
+        return new Point(x, y);
+    }
+
     private SKPoint ToScene(Point wpf)
     {
-        double dpi = DpiScale;
-        float px = (float)(wpf.X * dpi), py = (float)(wpf.Y * dpi);
-        return new SKPoint((px - _offset.X) / _scale, (py - _offset.Y) / _scale);
+        EnsureViewTransform();
+        var (pxW, pxH) = PaintPixelSize();
+        return CanvasViewTransform.WpfToScene(
+            wpf.X, wpf.Y, ActualWidth, ActualHeight, pxW, pxH, _scale, _offset);
     }
 
     private void DrawSelection(SKCanvas canvas, SceneItem item, float scale)
@@ -1457,12 +1486,12 @@ public sealed class InteractiveCanvas : SKElement
         InvalidateVisual();
     }
 
-    public bool CommitSceneCrop()
+    public bool CommitSceneCrop(bool persist = true)
     {
         if (!_sceneCropping) return false;
         var cr = _sceneCropRect;
         bool applied = cr.Width >= 4 && cr.Height >= 4;
-        if (applied)
+        if (applied && persist)
             Scene.Apply(new SceneCropAction(Scene, cr));
         _sceneCropping = false;
         _sceneCropDragging = false;

@@ -204,6 +204,7 @@ public partial class SettingsWindow : Window
             ("Tam ekran yakalama", "Tüm ekranın görüntüsünü al", _settings.FullScreenHotkey),
             ("Anında yükleme", "Ekran görüntüsünü al ve yükle", _settings.FullScreenUploadHotkey),
             ("Serbest / yerleştirme", "Kolaj ve serbest düzenleme modu", _settings.CollageHotkey),
+            ("Hızlı çeviri", "Seçili metni çevirir; seçim yoksa yazarak çeviri açılır", _settings.QuickTranslateHotkey),
         };
 
         var cardStyle = (Style)FindResource("Card");
@@ -365,28 +366,6 @@ public partial class SettingsWindow : Window
                 fe.MinHeight = maxH;
     }
 
-    /// <summary>Kod → görünen ad (kaynak dilde "auto" = Otomatik).</summary>
-    private static readonly (string Code, string Label)[] TranslateLanguages =
-    [
-        ("auto", "Otomatik algıla"),
-        ("tr", "Türkçe"),
-        ("en", "English"),
-        ("de", "Deutsch"),
-        ("fr", "Français"),
-        ("es", "Español"),
-        ("it", "Italiano"),
-        ("pt", "Português"),
-        ("ru", "Русский"),
-        ("ar", "العربية"),
-        ("zh", "中文"),
-        ("ja", "日本語"),
-        ("ko", "한국어"),
-        ("nl", "Nederlands"),
-        ("pl", "Polski"),
-        ("uk", "Українська"),
-        ("hi", "हिन्दी"),
-    ];
-
     private void LoadValues()
     {
         _loading = true;
@@ -407,19 +386,17 @@ public partial class SettingsWindow : Window
 
     private void FillTranslateLanguageCombos()
     {
-        CmbTranslateSource.Items.Clear();
-        CmbTranslateTarget.Items.Clear();
-        foreach (var (code, label) in TranslateLanguages)
+        CmbTranslateNative.Items.Clear();
+        CmbTranslatePair.Items.Clear();
+        foreach (var (code, label) in TranslateLanguageDefaults.Languages)
         {
-            // Kaynak: auto dahil
-            CmbTranslateSource.Items.Add(new ComboBoxItem { Content = label, Tag = code });
-            // Hedef: auto yok
-            if (code != "auto")
-                CmbTranslateTarget.Items.Add(new ComboBoxItem { Content = label, Tag = code });
+            CmbTranslateNative.Items.Add(new ComboBoxItem { Content = label, Tag = code });
+            CmbTranslatePair.Items.Add(new ComboBoxItem { Content = label, Tag = code });
         }
 
-        SelectLangCombo(CmbTranslateSource, _settings.TranslateSourceLanguage, "auto");
-        SelectLangCombo(CmbTranslateTarget, _settings.TranslateTargetLanguage, "tr");
+        SelectLangCombo(CmbTranslateNative, _settings.TranslateNativeLanguage, "en");
+        SelectLangCombo(CmbTranslatePair, _settings.TranslatePairLanguage,
+            TranslateLanguageDefaults.DefaultPair(_settings.TranslateNativeLanguage));
     }
 
     private static void SelectLangCombo(ComboBox cmb, string code, string fallback)
@@ -469,13 +446,13 @@ public partial class SettingsWindow : Window
         });
         BtnBrowse.Click += (_, _) => BrowseFolder();
 
-        CmbTranslateSource.SelectionChanged += (_, _) => Apply(() =>
+        CmbTranslateNative.SelectionChanged += (_, _) => Apply(() =>
         {
-            _settings.TranslateSourceLanguage = GetLangComboCode(CmbTranslateSource) ?? "auto";
+            _settings.TranslateNativeLanguage = GetLangComboCode(CmbTranslateNative) ?? "en";
         });
-        CmbTranslateTarget.SelectionChanged += (_, _) => Apply(() =>
+        CmbTranslatePair.SelectionChanged += (_, _) => Apply(() =>
         {
-            _settings.TranslateTargetLanguage = GetLangComboCode(CmbTranslateTarget) ?? "tr";
+            _settings.TranslatePairLanguage = GetLangComboCode(CmbTranslatePair) ?? "en";
         });
     }
 

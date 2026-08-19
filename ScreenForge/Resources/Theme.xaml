@@ -106,8 +106,8 @@
     <!-- ===================== SVG ikon araç düğmesi (toggle) =====================
          Tag = Geometry (ikon). Path stroke ile çizilir; seçiliyken accent zemin + beyaz çizgi. -->
     <Style x:Key="IconToolButton" TargetType="ToggleButton">
-        <Setter Property="Width" Value="32" />
-        <Setter Property="Height" Value="32" />
+        <Setter Property="Width" Value="36" />
+        <Setter Property="Height" Value="36" />
         <Setter Property="Margin" Value="2" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -117,7 +117,7 @@
                 <ControlTemplate TargetType="ToggleButton">
                     <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6"
                             Padding="0">
-                        <Viewbox Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Viewbox Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Path x:Name="ico" Data="{TemplateBinding Tag}"
                                   Stroke="{TemplateBinding Foreground}" StrokeThickness="2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
@@ -140,8 +140,8 @@
 
     <!-- SVG ikon komut düğmesi (toggle değil). Tag = Geometry. -->
     <Style x:Key="IconCmdButton" TargetType="Button">
-        <Setter Property="Width" Value="28" />
-        <Setter Property="Height" Value="28" />
+        <Setter Property="Width" Value="32" />
+        <Setter Property="Height" Value="32" />
         <Setter Property="Margin" Value="1" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -150,7 +150,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="5">
-                        <Viewbox Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Viewbox Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Path x:Name="ico" Data="{TemplateBinding Tag}"
                                   Stroke="{TemplateBinding Foreground}" StrokeThickness="2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
@@ -181,7 +181,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="5">
-                        <Viewbox Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Viewbox Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Path Data="{TemplateBinding Tag}" Stroke="White" StrokeThickness="2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                                   Fill="Transparent" Width="24" Height="24" Stretch="Uniform" />
@@ -328,7 +328,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
-        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="FontSize" Value="12"/>
         <Setter Property="Padding" Value="6,0,4,0"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
@@ -371,7 +371,7 @@
                                           ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                           Margin="6,0,22,0" VerticalAlignment="Center" HorizontalAlignment="Left"
                                           TextBlock.Foreground="{StaticResource TextBrush}"
-                                          TextBlock.FontSize="11"/>
+                                          TextBlock.FontSize="12"/>
                         <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"
                                AllowsTransparency="True" Focusable="False" PopupAnimation="Fade"
                                Placement="Bottom">
@@ -396,7 +396,7 @@
                 <Style TargetType="ComboBoxItem">
                     <Setter Property="OverridesDefaultStyle" Value="True"/>
                     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-                    <Setter Property="FontSize" Value="11"/>
+                    <Setter Property="FontSize" Value="12"/>
                     <Setter Property="Padding" Value="8,4"/>
                     <Setter Property="Cursor" Value="Hand"/>
                     <Setter Property="Template">
@@ -580,7 +580,7 @@
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="12" />
         <Setter Property="Padding" Value="9,5" />
         <Setter Property="Margin" Value="1,0" />
         <Setter Property="Cursor" Value="Hand" />
@@ -656,8 +656,8 @@
     </Style>
 
     <Style x:Key="EditorRailButton" TargetType="Button" BasedOn="{StaticResource EditorToolButton}">
-        <Setter Property="Width" Value="36" />
-        <Setter Property="Height" Value="36" />
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="Margin" Value="0,1" />
     </Style>
@@ -667,8 +667,8 @@
     </Style>
 
     <Style x:Key="EditorRailToggle" TargetType="ToggleButton" BasedOn="{StaticResource EditorToolToggle}">
-        <Setter Property="Width" Value="36" />
-        <Setter Property="Height" Value="36" />
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
         <Setter Property="Margin" Value="0,1" />
     </Style>
 
@@ -766,14 +766,14 @@
     <Style x:Key="EditorFieldLabel" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="12" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
     <Style x:Key="EditorSectionHeader" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Margin" Value="0,0,0,6" />
     </Style>
@@ -784,7 +784,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="12" />
         <Setter Property="Padding" Value="5,3" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />

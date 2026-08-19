@@ -287,13 +287,16 @@ public sealed class GifEditorWindowTests
             var window = new GifEditorWindow(recorder);
 
             var clearFrame = Find<Button>(window, "ClearFrameButton");
+            var extendClip = Find<Button>(window, "ExtendClipButton");
 
             // Boş karede kare komutları kapalı.
             Assert.False(clearFrame.IsEnabled);
+            Assert.False(extendClip.IsEnabled);
 
             AddObject(window, new RectItem { Bounds = new SKRect(4, 4, 40, 40) });
 
             Assert.True(clearFrame.IsEnabled);
+            Assert.False(extendClip.IsEnabled);
 
             window.Close();
         });
@@ -355,6 +358,59 @@ public sealed class GifEditorWindowTests
             // Nesne gitmeli, kare sayısı korunmalı.
             Assert.Empty(GetTrack(window).Scene.Items);
             Assert.Equal(framesBefore, frames.Items.Count);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void Delete_RemovesOnlyTheSelectedObject()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 12);
+            var window = new GifEditorWindow(recorder);
+
+            var first = AddObject(window, new RectItem { Bounds = new SKRect(4, 4, 40, 40) });
+            var second = AddObject(window, new EllipseItem { Bounds = new SKRect(50, 50, 80, 80) });
+            GetAnnotationCanvas(window).SetSelection(first);
+
+            Find<Button>(window, "DeleteButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+            var items = GetTrack(window).Scene.Items;
+            Assert.DoesNotContain(first, items);
+            Assert.Contains(second, items);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void TitleBar_UsesAppLogo()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 2);
+            var window = new GifEditorWindow(recorder);
+
+            var logo = Find<System.Windows.Controls.Image>(window, "TitleLogo");
+            Assert.Equal(18, logo.Width);
+            Assert.Equal(18, logo.Height);
+
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void ClipStrip_DoesNotShowFrameObjectCount()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 4);
+            var window = new GifEditorWindow(recorder);
+
+            Assert.Null(window.FindName("FrameObjectsLabel"));
+            Assert.Equal(78, window.TimelineItemWidth);
 
             window.Close();
         });
@@ -471,6 +527,98 @@ public sealed class GifEditorWindowTests
             Assert.Single(track.Scene.Items);
             Assert.Same(other, track.Scene.Items[0]);
 
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void ClearFrame_DeletesSelectedObjectForItsFullRange()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 20);
+            var window = new GifEditorWindow(recorder);
+
+            var item = AddObject(window, new RectItem { Bounds = new SKRect(0, 0, 20, 20) });
+            GetTrack(window).Register(item, 0, 15);
+            GetAnnotationCanvas(window).SetSelection(item);
+
+            Find<Button>(window, "ClearFrameButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+            Assert.Empty(GetTrack(window).Scene.Items);
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void ExtendClip_SpansSelectedObjectAcrossWholeGif()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 20);
+            var window = new GifEditorWindow(recorder);
+
+            GetTimeline(window).SelectedIndex = 6;
+            var item = AddObject(window, new RectItem { Bounds = new SKRect(0, 0, 20, 20) });
+            GetAnnotationCanvas(window).SetSelection(item);
+
+            var extend = Find<Button>(window, "ExtendClipButton");
+            Assert.True(extend.IsEnabled);
+            extend.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+            var clip = GetTrack(window).ClipOf(item);
+            Assert.Equal(0, clip.StartFrame);
+            Assert.Equal(19, clip.EndFrame);
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void TimelineRows_SupportCtrlMultiSelect()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 20);
+            var window = new GifEditorWindow(recorder);
+
+            var first = AddObject(window, new RectItem { Bounds = new SKRect(0, 0, 20, 20) });
+            var second = AddObject(window, new EllipseItem { Bounds = new SKRect(30, 30, 50, 50) });
+
+            var canvas = GetAnnotationCanvas(window);
+            canvas.SetSelection(first);
+            canvas.ToggleSelection(second);
+
+            Assert.Equal(2, canvas.Selection.Count);
+            Assert.Contains(first, canvas.Selection);
+            Assert.Contains(second, canvas.Selection);
+            window.Close();
+        });
+    }
+
+    [Fact]
+    public void ExtendClip_AppliesToEverySelectedBar()
+    {
+        WpfRunner.Run(() =>
+        {
+            using var recorder = MakeRecorder(frameCount: 24);
+            var window = new GifEditorWindow(recorder);
+
+            var first = AddObject(window, new RectItem { Bounds = new SKRect(0, 0, 20, 20) });
+            var second = AddObject(window, new EllipseItem { Bounds = new SKRect(30, 30, 50, 50) });
+
+            var track = GetTrack(window);
+            track.Register(first, 2, 4);
+            track.Register(second, 8, 10);
+
+            var canvas = GetAnnotationCanvas(window);
+            canvas.SetSelection(new[] { first, second });
+
+            Find<Button>(window, "ExtendClipButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+            Assert.Equal(0, track.ClipOf(first).StartFrame);
+            Assert.Equal(23, track.ClipOf(first).EndFrame);
+            Assert.Equal(0, track.ClipOf(second).StartFrame);
+            Assert.Equal(23, track.ClipOf(second).EndFrame);
             window.Close();
         });
     }

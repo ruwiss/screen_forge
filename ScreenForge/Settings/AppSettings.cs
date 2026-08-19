@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -21,6 +22,7 @@ public sealed class AppSettings
     public HotkeyConfig FullScreenHotkey { get; set; } = new();
     public HotkeyConfig FullScreenUploadHotkey { get; set; } = new();
     public HotkeyConfig CollageHotkey { get; set; } = new();
+    public HotkeyConfig QuickTranslateHotkey { get; set; } = new();
 
     // ---- Çıktı ----
     public ImageFormat OutputFormat { get; set; } = ImageFormat.Png;
@@ -33,11 +35,15 @@ public sealed class AppSettings
     // ---- GIF kayıt/dışa aktarma tercihleri ----
     public GifSettings Gif { get; set; } = new();
 
-    // ---- Görüntü çevirisi (Google Lens) ----
-    /// <summary>Kaynak dil kodu; "auto" = otomatik algıla.</summary>
+    // ---- Çeviri ----
+    /// <summary>Kaynak dil kodu; "auto" = otomatik algıla (görüntü çevirisi).</summary>
     public string TranslateSourceLanguage { get; set; } = "auto";
-    /// <summary>Hedef dil kodu (örn. tr, en, de).</summary>
+    /// <summary>Eski JSON alanı; yeni kod ana dili kullanır.</summary>
     public string TranslateTargetLanguage { get; set; } = "tr";
+    /// <summary>Ana dil (görüntü çevirisi hedefi; hızlı çeviride varsayılan hedef).</summary>
+    public string TranslateNativeLanguage { get; set; } = "";
+    /// <summary>Çevrilecek dil (kaynak zaten ana dilse hızlı çevirinin hedefi).</summary>
+    public string TranslatePairLanguage { get; set; } = "";
 
     // ===================== Kalıcılık =====================
 
@@ -76,17 +82,26 @@ public sealed class AppSettings
             // Bozuk dosya: varsayılanlara dön.
         }
         isFirstRun = true;
-        return new AppSettings();
+        var created = new AppSettings();
+        created.Normalize();
+        return created;
     }
 
     internal static AppSettings? Deserialize(string json)
         => JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
 
     /// <summary>Eski kayıtlardan gelen ve artık kalıcı olmayan alanları sıfırlar.</summary>
-    public void Normalize()
+    public void Normalize() => Normalize(CultureInfo.CurrentUICulture);
+
+    internal void Normalize(CultureInfo uiCulture)
     {
         // Opacity kaydedilmez; her oturumda varsayılan %100.
         ToolStyles.Opacity = 1.0;
+
+        if (string.IsNullOrWhiteSpace(TranslateNativeLanguage))
+            TranslateNativeLanguage = TranslateLanguageDefaults.MapUiCulture(uiCulture);
+        if (string.IsNullOrWhiteSpace(TranslatePairLanguage))
+            TranslatePairLanguage = TranslateLanguageDefaults.DefaultPair(TranslateNativeLanguage);
     }
 
     public void Save()

@@ -348,6 +348,15 @@ public sealed class GifRecordingOverlayWindow
 
         barWin.Loaded += (_, _) =>
         {
+            try
+            {
+                var pt = barWin.PointToScreen(new Point(0, 0));
+                ChromeScale.Apply(barStack, ChromeScale.ForScreenPoint(barWin, (int)pt.X, (int)pt.Y));
+                barWin.UpdateLayout();
+                barWin.Top = SystemParameters.VirtualScreenTop + Math.Max(4, _dipRegion.Top - barWin.ActualHeight - 4);
+            }
+            catch { /* ölçek başarısızsa varsayılan konum kalır */ }
+
             uiTimer.Start();
             blinkTimer.Start();
             UpdateRecordingVisuals();

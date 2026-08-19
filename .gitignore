@@ -2,8 +2,16 @@
 bin/
 obj/
 publish/
+publish-*/
 Output/
 Releases/
+TestResults/
+
+# Scratch / deneme klasörleri
+.tmp-*/
+.agents/
+.hallmark/
+tokens.css
 
 # IDE
 .vs/

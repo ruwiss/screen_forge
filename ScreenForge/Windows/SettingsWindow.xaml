@@ -1,7 +1,7 @@
 <Window x:Class="ScreenForge.Windows.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ScreenForge Ayarları" Width="440" SizeToContent="Height"
+        Title="ScreenForge Ayarları" Width="460" SizeToContent="Height"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#11141B" Foreground="{StaticResource TextBrush}"
         FontFamily="{StaticResource UiFont}">
@@ -69,7 +69,8 @@
                     <StackPanel>
                         <DockPanel Margin="0,2">
                             <TextBlock Style="{StaticResource Label}" Text="Dosya türü" Width="110" VerticalAlignment="Center" />
-                            <ComboBox x:Name="CmbFormat" Width="120" HorizontalAlignment="Left">
+                            <ComboBox x:Name="CmbFormat" Width="120" Height="26" HorizontalAlignment="Left"
+                                      Style="{StaticResource DarkComboBox}">
                                 <ComboBoxItem Content="PNG" />
                                 <ComboBoxItem Content="JPEG" />
                                 <ComboBoxItem Content="WebP" />
@@ -99,21 +100,22 @@
             <!-- ===== Çeviri ===== -->
             <TabItem Header="Çeviri" Style="{StaticResource SettingsTabItem}">
                 <StackPanel>
-                    <TextBlock Text="Görüntü çevirisi" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Text="Diller" Style="{StaticResource SectionTitle}" />
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
                             <TextBlock Style="{StaticResource Muted}" FontSize="11" Margin="0,0,0,10"
-                                       Text="Bölge seçip Çevir'e basınca metin algılanır ve hedef dile çevrilir." />
+                                       TextWrapping="Wrap"
+                                       Text="Görüntü çevirisi kaynağı otomatik tanır (Arapça, İngilizce, fark etmez) ve her zaman ana dile çevirir. Hızlı çeviri kısayolu seçili metni alır; yabancı metin ana dile, ana dildeki metin çevrilecek dile döner." />
                             <DockPanel Margin="0,2">
-                                <TextBlock Style="{StaticResource Label}" Text="Kaynak dil" Width="110" VerticalAlignment="Center" />
-                                <ComboBox x:Name="CmbTranslateSource" Width="200" HorizontalAlignment="Left" />
+                                <TextBlock Style="{StaticResource Label}" Text="Ana dil" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbTranslateNative" Style="{StaticResource DarkComboBox}"
+                                          Height="26" MinWidth="160" HorizontalAlignment="Stretch" />
                             </DockPanel>
-                            <DockPanel Margin="0,10,0,2">
-                                <TextBlock Style="{StaticResource Label}" Text="Hedef dil" Width="110" VerticalAlignment="Center" />
-                                <ComboBox x:Name="CmbTranslateTarget" Width="200" HorizontalAlignment="Left" />
+                            <DockPanel Margin="0,8,0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="Çevrilecek dil" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbTranslatePair" Style="{StaticResource DarkComboBox}"
+                                          Height="26" MinWidth="160" HorizontalAlignment="Stretch" />
                             </DockPanel>
-                            <TextBlock Style="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0"
-                                       Text="Kaynak dilde “Otomatik” önerilir; hedef dili kendiniz seçin." />
                         </StackPanel>
                     </Border>
                 </StackPanel>

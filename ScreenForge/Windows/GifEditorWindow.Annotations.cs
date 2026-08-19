@@ -5,6 +5,9 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Threading;
 using ScreenForge.Editor;
 using ScreenForge.Gif.Editing;
 using ScreenForge.Settings;
@@ -68,11 +71,16 @@ public sealed partial class GifEditorWindow
 
     // Klip sürükleme durumu
     private ClipRow? _dragRow;
+    private readonly List<(ClipRow Row, int Start, int End)> _dragGroup = new();
     private int _dragGrabFrame;
     private bool _dragStartEdge;
     private bool _dragEndEdge;
     private int _dragOriginStart;
     private int _dragOriginEnd;
+
+    private ScrollViewer? _timelineScroll;
+    private bool _clipScrollSyncing;
+    private double _timelineZoom = 1;
 
     private (ToggleButton Button, EditorTool Tool)[] ToolButtons => new[]
     {
@@ -107,6 +115,7 @@ public sealed partial class GifEditorWindow
         Timeline.Loaded += (_, _) => HookTimelineScroll();
 
         ClearFrameButton.Click += (_, _) => ClearCurrentFrame();
+        ExtendClipButton.Click += (_, _) => ExtendSelectedClips();
 
         // Kare komutları başlangıçta boş kareye göre ayarlanır.
         UpdateClipToolbar();
@@ -190,7 +199,7 @@ public sealed partial class GifEditorWindow
 
         // Yalnızca geçerli karede duran nesneler seçilebilir olmalı; aksi hâlde
         // o karede görünmeyen bir nesneye tıklanıp özellikleri açılıyor.
-        _track.Scene.HitFilter = item => _track.ClipOf(item).CoversFrame(SelectedIndex);
+        _track.Scene.HitFilter = item => _track.ClipOf(item).CoversFrame(CurrentFrame);
 
         AnnotationHost.Content = _annotationCanvas;
     }
@@ -413,7 +422,7 @@ public sealed partial class GifEditorWindow
             if (_track.IsRegistered(item))
                 continue;
 
-            _track.Register(item, SelectedIndex, SelectedIndex, ItemLabel(item));
+            _track.Register(item, CurrentFrame, CurrentFrame, ItemLabel(item));
         }
     }
 
@@ -444,7 +453,7 @@ public sealed partial class GifEditorWindow
             var clip = _track.ClipOf(item);
 
             if (clip.Length > 1)
-                clip.SetOffsetAt(SelectedIndex, clip.OffsetAt(SelectedIndex));
+                clip.SetOffsetAt(CurrentFrame, clip.OffsetAt(CurrentFrame));
         }
 
         RefreshClips();
@@ -483,10 +492,25 @@ public sealed partial class GifEditorWindow
             row.Selected = selection?.Contains(row.Item) == true;
     }
 
-    private void ClipRowSelect_Click(object sender, RoutedEventArgs e)
+    private void ClipRowSelect_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: ClipRow row })
-            _annotationCanvas?.SetSelection(row.Item);
+        if (sender is not FrameworkElement { Tag: ClipRow row })
+            return;
+
+        SelectClipRow(row, toggle: (Keyboard.Modifiers & ModifierKeys.Control) != 0);
+    }
+
+    /// <summary>Şerit satırını veya çubuğunu seçer; Ctrl basılıysa seçime ekler/çıkarır.</summary>
+    private void SelectClipRow(ClipRow row, bool toggle)
+    {
+        EnsureAnnotationCanvas();
+        if (_annotationCanvas == null)
+            return;
+
+        if (toggle)
+            _annotationCanvas.ToggleSelection(row.Item);
+        else
+            _annotationCanvas.SetSelection(row.Item);
     }
 
     /// <summary>
@@ -518,7 +542,7 @@ public sealed partial class GifEditorWindow
             Fill = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
             IsHitTestVisible = false,
         };
-        Canvas.SetLeft(playhead, SelectedIndex * perFrame);
+        Canvas.SetLeft(playhead, CurrentFrame * perFrame);
         ClipCanvas.Children.Add(playhead);
 
         for (int i = 0; i < _clipRows.Count; i++)
@@ -532,19 +556,31 @@ public sealed partial class GifEditorWindow
 
             var color = row.Clip.Color;
             var fill = row.Visible
-                ? Color.FromArgb((byte)(row.Selected ? 245 : 165), color.Red, color.Green, color.Blue)
+                ? Color.FromArgb((byte)(row.Selected ? 255 : 150), color.Red, color.Green, color.Blue)
                 : Color.FromArgb(45, 0x9A, 0xA4, 0xB8);
 
             var bar = new Border
             {
                 Width = width,
-                Height = ClipLaneHeight - 5,
+                Height = ClipLaneHeight - (row.Selected ? 3 : 5),
                 CornerRadius = new CornerRadius(2),
                 Background = new SolidColorBrush(fill),
-                BorderBrush = row.Selected ? Brushes.White : Brushes.Transparent,
-                BorderThickness = new Thickness(row.Selected ? 1 : 0),
+                BorderBrush = row.Selected
+                    ? new SolidColorBrush(Colors.White)
+                    : Brushes.Transparent,
+                BorderThickness = new Thickness(row.Selected ? 2 : 0),
                 Cursor = Cursors.SizeAll,
                 Tag = row,
+                SnapsToDevicePixels = true,
+                Effect = row.Selected
+                    ? new DropShadowEffect
+                    {
+                        Color = Colors.White,
+                        BlurRadius = 8,
+                        ShadowDepth = 0,
+                        Opacity = 0.85,
+                    }
+                    : null,
                 ToolTip = row.Clip.Length == 1
                     ? $"{row.Label} · yalnızca kare {row.Clip.StartFrame + 1}\nKenarından çekerek uzatın"
                     : $"{row.Label} · kare {row.Clip.StartFrame + 1}–{row.Clip.EndFrame + 1} ({row.Clip.Length} kare)\n" +
@@ -559,7 +595,7 @@ public sealed partial class GifEditorWindow
             // Kenar tutamakları: hem imleci değiştirir hem çekilebilir olduğunu
             // gösterir. Hit-test açık olmalı, aksi hâlde imleç hover'da dönmez.
             double grip = Math.Min(9, width / 3);
-            double barHeight = ClipLaneHeight - 5;
+            double barHeight = bar.Height;
 
             foreach (bool leading in new[] { true, false })
             {
@@ -588,7 +624,7 @@ public sealed partial class GifEditorWindow
                 {
                     Width = 6,
                     Height = 6,
-                    Fill = key.Frame == SelectedIndex ? Brushes.White : new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)),
+                    Fill = key.Frame == CurrentFrame ? Brushes.White : new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)),
                     RenderTransformOrigin = new Point(0.5, 0.5),
                     RenderTransform = new RotateTransform(45),
                     IsHitTestVisible = false,
@@ -633,6 +669,54 @@ public sealed partial class GifEditorWindow
 
     private double _frameSlotWidth;
 
+    /// <summary>Ctrl + tekerlek ile kare şeridini yakınlaştırır; klip çubukları aynı ölçeği izler.</summary>
+    private void OnTimelineZoomWheel(object sender, MouseWheelEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0)
+            return;
+
+        e.Handled = true;
+
+        double next = Math.Clamp(_timelineZoom * (e.Delta > 0 ? 1.12 : 1 / 1.12), 0.45, 2.4);
+        if (Math.Abs(next - _timelineZoom) < 0.001)
+            return;
+
+        var scroll = _timelineScroll ?? FindScrollViewer(Timeline);
+        double oldSlot = FrameSlotWidth;
+        if (oldSlot < 1)
+            oldSlot = TimelineItemWidth + 12;
+
+        double viewport = scroll?.ViewportWidth ?? 0;
+        double anchor = (scroll?.HorizontalOffset ?? 0) + viewport / 2;
+        double anchorFrame = anchor / oldSlot;
+
+        ApplyTimelineZoom(next);
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            Timeline.UpdateLayout();
+            _frameSlotWidth = 0;
+            double newSlot = FrameSlotWidth;
+            if (scroll != null && newSlot > 1)
+            {
+                double target = anchorFrame * newSlot - viewport / 2;
+                scroll.ScrollToHorizontalOffset(Math.Max(0, target));
+                ClipScroll.ScrollToHorizontalOffset(scroll.HorizontalOffset);
+            }
+
+            RefreshClips();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void ApplyTimelineZoom(double zoom)
+    {
+        _timelineZoom = zoom;
+        TimelineItemWidth = TimelineItemWidthBase * zoom;
+        TimelineThumbHeight = TimelineThumbHeightBase * zoom;
+        TimelineStripHeight = TimelineThumbHeight + TimelineStripExtra;
+        _frameSlotWidth = 0;
+    }
+
     /// <summary>Kare şeridinin yatay kaydırmasını klip şeridine bağlar.</summary>
     private void HookTimelineScroll()
     {
@@ -640,18 +724,99 @@ public sealed partial class GifEditorWindow
         if (source == null)
             return;
 
+        _timelineScroll = source;
+
         source.ScrollChanged += (_, e) =>
         {
+            if (_clipScrollSyncing)
+                return;
+
             if (Math.Abs(e.HorizontalChange) > 0.01 || Math.Abs(e.HorizontalOffset - ClipScroll.HorizontalOffset) > 0.5)
+            {
+                _clipScrollSyncing = true;
                 ClipScroll.ScrollToHorizontalOffset(e.HorizontalOffset);
+                _clipScrollSyncing = false;
+            }
         };
 
         ClipScroll.ScrollChanged += (_, e) =>
         {
-            if (Math.Abs(e.HorizontalChange) > 0.01)
-                source.ScrollToHorizontalOffset(e.HorizontalOffset);
+            if (_clipScrollSyncing || Math.Abs(e.HorizontalChange) <= 0.01)
+                return;
+
+            _clipScrollSyncing = true;
+            source.ScrollToHorizontalOffset(e.HorizontalOffset);
+            _clipScrollSyncing = false;
         };
     }
+
+    /// <summary>
+    /// Oynatma kafasını görünür alanda tutar. Ortaya kilitlemez; kenara yaklaşınca kaydırır.
+    /// </summary>
+    private void KeepPlayheadVisible(int index)
+    {
+        if (index < 0 || index >= _timelineItems.Count)
+            return;
+
+        var source = _timelineScroll ?? FindScrollViewer(Timeline);
+        if (source == null || source.ViewportWidth <= 1)
+        {
+            Timeline.ScrollIntoView(_timelineItems[index]);
+            return;
+        }
+
+        _timelineScroll = source;
+
+        double slot = FrameSlotWidth;
+        double left = index * slot;
+        double right = left + slot;
+        double pad = slot * 1.25;
+        double viewLeft = source.HorizontalOffset;
+        double viewRight = viewLeft + source.ViewportWidth;
+        double max = Math.Max(0, source.ExtentWidth - source.ViewportWidth);
+        double target = viewLeft;
+
+        if (left < viewLeft + pad)
+            target = Math.Max(0, left - pad);
+        else if (right > viewRight - pad)
+            target = Math.Min(max, right + pad - source.ViewportWidth);
+        else
+            return;
+
+        if (Math.Abs(source.HorizontalOffset - target) < 0.5)
+            return;
+
+        source.BeginAnimation(TimelineScrollOffsetProperty, null);
+        source.ScrollToHorizontalOffset(target);
+    }
+
+    private void RefreshPlayheadMarks()
+    {
+        for (int i = 0; i < _timelineItems.Count; i++)
+            _timelineItems[i].IsPlayhead = i == CurrentFrame;
+    }
+
+    /// <summary>Oynatma kaydırmasını durdurur; mevcut konumda bırakır.</summary>
+    private void StopPlayheadFollow()
+    {
+        if (_timelineScroll == null)
+            return;
+
+        double current = _timelineScroll.HorizontalOffset;
+        _timelineScroll.BeginAnimation(TimelineScrollOffsetProperty, null);
+        _timelineScroll.ScrollToHorizontalOffset(current);
+    }
+
+    private static readonly DependencyProperty TimelineScrollOffsetProperty =
+        DependencyProperty.RegisterAttached(
+            "TimelineScrollOffset",
+            typeof(double),
+            typeof(GifEditorWindow),
+            new PropertyMetadata(0d, (d, e) =>
+            {
+                if (d is ScrollViewer viewer)
+                    viewer.ScrollToHorizontalOffset((double)e.NewValue);
+            }));
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
     {
@@ -675,16 +840,33 @@ public sealed partial class GifEditorWindow
     {
         var position = e.GetPosition(ClipCanvas);
         int frame = FrameAt(position.X);
+        bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
 
         var hit = FindClipBar(position);
         if (hit == null)
         {
+            if (!ctrl)
+                _annotationCanvas?.ClearSelection();
+
             SelectFrame(frame);
             return;
         }
 
         var (row, bar) = hit.Value;
-        _annotationCanvas?.SetSelection(row.Item);
+
+        EnsureAnnotationCanvas();
+        bool alreadySelected = _annotationCanvas?.Selection.Contains(row.Item) == true;
+
+        if (ctrl)
+        {
+            if (!alreadySelected)
+                SelectClipRow(row, toggle: true);
+        }
+        else
+        {
+            _annotationCanvas?.SetSelection(row.Item);
+        }
+
         SelectFrame(frame);
 
         double left = Canvas.GetLeft(bar);
@@ -696,9 +878,26 @@ public sealed partial class GifEditorWindow
         _dragGrabFrame = frame;
         _dragOriginStart = row.Clip.StartFrame;
         _dragOriginEnd = row.Clip.EndFrame;
+        CaptureDragGroup(row);
 
         ClipCanvas.CaptureMouse();
         e.Handled = true;
+    }
+
+    /// <summary>Sürüklenecek çubukları ve başlangıç aralıklarını toplar.</summary>
+    private void CaptureDragGroup(ClipRow grabbed)
+    {
+        _dragGroup.Clear();
+
+        var selection = _annotationCanvas?.Selection;
+        foreach (var row in _clipRows)
+        {
+            if (selection?.Contains(row.Item) == true || ReferenceEquals(row, grabbed))
+                _dragGroup.Add((row, row.Clip.StartFrame, row.Clip.EndFrame));
+        }
+
+        if (_dragGroup.Count == 0)
+            _dragGroup.Add((grabbed, grabbed.Clip.StartFrame, grabbed.Clip.EndFrame));
     }
 
     private void OnClipCanvasMouseMove(object sender, MouseEventArgs e)
@@ -719,45 +918,145 @@ public sealed partial class GifEditorWindow
         // Sürükleme boyunca imleç kilitli kalsın; kenar mı taşıma mı belli olsun.
         ClipCanvas.Cursor = _dragStartEdge || _dragEndEdge ? Cursors.SizeWE : Cursors.SizeAll;
 
+        ApplyDragAt(position);
+        UpdateDragAutoScroll(e.GetPosition(ClipScroll));
+    }
+
+    /// <summary>Sürüklemeyi verilen tuval konumuna göre uygular.</summary>
+    private void ApplyDragAt(Point canvasPoint)
+    {
         int last = Math.Max(0, _document.FrameCount - 1);
-        int frame = Math.Clamp(FrameAt(position.X), 0, last);
-        var clip = _dragRow.Clip;
-
-        if (_dragStartEdge)
-        {
-            clip.StartFrame = Math.Min(frame, clip.EndFrame);
-        }
-        else if (_dragEndEdge)
-        {
-            clip.EndFrame = Math.Max(frame, clip.StartFrame);
-        }
-        else
-        {
-            // Tüm aralığı kaydır; uzunluk korunur.
-            int delta = frame - _dragGrabFrame;
-            int length = _dragOriginEnd - _dragOriginStart;
-            int start = Math.Clamp(_dragOriginStart + delta, 0, Math.Max(0, last - length));
-
-            clip.StartFrame = start;
-            clip.EndFrame = Math.Min(last, start + length);
-        }
+        int frame = Math.Clamp(FrameAt(canvasPoint.X), 0, last);
+        ApplyClipDrag(frame, last);
 
         RefreshClips();
         UpdateClipToolbar();
         UpdatePreview();
     }
 
+    // Sürüklerken kenara yaklaşınca şerit kendiliğinden kayar.
+    private DispatcherTimer? _dragScrollTimer;
+    private double _dragScrollStep;
+
+    /// <summary>
+    /// Çubuk görünür alanın kenarına götürülünce şeridi yumuşakça kaydırır.
+    /// </summary>
+    /// <remarks>
+    /// Fare kenarda durduğunda da kaydırma sürer; böylece ekrana sığmayan
+    /// karelere kadar uzatmak tek hamlede yapılır, önce kaydırıp sonra
+    /// yeniden tutmak gerekmez.
+    /// </remarks>
+    private void UpdateDragAutoScroll(Point viewportPoint)
+    {
+        const double zone = 56;
+        const double maxStep = 24;
+
+        double width = ClipScroll.ViewportWidth;
+        double step = 0;
+
+        if (width > zone * 2)
+        {
+            if (viewportPoint.X < zone)
+                step = -maxStep * EdgeRamp((zone - viewportPoint.X) / zone);
+            else if (viewportPoint.X > width - zone)
+                step = maxStep * EdgeRamp((viewportPoint.X - (width - zone)) / zone);
+        }
+
+        _dragScrollStep = step;
+
+        if (step == 0)
+        {
+            StopDragAutoScroll();
+            return;
+        }
+
+        if (_dragScrollTimer != null)
+            return;
+
+        _dragScrollTimer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(16),
+        };
+        _dragScrollTimer.Tick += (_, _) => StepDragAutoScroll();
+        _dragScrollTimer.Start();
+    }
+
+    /// <summary>Kenara ne kadar girildiyse o kadar hızlanır; girişte yumuşak başlar.</summary>
+    private static double EdgeRamp(double t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return 0.15 + 0.85 * t * t;
+    }
+
+    private void StepDragAutoScroll()
+    {
+        if (_dragRow == null || Mouse.LeftButton != MouseButtonState.Pressed)
+        {
+            StopDragAutoScroll();
+            return;
+        }
+
+        double max = Math.Max(0, ClipScroll.ExtentWidth - ClipScroll.ViewportWidth);
+        double target = Math.Clamp(ClipScroll.HorizontalOffset + _dragScrollStep, 0, max);
+        if (Math.Abs(target - ClipScroll.HorizontalOffset) < 0.01)
+            return;
+
+        ClipScroll.ScrollToHorizontalOffset(target);
+        ClipScroll.UpdateLayout();
+
+        // İmleç sabit dursa bile içerik kaydığı için altındaki kare değişir.
+        ApplyDragAt(Mouse.GetPosition(ClipCanvas));
+    }
+
+    private void StopDragAutoScroll()
+    {
+        _dragScrollTimer?.Stop();
+        _dragScrollTimer = null;
+        _dragScrollStep = 0;
+    }
+
+    /// <summary>Seçili çubukları aynı kenar veya kaydırma hareketiyle günceller.</summary>
+    private void ApplyClipDrag(int frame, int last)
+    {
+        if (_dragStartEdge)
+        {
+            int delta = Math.Min(frame, _dragOriginEnd) - _dragOriginStart;
+
+            foreach (var (row, start, end) in _dragGroup)
+                row.Clip.StartFrame = Math.Clamp(start + delta, 0, end);
+        }
+        else if (_dragEndEdge)
+        {
+            int delta = Math.Max(frame, _dragOriginStart) - _dragOriginEnd;
+
+            foreach (var (row, start, end) in _dragGroup)
+                row.Clip.EndFrame = Math.Clamp(end + delta, start, last);
+        }
+        else
+        {
+            // Grup olarak kaydır; göreli konumlar korunur.
+            int delta = frame - _dragGrabFrame;
+            int minStart = _dragGroup.Min(g => g.Start);
+            int maxEnd = _dragGroup.Max(g => g.End);
+            delta = Math.Clamp(delta, -minStart, last - maxEnd);
+
+            foreach (var (row, start, end) in _dragGroup)
+            {
+                row.Clip.StartFrame = start + delta;
+                row.Clip.EndFrame = end + delta;
+            }
+        }
+    }
+
     private void OnClipCanvasMouseUp(object sender, MouseButtonEventArgs e)
     {
+        StopDragAutoScroll();
+
         if (_dragRow == null)
             return;
 
-        var clip = _dragRow.Clip;
-        SetStatus(clip.Length == 1
-            ? $"{_dragRow.Label} · kare {clip.StartFrame + 1}"
-            : $"{_dragRow.Label} · kare {clip.StartFrame + 1}–{clip.EndFrame + 1} ({clip.Length} kare)");
-
         _dragRow = null;
+        _dragGroup.Clear();
         ClipCanvas.Cursor = Cursors.Arrow;
         ClipCanvas.ReleaseMouseCapture();
     }
@@ -816,18 +1115,40 @@ public sealed partial class GifEditorWindow
 
     private void UpdateClipToolbar()
     {
-        int count = _track.ItemsAt(SelectedIndex).Count;
+        int count = _track.ItemsAt(CurrentFrame).Count;
+        int selected = _annotationCanvas?.Selection.Count ?? 0;
 
-        ClearFrameButton.IsEnabled = count > 0;
+        ClearFrameButton.IsEnabled = selected > 0 || count > 0;
+        ExtendClipButton.IsEnabled = selected > 0;
 
-        FrameObjectsLabel.Text = count == 0
-            ? "nesne yok"
-            : count == 1 ? "1 nesne" : $"{count} nesne";
+        ClearFrameButton.ToolTip = selected > 0
+            ? "Seçili nesneleri tüm karelerden kaldır"
+            : "Bu karedeki nesneleri kaldır";
     }
 
-    /// <summary>Geçerli karedeki nesneleri temizler.</summary>
+    /// <summary>Satırdaki çöp kutusu yalnızca o nesneyi siler.</summary>
+    private void ClipRowDelete_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not FrameworkElement { Tag: ClipRow row })
+            return;
+
+        EnsureAnnotationCanvas();
+        _annotationCanvas?.SetSelection(row.Item);
+        TryDeleteAnnotationSelection();
+    }
+
+    /// <summary>
+    /// Seçili nesneleri tüm karelerden siler; seçim yoksa yalnızca geçerli kareyi temizler.
+    /// </summary>
     private void ClearCurrentFrame()
     {
+        if (_annotationCanvas is { Selection.Count: > 0 })
+        {
+            TryDeleteAnnotationSelection();
+            return;
+        }
+
         int changed = _track.ClearFrame(SelectedIndex);
 
         RebuildClipRows();
@@ -836,6 +1157,25 @@ public sealed partial class GifEditorWindow
         ShowToast(changed == 0
             ? "Bu karede nesne yok"
             : $"Kare {SelectedIndex + 1}: {changed} nesne temizlendi");
+    }
+
+    /// <summary>Seçili çubukları GIF'in başından sonuna kadar uzatır.</summary>
+    private void ExtendSelectedClips()
+    {
+        var canvas = _annotationCanvas;
+        if (canvas == null || canvas.Selection.Count == 0)
+            return;
+
+        foreach (var item in canvas.Selection)
+            _track.ClipOf(item).ExtendToAll(_document.FrameCount);
+
+        RefreshClips();
+        UpdateClipToolbar();
+        UpdatePreview();
+
+        ShowToast(canvas.Selection.Count == 1
+            ? "Çubuk tüm GIF'e yayıldı"
+            : $"{canvas.Selection.Count} çubuk tüm GIF'e yayıldı");
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1092,27 +1432,15 @@ public sealed partial class GifEditorWindow
     }
 
     /// <summary>
-    /// Çizim tuvalinin görünürlüğünü geçerli kareye göre ayarlar.
+    /// Çizim tuvalini geçerli kareye göre yeniler.
     /// </summary>
     /// <remarks>
-    /// Seçili nesneler yalnızca kendi kare aralıklarında canlı gösterilir;
-    /// aralık dışında tuval boşaltılır ki nesne olmadığı karede görünmesin.
+    /// Görünmeyen nesneler <see cref="Scene.HitFilter"/> ile zaten çizilmez.
+    /// Seçim korunur ki şeritte çoklu uzatma/kısaltma kare değişince bozulmasın.
     /// </remarks>
     private void UpdateAnnotationVisibility()
     {
-        if (_annotationCanvas == null)
-            return;
-
-        // Süzgeç kareye bağlı olduğu için kare değişince yeniden çizilmeli.
-        _annotationCanvas.InvalidateVisual();
-
-        // O karede görünmeyen bir nesne seçili kalmamalı; özellikleri de kapanmalı.
-        var stale = _annotationCanvas.Selection
-            .Where(i => !_track.ClipOf(i).CoversFrame(SelectedIndex))
-            .ToList();
-
-        if (stale.Count > 0)
-            _annotationCanvas.ClearSelection();
+        _annotationCanvas?.InvalidateVisual();
     }
 
     /// <summary>Dışa aktarım için tüm görünür nesneleri karelere işler.</summary>

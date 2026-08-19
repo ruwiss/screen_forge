@@ -28,6 +28,25 @@ public static class SceneRenderer
         return bmp;
     }
 
+    /// <summary>Sahne uzayındaki dikdörtgeni bitmap'ten keser (alfa korunur).</summary>
+    public static SKBitmap CropBitmap(SKBitmap src, SKRect rect)
+    {
+        int left = Math.Clamp((int)Math.Floor(rect.Left), 0, src.Width);
+        int top = Math.Clamp((int)Math.Floor(rect.Top), 0, src.Height);
+        int right = Math.Clamp((int)Math.Ceiling(rect.Right), 0, src.Width);
+        int bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom), 0, src.Height);
+        int w = Math.Max(1, right - left);
+        int h = Math.Max(1, bottom - top);
+        if (left == 0 && top == 0 && w == src.Width && h == src.Height)
+            return src.Copy();
+
+        var dst = new SKBitmap(w, h, src.ColorType, src.AlphaType);
+        using var canvas = new SKCanvas(dst);
+        canvas.Clear(SKColors.Transparent);
+        canvas.DrawBitmap(src, new SKRect(left, top, left + w, top + h), new SKRect(0, 0, w, h));
+        return dst;
+    }
+
     /// <summary>
     /// Arka plan + öğeleri çizer. Paint yolunda blur capture/allocate YOK.
     /// </summary>

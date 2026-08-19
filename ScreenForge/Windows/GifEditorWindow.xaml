@@ -1,4 +1,5 @@
 <Window x:Class="ScreenForge.Windows.GifEditorWindow"
+        x:Name="GifRoot"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ScreenForge — GIF Düzenleyici"
@@ -98,8 +99,9 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-                <Border Width="8" Height="8" CornerRadius="1.5" VerticalAlignment="Center"
-                        Background="{StaticResource AccentBrush}" Margin="0,0,10,0" />
+                <Image x:Name="TitleLogo" Source="pack://application:,,,/Resources/app.png" Width="18" Height="18"
+                       Margin="0,0,8,0" VerticalAlignment="Center"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
                 <TextBlock Text="ScreenForge" Foreground="{StaticResource TextBrush}"
                            FontFamily="{StaticResource UiFont}" FontSize="13" FontWeight="SemiBold"
                            VerticalAlignment="Center" />
@@ -112,9 +114,6 @@
             </StackPanel>
 
             <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <Button x:Name="ExportButton" Style="{StaticResource PrimaryButton}"
-                        Content="GIF Kaydet" Padding="14,5" Margin="0,0,8,0" FontSize="12"
-                        VerticalAlignment="Center" ToolTip="Ctrl+S" />
                 <Button x:Name="MinimizeButton" Style="{StaticResource EditorToolButton}"
                         Width="44" Height="40" Content="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                         ToolTip="Simge durumuna küçült" />
@@ -277,9 +276,17 @@
             <TabControl x:Name="SidePanel" Style="{StaticResource SettingsTab}" Background="Transparent"
                         BorderThickness="0" Margin="10,10,10,8">
                 <TabItem Header="Dışa Aktar" Style="{StaticResource SettingsTabItem}">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel x:Name="ExportPanel" Margin="2,4,2,8" />
-                    </ScrollViewer>
+                    <DockPanel>
+                        <Button x:Name="ExportButton" DockPanel.Dock="Bottom"
+                                Style="{StaticResource PrimaryButton}"
+                                Content="GIF Kaydet" FontSize="13"
+                                Margin="2,8,2,0" Padding="12,9"
+                                HorizontalAlignment="Stretch"
+                                ToolTip="Ctrl+S" />
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="ExportPanel" Margin="2,4,2,4" />
+                        </ScrollViewer>
+                    </DockPanel>
                 </TabItem>
                 <TabItem Header="Kare" Style="{StaticResource SettingsTabItem}">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -380,7 +387,23 @@
                 </Grid>
             </Border>
 
-            <ListBox x:Name="Timeline" Grid.Row="1" Height="104" Margin="150,0,0,0"
+            <!-- Sol 150 px, alttaki nesne etiketleriyle aynı sütun; kare şeridi başlığı burada durur. -->
+            <Border Grid.Row="1" Width="150" HorizontalAlignment="Left"
+                    Height="{Binding TimelineStripHeight, ElementName=GifRoot}"
+                    Background="{StaticResource EditorCanvasBrush}">
+                <StackPanel Margin="10,0,8,0" VerticalAlignment="Center">
+                    <TextBlock Text="Kareler" Style="{StaticResource EditorFieldLabel}" />
+                    <TextBlock x:Name="FrameCountLabel" Margin="0,2,0,0"
+                               Foreground="{StaticResource TextBrush}"
+                               FontFamily="{StaticResource UiFont}" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock Text="Ctrl + tekerlek yakınlaştırır" Margin="0,4,0,0"
+                               Style="{StaticResource EditorFieldLabel}" FontSize="10"
+                               TextWrapping="Wrap" Opacity="0.75" />
+                </StackPanel>
+            </Border>
+
+            <ListBox x:Name="Timeline" Grid.Row="1" Margin="150,0,0,0"
+                     Height="{Binding TimelineStripHeight, ElementName=GifRoot}"
                      Background="{StaticResource EditorCanvasBrush}"
                      BorderThickness="0" SelectionMode="Extended" Focusable="True"
                      ItemContainerStyle="{StaticResource EditorFrameItem}"
@@ -418,9 +441,12 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Grid x:Name="Root" Width="78" Margin="2" Background="Transparent">
+                        <Grid x:Name="Root"
+                              Width="{Binding TimelineItemWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                              Margin="2" Background="Transparent">
                             <StackPanel>
-                                <Border x:Name="Thumb" CornerRadius="3" ClipToBounds="True" Height="54"
+                                <Border x:Name="Thumb" CornerRadius="3" ClipToBounds="True"
+                                        Height="{Binding TimelineThumbHeight, RelativeSource={RelativeSource AncestorType=Window}}"
                                         Background="{StaticResource EditorWellBrush}" BorderBrush="Transparent" BorderThickness="0">
                                     <Image Source="{Binding Thumbnail}" Stretch="Uniform"
                                            RenderOptions.BitmapScalingMode="LowQuality" />
@@ -467,6 +493,10 @@
                                 <Setter TargetName="Thumb" Property="BorderBrush" Value="{StaticResource EditorDuplicateBrush}" />
                                 <Setter TargetName="Thumb" Property="BorderThickness" Value="1.5" />
                             </DataTrigger>
+                            <DataTrigger Binding="{Binding IsPlayhead}" Value="True">
+                                <Setter TargetName="Thumb" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Thumb" Property="BorderThickness" Value="2" />
+                            </DataTrigger>
                         </DataTemplate.Triggers>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
@@ -488,13 +518,12 @@
                     <Border Grid.Row="0" Grid.ColumnSpan="2"
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                         <StackPanel Orientation="Horizontal" Margin="8,2">
-                            <TextBlock Text="Bu kare:" Style="{StaticResource EditorFieldLabel}"
-                                       Margin="0,0,5,0" />
-                            <TextBlock x:Name="FrameObjectsLabel" Style="{StaticResource EditorFieldLabel}"
-                                       Foreground="{StaticResource TextBrush}" Margin="0,0,10,0" />
                             <Button x:Name="ClearFrameButton" Content="Temizle"
                                     Style="{StaticResource EditorDangerButton}"
-                                    ToolTip="Bu karedeki nesneleri kaldır" />
+                                    ToolTip="Seçili nesneyi tüm karelerden kaldır" />
+                            <Button x:Name="ExtendClipButton" Content="Tümüne yay"
+                                    Style="{StaticResource EditorToolButton}"
+                                    ToolTip="Seçili çubuğu tüm GIF boyunca uzat" />
                         </StackPanel>
                     </Border>
 
@@ -510,6 +539,7 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
 
                                         <CheckBox IsChecked="{Binding Visible, Mode=TwoWay}"
@@ -529,14 +559,23 @@
                                                    FontSize="10" TextTrimming="CharacterEllipsis"
                                                    Foreground="{StaticResource TextMutedBrush}"
                                                    FontFamily="{StaticResource UiFont}" />
+
+                                        <Button Grid.Column="3" Tag="{Binding}" Click="ClipRowDelete_Click"
+                                                Style="{StaticResource FrameChipButton}"
+                                                Width="16" Height="16" Margin="2,0,0,0"
+                                                ToolTip="Bu nesneyi sil">
+                                            <Path Data="{StaticResource IconTrash}"
+                                                  Style="{StaticResource EditorIcon}" Width="10" Height="10"
+                                                  Stroke="{StaticResource DangerBrush}" />
+                                        </Button>
                                     </Grid>
 
                                     <DataTemplate.Triggers>
                                         <DataTrigger Binding="{Binding Selected}" Value="True">
                                             <Setter TargetName="Label" Property="Foreground"
                                                     Value="{StaticResource TextBrush}" />
-                                            <Setter TargetName="Row" Property="Background"
-                                                    Value="{StaticResource EditorPanelBrush}" />
+                                            <Setter TargetName="Label" Property="FontWeight" Value="SemiBold" />
+                                            <Setter TargetName="Row" Property="Background" Value="#40EA6F12" />
                                         </DataTrigger>
                                     </DataTemplate.Triggers>
                                 </DataTemplate>

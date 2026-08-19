@@ -27,4 +27,18 @@ public sealed class SceneTests
         Assert.Equal(new SKSize(80, 70), scene.CanvasSize);
         Assert.Equal(new SKRect(10, 5, 30, 25), item.Bounds);
     }
+
+    [Fact]
+    public void ExpandingCanvasSize_KeepsItemsInPlace()
+    {
+        var scene = new Scene { CanvasSize = new SKSize(80, 70) };
+        var item = new RectItem { Bounds = new SKRect(10, 5, 30, 25) };
+        scene.Items.Add(item);
+
+        scene.CanvasSize = new SKSize(1920, 1080);
+
+        Assert.Equal(1920, scene.Width);
+        Assert.Equal(1080, scene.Height);
+        Assert.Equal(new SKRect(10, 5, 30, 25), item.Bounds);
+    }
 }

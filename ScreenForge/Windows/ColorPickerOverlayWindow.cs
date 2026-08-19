@@ -1,189 +1,26 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
-using Image = System.Windows.Controls.Image;
 using FontFamily = System.Windows.Media.FontFamily;
 
 namespace ScreenForge.Windows;
 
 /// <summary>
 /// Sistem tepsisinden açılan bağımsız renk seçici.
-/// Faz 1: tam ekran eyedropper overlay (büyüteçli).
+/// Faz 1: tam ekran eyedropper overlay (<see cref="EyedropperOverlay"/>).
 /// Faz 2: sağ altta renk değerleri paneli (HEX/RGB/HSL, her biri kopyalanabilir).
 /// </summary>
 public sealed class ColorPickerOverlayWindow
 {
-    // P/Invoke — piksel örnekleme
-    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
-    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-    [DllImport("gdi32.dll")] private static extern uint GetPixel(IntPtr hDC, int x, int y);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int w, int h);
-    [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
-    [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr hdcDst, int xDst, int yDst, int w, int h, IntPtr hdcSrc, int xSrc, int ySrc, uint rop);
-    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
-    [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
-    [DllImport("gdi32.dll")] private static extern int GetDIBits(IntPtr hdc, IntPtr hbmp, uint start, uint lines, byte[] bits, ref BITMAPINFO bmi, uint usage);
-    private const uint SRCCOPY = 0x00CC0020;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct BITMAPINFOHEADER
-    {
-        public int biSize, biWidth, biHeight;
-        public short biPlanes, biBitCount;
-        public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct BITMAPINFO { public BITMAPINFOHEADER bmiHeader; }
-
     public void Show()
     {
-        var overlay = new Window
+        EyedropperOverlay.Show(col =>
         {
-            WindowStyle = WindowStyle.None,
-            ResizeMode = ResizeMode.NoResize,
-            AllowsTransparency = true,
-            Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
-            Topmost = true,
-            Left = SystemParameters.VirtualScreenLeft,
-            Top = SystemParameters.VirtualScreenTop,
-            Width = SystemParameters.VirtualScreenWidth,
-            Height = SystemParameters.VirtualScreenHeight,
-            Cursor = Cursors.Cross,
-            ShowInTaskbar = false,
-        };
-
-        const int grid = 9;
-        const double loupe = 90;
-        double cell = loupe / grid;
-
-        var bmp = new System.Windows.Media.Imaging.WriteableBitmap(grid, grid, 96, 96, PixelFormats.Bgr32, null);
-        var img = new Image { Width = loupe, Height = loupe, Source = bmp, IsHitTestVisible = false };
-        System.Windows.Media.RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.NearestNeighbor);
-
-        var centerBox = new System.Windows.Shapes.Rectangle
-        {
-            Width = cell + 2, Height = cell + 2,
-            Stroke = Brushes.White, StrokeThickness = 1.5,
-            Fill = Brushes.Transparent, IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(centerBox, (grid / 2) * cell - 1);
-        Canvas.SetTop(centerBox, (grid / 2) * cell - 1);
-
-        var magCanvas = new Canvas { Width = loupe, Height = loupe, IsHitTestVisible = false };
-        magCanvas.Children.Add(img);
-        magCanvas.Children.Add(centerBox);
-
-        var hexLabel = new TextBlock
-        {
-            Foreground = Brushes.White, FontSize = 10,
-            FontFamily = new FontFamily("Segoe UI"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            IsHitTestVisible = false,
-        };
-        var hexBg = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(200, 30, 30, 30)),
-            CornerRadius = new CornerRadius(4), Padding = new Thickness(5, 1, 5, 1),
-            Child = hexLabel, IsHitTestVisible = false,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-
-        var loupeCircle = new Border
-        {
-            Width = loupe, Height = loupe,
-            CornerRadius = new CornerRadius(loupe / 2),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)),
-            BorderThickness = new Thickness(2),
-            ClipToBounds = true,
-            Child = magCanvas, IsHitTestVisible = false,
-        };
-        loupeCircle.Clip = new EllipseGeometry(new Point(loupe / 2, loupe / 2), loupe / 2, loupe / 2);
-
-        var loupePanel = new StackPanel { IsHitTestVisible = false };
-        loupePanel.Children.Add(loupeCircle);
-        loupePanel.Children.Add(hexBg);
-        loupePanel.Effect = new DropShadowEffect { BlurRadius = 10, ShadowDepth = 2, Opacity = 0.5, Color = Colors.Black };
-
-        var rootCanvas = new Canvas { IsHitTestVisible = false };
-        rootCanvas.Children.Add(loupePanel);
-        overlay.Content = rootCanvas;
-
-        var capBuf = new byte[grid * grid * 4];
-        var pixBuf = new byte[grid * grid * 4];
-        int half = grid / 2;
-
-        overlay.MouseMove += (_, e) =>
-        {
-            var screenPt = overlay.PointToScreen(e.GetPosition(overlay));
-            int sx = (int)screenPt.X, sy = (int)screenPt.Y;
-
-            IntPtr hScr = GetDC(IntPtr.Zero);
-            IntPtr hMem = CreateCompatibleDC(hScr);
-            IntPtr hBmp = CreateCompatibleBitmap(hScr, grid, grid);
-            IntPtr hOld = SelectObject(hMem, hBmp);
-            BitBlt(hMem, 0, 0, grid, grid, hScr, sx - half, sy - half, SRCCOPY);
-            SelectObject(hMem, hOld);
-
-            var bmi = new BITMAPINFO();
-            bmi.bmiHeader.biSize = Marshal.SizeOf<BITMAPINFOHEADER>();
-            bmi.bmiHeader.biWidth = grid;
-            bmi.bmiHeader.biHeight = -grid;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            GetDIBits(hMem, hBmp, 0, (uint)grid, capBuf, ref bmi, 0);
-            DeleteObject(hBmp);
-            DeleteDC(hMem);
-            ReleaseDC(IntPtr.Zero, hScr);
-
-            Buffer.BlockCopy(capBuf, 0, pixBuf, 0, pixBuf.Length);
-            bmp.WritePixels(new Int32Rect(0, 0, grid, grid), pixBuf, grid * 4, 0);
-
-            int ci = (half * grid + half) * 4;
-            var col = Color.FromRgb(capBuf[ci + 2], capBuf[ci + 1], capBuf[ci]);
-            hexLabel.Text = $"#{col.R:X2}{col.G:X2}{col.B:X2}";
-
-            var lp = e.GetPosition(overlay);
-            double offX = 20, offY = -20;
-            double px = lp.X + offX;
-            double py = lp.Y + offY - loupe;
-            if (px + loupe > overlay.Width - 10) px = lp.X - offX - loupe;
-            if (py < 10) py = lp.Y + offY + 20;
-            Canvas.SetLeft(loupePanel, px);
-            Canvas.SetTop(loupePanel, py);
-        };
-
-        overlay.MouseLeftButtonDown += (_, e) =>
-        {
-            var screenPt = overlay.PointToScreen(e.GetPosition(overlay));
-            var col = SampleScreen((int)screenPt.X, (int)screenPt.Y);
             string hex = $"#{col.R:X2}{col.G:X2}{col.B:X2}";
             Clipboard.SetText(hex);
-            overlay.Close();
             ShowResultPanel(col, hex);
-        };
-
-        overlay.KeyDown += (_, e) => { if (e.Key == Key.Escape) overlay.Close(); };
-        overlay.Show();
-        overlay.Focus();
-    }
-
-    private static Color SampleScreen(int x, int y)
-    {
-        IntPtr hDC = GetDC(IntPtr.Zero);
-        try
-        {
-            uint pixel = GetPixel(hDC, x, y);
-            byte r = (byte)(pixel & 0xFF);
-            byte g = (byte)((pixel >> 8) & 0xFF);
-            byte b = (byte)((pixel >> 16) & 0xFF);
-            return Color.FromRgb(r, g, b);
-        }
-        finally { ReleaseDC(IntPtr.Zero, hDC); }
+        });
     }
 
     private static void ShowResultPanel(Color col, string hex)
@@ -303,6 +140,14 @@ public sealed class ColorPickerOverlayWindow
         // Gerçek boyut belli olunca tam sağa-alta yapıştır
         panel.Loaded += (_, _) =>
         {
+            try
+            {
+                var pt = panel.PointToScreen(new Point(0, 0));
+                ChromeScale.Apply(panelBorder, ChromeScale.ForScreenPoint(panel, (int)pt.X, (int)pt.Y));
+                panel.UpdateLayout();
+            }
+            catch { /* ölçek başarısızsa 1× kalır */ }
+
             var w = SystemParameters.WorkArea;
             panel!.Left = w.Right - panel.ActualWidth;
             panel.Top = w.Bottom - panel.ActualHeight;
