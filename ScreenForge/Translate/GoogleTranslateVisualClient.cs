@@ -40,8 +40,19 @@ public sealed class GoogleTranslateVisualClient : IAsyncDisposable
     }
 
     /// <summary>WebView2 + Images sayfasını önceden ısıtır (ilk Çevir’i hızlandırır).</summary>
-    public Task WarmupAsync(string targetLang = "tr", string? sourceLang = null, CancellationToken ct = default)
-        => EnsureReadyAsync(NormalizeSl(sourceLang), NormalizeTl(targetLang), preNavigate: true, ct);
+    public async Task WarmupAsync(string targetLang = "tr", string? sourceLang = null, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(true);
+        try
+        {
+            await EnsureReadyAsync(NormalizeSl(sourceLang), NormalizeTl(targetLang), preNavigate: true, ct)
+                .ConfigureAwait(true);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     private static string NormalizeSl(string? sourceLang)
         => string.IsNullOrWhiteSpace(sourceLang) || sourceLang == "auto" ? "auto" : sourceLang.Trim();

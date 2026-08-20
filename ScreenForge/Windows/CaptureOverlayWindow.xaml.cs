@@ -1913,10 +1913,8 @@ public partial class CaptureOverlayWindow : Window
 
             ShowBusyToast(FormatTranslatingMessage(targetLang));
 
-            // Motor zaten ısınmış olmalı; yoksa arka planda başlat (UI'yi bloklama)
             _visualClient ??= new GoogleTranslateVisualClient();
             _lensClient ??= new GoogleLensClient();
-            _ = _visualClient.WarmupAsync(targetLang, sourceLang, ct);
 
             // PNG hazırlığı arka planda — UI thread serbest
             var (pngBytes, imgW, imgH) = await Task.Run(() =>
