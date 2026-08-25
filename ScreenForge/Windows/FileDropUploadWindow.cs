@@ -31,7 +31,7 @@ public sealed class FileDropUploadWindow
         };
         var dropLabel = new TextBlock
         {
-            Text = "Resim veya GIF sürükleyin",
+            Text = "Sürükleyin veya tıklayın",
             FontSize = 11,
             FontFamily = new WpfFontFamily("Segoe UI"),
             Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0x84, 0xA4)),
@@ -83,6 +83,7 @@ public sealed class FileDropUploadWindow
             Padding = new Thickness(0),
             Child = dropZoneInner,
             HorizontalAlignment = HorizontalAlignment.Center,
+            Cursor = Cursors.Hand,
         };
 
         Window? winRef = null;
@@ -188,23 +189,36 @@ public sealed class FileDropUploadWindow
 
             var files = e.Data.GetData(WpfDataFormats.FileDrop) as string[];
             if (files == null || files.Length != 1) return;
-
-            var path = files[0];
-            if (!AllowedExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant())) return;
-
-            try
+            if (!TryAcceptFile(files[0], out string? err))
             {
-                if (new FileInfo(path).Length > MaxFileSizeBytes)
-                {
-                    MessageBox.Show("Dosya boyutu 5,2 MB sınırını aşıyor.", "ScreenForge",
-                        MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
+                if (err != null)
+                    MessageBox.Show(err, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
             }
-            catch { return; }
-
             win!.Close();
-            StartUpload(path);
+            StartUpload(files[0]);
+        };
+
+        dropZoneWrap.MouseLeftButtonUp += (_, e) =>
+        {
+            if (e.ChangedButton != MouseButton.Left) return;
+            e.Handled = true;
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Yüklemek için resim seç",
+                Filter = "Resimler|*.png;*.jpg;*.jpeg;*.gif;*.webp|Tüm dosyalar|*.*",
+                CheckFileExists = true,
+                Multiselect = false,
+            };
+            if (dlg.ShowDialog(win) != true) return;
+            if (!TryAcceptFile(dlg.FileName, out string? err))
+            {
+                if (err != null)
+                    MessageBox.Show(err, "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            win!.Close();
+            StartUpload(dlg.FileName);
         };
 
 
@@ -214,14 +228,35 @@ public sealed class FileDropUploadWindow
 
     private const long MaxFileSizeBytes = ScreenForge.Editor.ImageExporter.UploadMaxBytes;
 
+    private static bool TryAcceptFile(string path, out string? error)
+    {
+        error = null;
+        if (!AllowedExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant()))
+        {
+            error = "PNG, JPG, GIF veya WebP seçin.";
+            return false;
+        }
+        try
+        {
+            if (new FileInfo(path).Length > MaxFileSizeBytes)
+            {
+                error = "Dosya boyutu 5,2 MB sınırını aşıyor.";
+                return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        return true;
+    }
+
     private static bool IsValidDrop(DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(WpfDataFormats.FileDrop)) return false;
         var files = e.Data.GetData(WpfDataFormats.FileDrop) as string[];
         if (files == null || files.Length != 1) return false;
-        var path = files[0];
-        if (!AllowedExtensions.Contains(System.IO.Path.GetExtension(path).ToLowerInvariant())) return false;
-        try { return new FileInfo(path).Length <= MaxFileSizeBytes; } catch { return false; }
+        return TryAcceptFile(files[0], out _);
     }
 
     private static async void StartUpload(string path)

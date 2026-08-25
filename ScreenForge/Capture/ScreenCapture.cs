@@ -74,7 +74,7 @@ public static class ScreenCapture
         return bmp;
     }
 
-    private static void DrawCursor(Graphics g, Rectangle bounds)
+    internal static void DrawCursor(Graphics g, Rectangle bounds)
     {
         var ci = new CURSORINFO { cbSize = Marshal.SizeOf<CURSORINFO>() };
         if (!GetCursorInfo(ref ci) || ci.flags != CURSOR_SHOWING) return;

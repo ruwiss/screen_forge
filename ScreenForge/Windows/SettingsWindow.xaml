@@ -1,7 +1,7 @@
 <Window x:Class="ScreenForge.Windows.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ScreenForge Ayarları" Width="460" SizeToContent="Height"
+        Title="ScreenForge Ayarları" Width="500" SizeToContent="Height"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#11141B" Foreground="{StaticResource TextBrush}"
         FontFamily="{StaticResource UiFont}">
@@ -95,6 +95,74 @@
                         </DockPanel>
                     </StackPanel>
                 </Border>
+            </TabItem>
+
+            <!-- ===== Kayıt ===== -->
+            <TabItem Header="Kayıt" Style="{StaticResource SettingsTabItem}">
+                <StackPanel>
+                    <TextBlock Text="GIF" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <DockPanel Margin="0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="FPS" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbGifFps" Width="120" Height="26" HorizontalAlignment="Left"
+                                          Style="{StaticResource DarkComboBox}">
+                                    <ComboBoxItem Content="5" Tag="5" />
+                                    <ComboBoxItem Content="10" Tag="10" />
+                                    <ComboBoxItem Content="12" Tag="12" />
+                                    <ComboBoxItem Content="15" Tag="15" />
+                                    <ComboBoxItem Content="20" Tag="20" />
+                                    <ComboBoxItem Content="24" Tag="24" />
+                                    <ComboBoxItem Content="25" Tag="25" />
+                                    <ComboBoxItem Content="30" Tag="30" />
+                                </ComboBox>
+                            </DockPanel>
+                            <CheckBox x:Name="ChkGifCursor" Content="Fare imleci" />
+                            <DockPanel Margin="0,8,0,0">
+                                <TextBlock Style="{StaticResource Label}" Width="110" VerticalAlignment="Center">
+                                    <Run Text="Bellek: " /><Run x:Name="GifMemoryValue" Text="1024 MB" />
+                                </TextBlock>
+                                <Slider x:Name="SldGifMemory" Minimum="64" Maximum="2048" TickFrequency="64"
+                                        IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="Video" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <DockPanel Margin="0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="FPS" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbVideoFps" Width="120" Height="26" HorizontalAlignment="Left"
+                                          Style="{StaticResource DarkComboBox}">
+                                    <ComboBoxItem Content="15" Tag="15" />
+                                    <ComboBoxItem Content="24" Tag="24" />
+                                    <ComboBoxItem Content="30" Tag="30" />
+                                    <ComboBoxItem Content="60" Tag="60" />
+                                </ComboBox>
+                            </DockPanel>
+                            <DockPanel Margin="0,8,0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="Kalite" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbVideoQuality" Width="120" Height="26" HorizontalAlignment="Left"
+                                          Style="{StaticResource DarkComboBox}">
+                                    <ComboBoxItem Content="Düşük" />
+                                    <ComboBoxItem Content="Orta" />
+                                    <ComboBoxItem Content="Yüksek" />
+                                </ComboBox>
+                            </DockPanel>
+                            <CheckBox x:Name="ChkVideoCursor" Content="Fare imleci" />
+                            <CheckBox x:Name="ChkVideoClicks" Content="Tıklama vurgusu" />
+                            <CheckBox x:Name="ChkCountdown" Content="3 sn geri sayım" />
+                            <CheckBox x:Name="ChkSystemAudio" Content="Sistem sesi" />
+                            <CheckBox x:Name="ChkMicrophone" Content="Mikrofon" />
+                            <DockPanel x:Name="MicRow" Margin="0,6,0,2">
+                                <TextBlock Style="{StaticResource Label}" Text="Mikrofon" Width="110" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CmbMicrophone" Height="26" HorizontalAlignment="Stretch"
+                                          Style="{StaticResource DarkComboBox}" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
             </TabItem>
 
             <!-- ===== Çeviri ===== -->

@@ -35,6 +35,9 @@ public sealed class AppSettings
     // ---- GIF kayıt/dışa aktarma tercihleri ----
     public GifSettings Gif { get; set; } = new();
 
+    // ---- Video kayıt tercihleri ----
+    public VideoSettings Video { get; set; } = new();
+
     // ---- Çeviri ----
     /// <summary>Kaynak dil kodu; "auto" = otomatik algıla (görüntü çevirisi).</summary>
     public string TranslateSourceLanguage { get; set; } = "auto";
@@ -97,6 +100,9 @@ public sealed class AppSettings
     {
         // Opacity kaydedilmez; her oturumda varsayılan %100.
         ToolStyles.Opacity = 1.0;
+
+        Gif.Fps = Math.Clamp(Gif.Fps, 1, 60);
+        Video.Fps = Math.Clamp(Video.Fps, 1, 60);
 
         if (string.IsNullOrWhiteSpace(TranslateNativeLanguage))
             TranslateNativeLanguage = TranslateLanguageDefaults.MapUiCulture(uiCulture);
@@ -182,6 +188,26 @@ public sealed class GifSettings
 
     /// <summary>Vurgu dairesinin yarıçapı (kaynak piksel).</summary>
     public double HighlightRadius { get; set; } = 12;
+}
+
+public enum VideoQuality
+{
+    Low,
+    Medium,
+    High,
+}
+
+/// <summary>MP4 ekran kaydı tercihleri.</summary>
+public sealed class VideoSettings
+{
+    public int Fps { get; set; } = 30;
+    public VideoQuality Quality { get; set; } = VideoQuality.High;
+    public bool CaptureCursor { get; set; } = true;
+    public bool HighlightClicks { get; set; } = true;
+    public bool RecordSystemAudio { get; set; } = true;
+    public bool RecordMicrophone { get; set; }
+    public string MicDeviceId { get; set; } = "";
+    public bool ShowCountdown { get; set; } = true;
 }
 
 [Flags]

@@ -1,6 +1,6 @@
 # ScreenForge — Windows Screenshot & Annotation Tool
 
-**ScreenForge** is a modern, fast **screen capture and annotation** app for Windows. Lightshot-style workflow with drawing tools, numbered steps, blur/pixelate, freeform collage canvas, region GIF recording, and one-click cloud upload.
+**ScreenForge** is a modern, fast **screen capture and annotation** app for Windows. Lightshot-style workflow with drawing tools, numbered steps, blur/pixelate, freeform collage canvas, GIF and MP4 screen recording, and one-click cloud upload.
 
 <p align="center">
   <img src="ScreenForge/Resources/app.png" alt="ScreenForge screenshot tool icon" width="128" />
@@ -29,7 +29,7 @@ Looking for a **Lightshot alternative**, a better **Snipping Tool**, or a lightw
 - Capture a **region**, **fullscreen**, or a **freeform collage** canvas
 - Annotate with arrows, shapes, pen, highlight, text, **numbered steps**, and **blur / pixelate**
 - Export PNG, JPEG, or WebP — solid background or transparent
-- Record a **region as GIF** and preview before save
+- Record a **region or fullscreen as GIF or MP4** and preview before save
 - Upload to the cloud and get a shareable link
 - Global hotkeys, system tray, settings, and auto-update
 
@@ -42,7 +42,7 @@ Looking for a **Lightshot alternative**, a better **Snipping Tool**, or a lightw
 | **Capture** | Region, fullscreen, freeform (collage) canvas |
 | **Annotation** | Arrow, shapes, pen, highlight, text, steps, blur/pixelate |
 | **Freeform mode** | Multi-select, copy / paste / duplicate, system clipboard PNG |
-| **Output** | Copy, save (PNG/JPEG/WebP), cloud upload, region GIF |
+| **Output** | Copy, save (PNG/JPEG/WebP), cloud upload, GIF / MP4 |
 | **Export** | Background or transparent + crop from the right edge |
 | **System** | Tray icon, global hotkeys, settings, automatic updates |
 
@@ -141,7 +141,7 @@ It targets a **Lightshot-like** capture-and-annotate flow on Windows, with steps
 
 ### Does it record video?
 
-Not full video. It records a **selected region as an animated GIF**, with preview before export.
+Yes. Region or fullscreen can be recorded as **MP4** (H.264, optional system audio and microphone) or as an **animated GIF**.
 
 ### What export formats are supported?
 

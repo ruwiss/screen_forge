@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using ScreenForge.Settings;
+using ScreenForge.Record;
 using SfModifierKeys = ScreenForge.Settings.ModifierKeys;
 
 namespace ScreenForge.Windows;
@@ -380,8 +381,89 @@ public partial class SettingsWindow : Window
         QualityValue.Text = _settings.Quality.ToString();
         TxtSaveDir.Text = _settings.SaveDirectory;
         UpdateQualityVisibility();
+        LoadRecordValues();
         FillTranslateLanguageCombos();
         _loading = false;
+    }
+
+    private void LoadRecordValues()
+    {
+        SelectIntTag(CmbGifFps, _settings.Gif.Fps, 20);
+        ChkGifCursor.IsChecked = _settings.Gif.CaptureCursor;
+        SldGifMemory.Value = Math.Clamp(_settings.Gif.MaxFrameMemoryMb, 64, 2048);
+        GifMemoryValue.Text = $"{(int)SldGifMemory.Value} MB";
+        SelectIntTag(CmbVideoFps, _settings.Video.Fps, 30);
+        CmbVideoQuality.SelectedIndex = _settings.Video.Quality switch
+        {
+            VideoQuality.Low => 0,
+            VideoQuality.High => 2,
+            _ => 1,
+        };
+        ChkVideoCursor.IsChecked = _settings.Video.CaptureCursor;
+        ChkVideoClicks.IsChecked = _settings.Video.HighlightClicks;
+        ChkSystemAudio.IsChecked = _settings.Video.RecordSystemAudio;
+        ChkMicrophone.IsChecked = _settings.Video.RecordMicrophone;
+        ChkCountdown.IsChecked = _settings.Video.ShowCountdown;
+        FillMicrophones();
+        SyncMicRow();
+    }
+
+    private void FillMicrophones()
+    {
+        CmbMicrophone.Items.Clear();
+        var devices = AudioDevices.ListMicrophones();
+        if (devices.Count == 0)
+        {
+            CmbMicrophone.Items.Add(new ComboBoxItem { Content = "Mikrofon yok", Tag = "" });
+            CmbMicrophone.SelectedIndex = 0;
+            return;
+        }
+
+        int pick = 0;
+        string want = _settings.Video.MicDeviceId;
+        if (string.IsNullOrWhiteSpace(want))
+            want = AudioDevices.DefaultMicrophoneId() ?? "";
+        for (int i = 0; i < devices.Count; i++)
+        {
+            CmbMicrophone.Items.Add(new ComboBoxItem { Content = devices[i].Name, Tag = devices[i].Id });
+            if (devices[i].Id == want) pick = i;
+        }
+        CmbMicrophone.SelectedIndex = pick;
+        if (string.IsNullOrWhiteSpace(_settings.Video.MicDeviceId) && devices.Count > 0)
+            _settings.Video.MicDeviceId = devices[pick].Id;
+    }
+
+    private void SyncMicRow()
+    {
+        bool on = _settings.Video.RecordMicrophone;
+        MicRow.IsEnabled = on;
+        MicRow.Opacity = on ? 1 : 0.45;
+    }
+
+    private static void SelectIntTag(ComboBox cmb, int value, int fallback)
+    {
+        for (int i = 0; i < cmb.Items.Count; i++)
+        {
+            if (cmb.Items[i] is ComboBoxItem item && int.TryParse(Convert.ToString(item.Tag), out int t) && t == value)
+            {
+                cmb.SelectedIndex = i;
+                return;
+            }
+        }
+        if (value != fallback)
+        {
+            SelectIntTag(cmb, fallback, fallback);
+            return;
+        }
+        if (cmb.Items.Count > 0)
+            cmb.SelectedIndex = 0;
+    }
+
+    private static int GetIntTag(ComboBox cmb, int fallback)
+    {
+        if (cmb.SelectedItem is ComboBoxItem item && int.TryParse(Convert.ToString(item.Tag), out int t))
+            return t;
+        return fallback;
     }
 
     private void FillTranslateLanguageCombos()
@@ -445,6 +527,44 @@ public partial class SettingsWindow : Window
             QualityValue.Text = _settings.Quality.ToString();
         });
         BtnBrowse.Click += (_, _) => BrowseFolder();
+
+        CmbGifFps.SelectionChanged += (_, _) => Apply(() =>
+        {
+            _settings.Gif.Fps = GetIntTag(CmbGifFps, 20);
+        });
+        ChkGifCursor.Click += (_, _) => Apply(() => _settings.Gif.CaptureCursor = ChkGifCursor.IsChecked == true);
+        SldGifMemory.ValueChanged += (_, _) => Apply(() =>
+        {
+            _settings.Gif.MaxFrameMemoryMb = (int)SldGifMemory.Value;
+            GifMemoryValue.Text = $"{_settings.Gif.MaxFrameMemoryMb} MB";
+        });
+        CmbVideoFps.SelectionChanged += (_, _) => Apply(() =>
+        {
+            _settings.Video.Fps = GetIntTag(CmbVideoFps, 30);
+        });
+        CmbVideoQuality.SelectionChanged += (_, _) => Apply(() =>
+        {
+            _settings.Video.Quality = CmbVideoQuality.SelectedIndex switch
+            {
+                0 => VideoQuality.Low,
+                2 => VideoQuality.High,
+                _ => VideoQuality.Medium,
+            };
+        });
+        ChkVideoCursor.Click += (_, _) => Apply(() => _settings.Video.CaptureCursor = ChkVideoCursor.IsChecked == true);
+        ChkVideoClicks.Click += (_, _) => Apply(() => _settings.Video.HighlightClicks = ChkVideoClicks.IsChecked == true);
+        ChkCountdown.Click += (_, _) => Apply(() => _settings.Video.ShowCountdown = ChkCountdown.IsChecked == true);
+        ChkSystemAudio.Click += (_, _) => Apply(() => _settings.Video.RecordSystemAudio = ChkSystemAudio.IsChecked == true);
+        ChkMicrophone.Click += (_, _) => Apply(() =>
+        {
+            _settings.Video.RecordMicrophone = ChkMicrophone.IsChecked == true;
+            SyncMicRow();
+        });
+        CmbMicrophone.SelectionChanged += (_, _) => Apply(() =>
+        {
+            if (CmbMicrophone.SelectedItem is ComboBoxItem item && item.Tag is string id)
+                _settings.Video.MicDeviceId = id;
+        });
 
         CmbTranslateNative.SelectionChanged += (_, _) => Apply(() =>
         {

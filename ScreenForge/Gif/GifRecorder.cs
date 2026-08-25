@@ -7,6 +7,7 @@ using ScreenForge.Gif.Input;
 using DrawingRect = System.Drawing.Rectangle;
 using QType = ScreenForge.Gif.Encoder.QuantizerType;
 using SfMouseButtons = ScreenForge.Gif.Input.MouseButtons;
+using ScreenForge.Record;
 using WpfKey = System.Windows.Input.Key;
 
 namespace ScreenForge.Gif;
@@ -25,7 +26,7 @@ public enum GifRecorderState
 /// Yakalama tamponları yeniden kullanılır; gecikmeler duvar saatinden ölçülür,
 /// böylece zamanlayıcı sapması çıktı süresini bozmaz.
 /// </summary>
-public sealed class GifRecorder : IDisposable
+public sealed class GifRecorder : IDisposable, IRecordingSession
 {
     public const long DefaultMaxFrameBytes = 512L * 1024 * 1024;
 
@@ -129,6 +130,7 @@ public sealed class GifRecorder : IDisposable
     public long MaxFrameBytes => _maxFrameBytes;
     public bool MemoryLimitReached { get; private set; }
     public GifRecorderState State { get; private set; } = GifRecorderState.Idle;
+    public bool IsPaused => State == GifRecorderState.Paused;
     public List<int> FrameDelays => _frameDelays;
     public List<FrameInput> FrameInputs => _frameInputs;
 
@@ -163,6 +165,7 @@ public sealed class GifRecorder : IDisposable
     public Action? HideForCapture { get; set; }
     public Action? ShowAfterCapture { get; set; }
 
+    public event Action? LimitReached;
     public event Action? FrameMemoryLimitReached;
     public event Action? StateChanged;
 
@@ -342,6 +345,38 @@ public sealed class GifRecorder : IDisposable
         SetState(GifRecorderState.Stopped);
     }
 
+    public void Restart()
+    {
+        if (_disposed) return;
+        if (State is GifRecorderState.Idle or GifRecorderState.Stopped)
+        {
+            Start();
+            return;
+        }
+
+        lock (_frameLock)
+        {
+            _store.Clear();
+            _frameDelays.Clear();
+            _frameInputs.Clear();
+            _lastFrame = null;
+            _frameBytes = 0;
+        }
+        MemoryLimitReached = false;
+        _captureAttempts = 0;
+        _lastStoredTicks = 0;
+        _stopwatch.Restart();
+        lock (_inputLock)
+        {
+            _pressedKeys.Clear();
+            _buttons = SfMouseButtons.None;
+            _clickedButtons = SfMouseButtons.None;
+        }
+        if (State == GifRecorderState.Paused)
+            Resume();
+        StateChanged?.Invoke();
+    }
+
     /// <summary>
     /// Sabit aralıklarla kare yakalar. Bir yakalama uzun sürerse sonraki
     /// bekleme kısaltılır, böylece uzun vadede hız hedefe yakın kalır.
@@ -492,6 +527,7 @@ public sealed class GifRecorder : IDisposable
             if (!stored)
             {
                 Stop();
+                LimitReached?.Invoke();
                 FrameMemoryLimitReached?.Invoke();
             }
         }

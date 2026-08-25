@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using ScreenForge.Gif;
+using ScreenForge.Record;
 using WpfFontFamily = System.Windows.Media.FontFamily;
 using WpfProgressBar = System.Windows.Controls.ProgressBar;
 using WpfRectangle = System.Windows.Shapes.Rectangle;
@@ -14,15 +15,13 @@ using WpfRectangle = System.Windows.Shapes.Rectangle;
 namespace ScreenForge.Windows;
 
 /// <summary>
-/// GIF kaydı sırasında gösterilen overlay.
+/// GIF veya video kaydı sırasında gösterilen overlay.
 /// İki pencere:
 ///   (1) Tam ekran şeffaf kesikli çerçeve — WS_EX_TRANSPARENT + WDA_EXCLUDEFROMCAPTURE
 ///   (2) Küçük opak kontrol çubuğu (AllowsTransparency=false) — tıklanabilir
-/// WDA_EXCLUDEFROMCAPTURE her iki pencereyi de BitBlt'den gizler; gizle/göster gerekmez.
 /// </summary>
-public sealed class GifRecordingOverlayWindow
+public sealed class RecordingOverlayWindow
 {
-    // ─── Win32 ───────────────────────────────────────────────────────────────
     [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr hwnd, int nIndex);
     [DllImport("user32.dll")] private static extern int SetWindowLong(IntPtr hwnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint dwAffinity);
@@ -41,7 +40,6 @@ public sealed class GifRecordingOverlayWindow
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int VK_CONTROL = 0x11;
     private const int VK_SHIFT = 0x10;
-    // Pencerenin BitBlt/PrintScreen çıktısında görünmemesini sağlar (Windows 10 2004+)
     private const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -52,15 +50,17 @@ public sealed class GifRecordingOverlayWindow
     private static readonly Color MutedColor = Color.FromRgb(0x9A, 0xA4, 0xB8);
     private static readonly Color WarningColor = Color.FromRgb(0xF2, 0xB0, 0x24);
 
-    public event Action<GifRecorder>? Stopped;
+    public event Action<IRecordingSession>? Stopped;
 
-    private readonly GifRecorder _recorder;
+    private readonly IRecordingSession _session;
     private readonly Rect _dipRegion;
+    private readonly RecordingKind _kind;
 
-    public GifRecordingOverlayWindow(GifRecorder recorder, Rect dipRegion)
+    public RecordingOverlayWindow(IRecordingSession session, Rect dipRegion, RecordingKind kind)
     {
-        _recorder = recorder;
+        _session = session;
         _dipRegion = dipRegion;
+        _kind = kind;
     }
 
     public void Show()
@@ -68,7 +68,6 @@ public sealed class GifRecordingOverlayWindow
         IntPtr keyboardHook = IntPtr.Zero;
         LowLevelKeyboardProc? hookProc = null;
 
-        // ═══ Pencere 1: tam ekran kesikli çerçeve ═════════════════════════════
         var dashRect = new WpfRectangle
         {
             Stroke = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)),
@@ -102,13 +101,11 @@ public sealed class GifRecordingOverlayWindow
         borderWin.SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(borderWin).Handle;
-            // WS_EX_TRANSPARENT: fare mesajları bu pencereye iletilmez
             int ex = GetWindowLong(hwnd, GWL_EXSTYLE);
             SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TRANSPARENT);
             SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
         };
 
-        // ═══ Pencere 2: kontrol çubuğu (opak — kesin tıklanabilir) ════════════
         var recDot = new TextBlock
         {
             Text = "●",
@@ -128,7 +125,7 @@ public sealed class GifRecordingOverlayWindow
         };
         var frameText = new TextBlock
         {
-            Text = "0 kare",
+            Text = _kind == RecordingKind.Video ? "MP4" : "0 kare",
             Foreground = new SolidColorBrush(MutedColor),
             FontSize = 10,
             FontFamily = new WpfFontFamily("Segoe UI"),
@@ -154,6 +151,7 @@ public sealed class GifRecordingOverlayWindow
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 6, 0),
             ToolTip = "Karelerin kullandığı bellek",
+            Visibility = _kind == RecordingKind.Gif ? Visibility.Visible : Visibility.Collapsed,
         };
         var memoryBar = new WpfProgressBar
         {
@@ -167,13 +165,37 @@ public sealed class GifRecordingOverlayWindow
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 12, 0),
+            Visibility = _kind == RecordingKind.Gif ? Visibility.Visible : Visibility.Collapsed,
+        };
+        var sysMeter = new WpfProgressBar
+        {
+            Width = 42, Height = 5, Minimum = 0, Maximum = 100,
+            Foreground = new SolidColorBrush(AccentColor),
+            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x33, 0x45)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = "Sistem sesi",
+            Visibility = Visibility.Collapsed,
+        };
+        var micMeter = new WpfProgressBar
+        {
+            Width = 42, Height = 5, Minimum = 0, Maximum = 100,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)),
+            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x33, 0x45)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0),
+            ToolTip = "Mikrofon",
+            Visibility = Visibility.Collapsed,
         };
 
         var pauseBtn = MakeBarButton("Duraklat", Color.FromRgb(0x2A, 0x35, 0x4D), 78);
         pauseBtn.ToolTip = "Duraklat / Devam et  (Ctrl+Shift+P)";
-
         var stopBtn = MakeBarButton("Durdur", Color.FromRgb(0xBE, 0x3A, 0x3A), 72);
         stopBtn.ToolTip = "Kaydı bitir  (Esc)";
+        var restartBtn = MakeBarButton("Yeniden", Color.FromRgb(0x2A, 0x35, 0x4D), 72);
+        restartBtn.ToolTip = "Kaydı sil ve baştan başla";
 
         var barStack = new StackPanel
         {
@@ -187,13 +209,15 @@ public sealed class GifRecordingOverlayWindow
         barStack.Children.Add(rateText);
         barStack.Children.Add(memoryText);
         barStack.Children.Add(memoryBar);
+        barStack.Children.Add(sysMeter);
+        barStack.Children.Add(micMeter);
         barStack.Children.Add(pauseBtn);
+        barStack.Children.Add(restartBtn);
         barStack.Children.Add(stopBtn);
 
         double barLeft = SystemParameters.VirtualScreenLeft + _dipRegion.Left;
         double barTop = SystemParameters.VirtualScreenTop + Math.Max(4, _dipRegion.Top - 44);
 
-        // AllowsTransparency=false → normal opak pencere → tıklama geçişi olmaz
         var barWin = new Window
         {
             WindowStyle = WindowStyle.None,
@@ -210,7 +234,6 @@ public sealed class GifRecordingOverlayWindow
         {
             var hwnd = new WindowInteropHelper(barWin).Handle;
             SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
-            // İstemci dışı çerçeveyi sıfırla (beyaz şerit gider)
             WindowChrome.SetWindowChrome(barWin, new WindowChrome
             {
                 GlassFrameThickness = new Thickness(0),
@@ -220,16 +243,17 @@ public sealed class GifRecordingOverlayWindow
             });
         };
 
-        // WDA_EXCLUDEFROMCAPTURE hallettiği için gizleme kancası gerekmiyor.
-        _recorder.HideForCapture = null;
-        _recorder.ShowAfterCapture = null;
+        if (_session is GifRecorder gifSession)
+        {
+            gifSession.HideForCapture = null;
+            gifSession.ShowAfterCapture = null;
+        }
 
-        // ─── Denetim ──────────────────────────────────────────────────────────
         bool stopping = false;
 
         void UpdateRecordingVisuals()
         {
-            bool paused = _recorder.State == GifRecorderState.Paused;
+            bool paused = _session.IsPaused;
             pauseBtn.Content = paused ? "Devam" : "Duraklat";
             recDot.Foreground = new SolidColorBrush(paused ? MutedColor : RecordColor);
             recDot.Opacity = paused ? 0.45 : 1.0;
@@ -240,12 +264,9 @@ public sealed class GifRecordingOverlayWindow
 
         void TogglePause()
         {
-            if (stopping)
-                return;
-
-            if (_recorder.State == GifRecorderState.Recording) _recorder.Pause();
-            else if (_recorder.State == GifRecorderState.Paused) _recorder.Resume();
-
+            if (stopping) return;
+            if (_session.IsPaused) _session.Resume();
+            else _session.Pause();
             UpdateRecordingVisuals();
         }
 
@@ -253,27 +274,35 @@ public sealed class GifRecordingOverlayWindow
         {
             if (stopping) return;
             stopping = true;
-
-            _recorder.FrameMemoryLimitReached -= OnFrameMemoryLimitReached;
-            _recorder.Stop();
+            if (_kind == RecordingKind.Video)
+            {
+                stopBtn.Content = "Duruyor";
+                stopBtn.IsEnabled = false;
+                pauseBtn.IsEnabled = false;
+                restartBtn.IsEnabled = false;
+                barWin.UpdateLayout();
+            }
+            _session.LimitReached -= OnLimitReached;
+            _session.Stop();
             if (keyboardHook != IntPtr.Zero) { UnhookWindowsHookEx(keyboardHook); keyboardHook = IntPtr.Zero; }
             borderWin.Close();
             barWin.Close();
-            Stopped?.Invoke(_recorder);
+            Stopped?.Invoke(_session);
         }
 
-        void OnFrameMemoryLimitReached()
+        void OnLimitReached()
         {
+            if (_kind != RecordingKind.Gif || _session is not GifRecorder gif)
+                return;
+
             barWin.Dispatcher.BeginInvoke(() =>
             {
                 if (stopping) return;
-
-                long limitMb = _recorder.MaxFrameBytes / (1024 * 1024);
-                var elapsed = _recorder.Elapsed;
-
+                long limitMb = gif.MaxFrameBytes / (1024 * 1024);
+                var elapsed = gif.Elapsed;
                 MessageBox.Show(barWin,
                     $"Kayıt {limitMb} MB bellek sınırına ulaştı ve durduruldu.\n\n" +
-                    $"{_recorder.FrameCount} kare · {elapsed.TotalSeconds:0} saniye yakalandı ve düzenleyicide açılacak.\n\n" +
+                    $"{gif.FrameCount} kare · {elapsed.TotalSeconds:0} saniye yakalandı ve düzenleyicide açılacak.\n\n" +
                     "Daha uzun kayıt için: daha küçük bir alan seçin, FPS'i düşürün " +
                     "veya Ayarlar'dan bellek sınırını artırın.",
                     "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -281,9 +310,17 @@ public sealed class GifRecordingOverlayWindow
             });
         }
 
-        _recorder.FrameMemoryLimitReached += OnFrameMemoryLimitReached;
+        _session.LimitReached += OnLimitReached;
         pauseBtn.Click += (_, _) => TogglePause();
         stopBtn.Click += (_, _) => DoStop();
+        restartBtn.Click += (_, _) =>
+        {
+            if (stopping) return;
+            restartBtn.IsEnabled = false;
+            try { _session.Restart(); }
+            finally { if (!stopping) restartBtn.IsEnabled = true; }
+            UpdateRecordingVisuals();
+        };
         barWin.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) DoStop();
@@ -302,46 +339,50 @@ public sealed class GifRecordingOverlayWindow
             barWin.Dispatcher.BeginInvoke(DoStop);
         };
 
-        // ─── Zamanlayıcılar ───────────────────────────────────────────────────
-        var uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        var uiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_kind == RecordingKind.Video ? 50 : 500) };
         uiTimer.Tick += (_, _) =>
         {
-            var elapsed = _recorder.Elapsed;
+            var elapsed = _session.Elapsed;
             elapsedText.Text = $"{(int)elapsed.TotalMinutes:D2}:{elapsed.Seconds:D2}";
-            frameText.Text = $"{_recorder.FrameCount} kare";
+            if (_kind == RecordingKind.Gif && _session is GifRecorder gif)
+            {
+                frameText.Text = $"{gif.FrameCount} kare";
+                double ratio = gif.MemoryUsageRatio;
+                memoryText.Text = $"{gif.FrameBytes / (1024.0 * 1024.0):0.#} MB";
+                memoryText.ToolTip = $"Sıkıştırılmış {gif.FrameBytes / (1024.0 * 1024.0):0.#} MB " +
+                                     $"/ sınır {gif.MaxFrameBytes / (1024 * 1024)} MB\n" +
+                                     $"Ham karşılığı {gif.UncompressedBytes / (1024.0 * 1024.0):0} MB " +
+                                     $"({gif.CompressionRatio:0.#}× sıkıştırma)";
+                memoryBar.Value = ratio * 100;
+                var gaugeColor = ratio >= 0.85 ? RecordColor : ratio >= 0.6 ? WarningColor : AccentColor;
+                memoryBar.Foreground = new SolidColorBrush(gaugeColor);
+                memoryText.Foreground = new SolidColorBrush(ratio >= 0.85 ? RecordColor : MutedColor);
+            }
+            if (_session is VideoRecorder video)
+            {
+                sysMeter.Visibility = video.HasSystemAudio ? Visibility.Visible : Visibility.Collapsed;
+                micMeter.Visibility = video.HasMic ? Visibility.Visible : Visibility.Collapsed;
+                sysMeter.Value = video.SystemPeak * 100;
+                micMeter.Value = video.MicPeak * 100;
+            }
 
-            // Sistem hedef hıza yetişemiyorsa kullanıcı bunu kayıt sırasında görsün.
-            double efficiency = _recorder.CaptureEfficiency;
+            double efficiency = _session.CaptureEfficiency;
             if (elapsed.TotalMilliseconds > 800 && efficiency < 0.9)
             {
-                rateText.Text = $"{_recorder.Fps * efficiency:0} fps";
+                rateText.Text = $"{_session.Fps * efficiency:0} fps";
                 rateText.Foreground = new SolidColorBrush(efficiency < 0.7 ? RecordColor : WarningColor);
             }
             else
             {
                 rateText.Text = "";
             }
-
-            double ratio = _recorder.MemoryUsageRatio;
-            memoryText.Text = $"{_recorder.FrameBytes / (1024.0 * 1024.0):0.#} MB";
-            memoryText.ToolTip = $"Sıkıştırılmış {_recorder.FrameBytes / (1024.0 * 1024.0):0.#} MB " +
-                                 $"/ sınır {_recorder.MaxFrameBytes / (1024 * 1024)} MB\n" +
-                                 $"Ham karşılığı {_recorder.UncompressedBytes / (1024.0 * 1024.0):0} MB " +
-                                 $"({_recorder.CompressionRatio:0.#}× sıkıştırma)";
-            memoryBar.Value = ratio * 100;
-
-            var gaugeColor = ratio >= 0.85 ? RecordColor : ratio >= 0.6 ? WarningColor : AccentColor;
-            memoryBar.Foreground = new SolidColorBrush(gaugeColor);
-            memoryText.Foreground = new SolidColorBrush(ratio >= 0.85 ? RecordColor : MutedColor);
         };
 
         var blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         bool blinkOn = true;
         blinkTimer.Tick += (_, _) =>
         {
-            if (_recorder.State == GifRecorderState.Paused)
-                return;
-
+            if (_session.IsPaused) return;
             blinkOn = !blinkOn;
             recDot.Opacity = blinkOn ? 1.0 : 0.2;
         };
@@ -361,21 +402,17 @@ public sealed class GifRecordingOverlayWindow
             blinkTimer.Start();
             UpdateRecordingVisuals();
 
-            // Yalnızca kayıt kısayolları. Tuş rozetleri için gereken dinleme
-            // GifRecorder'ın kendi InputHook'unda yapılır.
             hookProc = (code, wparam, lparam) =>
             {
                 if (code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN))
                 {
                     var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lparam);
                     var key = KeyInterop.KeyFromVirtualKey((int)info.vkCode);
-
                     if (key == Key.Escape)
                         barWin.Dispatcher.BeginInvoke(DoStop);
                     else if (key == Key.P && IsDown(VK_CONTROL) && IsDown(VK_SHIFT))
                         barWin.Dispatcher.BeginInvoke(TogglePause);
                 }
-
                 return CallNextHookEx(keyboardHook, code, wparam, lparam);
             };
 
@@ -388,7 +425,7 @@ public sealed class GifRecordingOverlayWindow
         {
             uiTimer.Stop();
             blinkTimer.Stop();
-            _recorder.FrameMemoryLimitReached -= OnFrameMemoryLimitReached;
+            _session.LimitReached -= OnLimitReached;
             if (keyboardHook != IntPtr.Zero) { UnhookWindowsHookEx(keyboardHook); keyboardHook = IntPtr.Zero; }
         };
 
