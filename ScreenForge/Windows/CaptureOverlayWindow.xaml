@@ -161,8 +161,8 @@
         <!-- Çeviri sonucu: tam ekran koyu + ortalanmış görüntü (monitrün %40–100) -->
         <Rectangle x:Name="TranslateDim" Fill="#E6000000" Visibility="Collapsed"
                    MouseLeftButtonDown="OnTranslateDimClick" Cursor="Arrow" />
-        <Border x:Name="TranslateResultHost" Visibility="Collapsed" ClipToBounds="False"
-                BorderBrush="#40FFFFFF" BorderThickness="1" CornerRadius="4"
+        <Border x:Name="TranslateResultHost" Visibility="Collapsed" ClipToBounds="True"
+                BorderBrush="#28FFFFFF" BorderThickness="1" CornerRadius="14"
                 Background="#FF12151C" Cursor="Hand"
                 MouseEnter="OnTranslateHostMouseEnter"
                 MouseLeave="OnTranslateHostMouseLeave"
@@ -171,11 +171,15 @@
                 <ScaleTransform x:Name="TranslateHostScale" ScaleX="1" ScaleY="1" />
             </Border.RenderTransform>
             <Border.Effect>
-                <DropShadowEffect Color="Black" BlurRadius="32" ShadowDepth="6" Opacity="0.6" />
+                <DropShadowEffect Color="Black" BlurRadius="40" ShadowDepth="0" Opacity="0.55" />
             </Border.Effect>
-            <Image x:Name="TranslateResultImage" Stretch="Uniform"
+            <Image x:Name="TranslateResultImage" Stretch="UniformToFill"
                    RenderOptions.BitmapScalingMode="HighQuality"
-                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                   HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Image.Clip>
+                    <RectangleGeometry RadiusX="13" RadiusY="13" Rect="0,0,100,100"/>
+                </Image.Clip>
+            </Image>
         </Border>
         <!-- Monitör sağ üst: kapat -->
         <Button x:Name="TranslateCloseButton" Visibility="Collapsed"

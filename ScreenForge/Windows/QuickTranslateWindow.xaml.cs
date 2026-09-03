@@ -64,6 +64,7 @@ public partial class QuickTranslateWindow : Window
 
         Loaded += (_, _) =>
         {
+            DarkTitleBar.Apply(this);
             PlaceOnCursorMonitor();
             ForceForeground();
             TxtInput.Focus();
@@ -149,24 +150,10 @@ public partial class QuickTranslateWindow : Window
         double top = screen.WorkingArea.Top / dpi.DpiScaleY;
         double width = screen.WorkingArea.Width / dpi.DpiScaleX;
         double height = screen.WorkingArea.Height / dpi.DpiScaleY;
-
-        MaxHeight = Math.Max(140, height * 0.55);
-        ResultScroll.MaxHeight = Math.Max(72, height * 0.32);
-
+        MaxHeight = Math.Max(140, height * 0.85);
+        ResultScroll.MaxHeight = Math.Max(72, height * 0.5);
         Left = left + (width - ActualWidth) / 2;
-        Top = top + (height - ActualHeight) / 2;
-    }
-
-    private const double CardRadius = 16;
-
-    private void OnRootCardSizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (RootCard.ActualWidth < 1 || RootCard.ActualHeight < 1)
-            return;
-
-        RootCard.Clip = new RectangleGeometry(
-            new Rect(0, 0, RootCard.ActualWidth, RootCard.ActualHeight),
-            CardRadius, CardRadius);
+        Top = top;
     }
 
     private void OnOutsideClick(object sender, MouseButtonEventArgs e)
@@ -222,6 +209,7 @@ public partial class QuickTranslateWindow : Window
     }
 
     private void OnCopyClick(object sender, RoutedEventArgs e) => CopyResult();
+    private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
     private void CopyResult()
     {
@@ -275,10 +263,10 @@ public partial class QuickTranslateWindow : Window
         var ct = _cts.Token;
         int id = ++_requestId;
 
+        LangBadge.Visibility = Visibility.Collapsed;
         ResultHost.Visibility = Visibility.Visible;
         TxtStatus.Text = "Çevriliyor…";
         BtnCopy.IsEnabled = false;
-
         try
         {
             var first = await _client.TranslateAsync(text, native, ct).ConfigureAwait(true);
@@ -293,6 +281,7 @@ public partial class QuickTranslateWindow : Window
             }
 
             TranslateResult shown = first.Value;
+            string shownTarget = native;
             if (TranslateLanguageRouter.ShouldTranslateToPair(native, first.Value.SourceLang, text, first.Value.Text)
                 && !string.Equals(pair, native, StringComparison.OrdinalIgnoreCase))
             {
@@ -300,9 +289,15 @@ public partial class QuickTranslateWindow : Window
                 if (id != _requestId || ct.IsCancellationRequested || !IsVisible)
                     return;
                 if (second != null)
+                {
                     shown = second.Value;
+                    shownTarget = pair;
+                }
             }
-
+            bool knownSrc = !string.IsNullOrWhiteSpace(shown.SourceLang);
+            LangBadge.Visibility = knownSrc ? Visibility.Visible : Visibility.Collapsed;
+            if (knownSrc)
+                TxtLangs.Text = $"{shown.SourceLang} → {shownTarget}";
             TxtResult.Text = shown.Text;
             TxtStatus.Text = "";
             ShowCopyGlyph(copied: shown.Text == _lastCopied);

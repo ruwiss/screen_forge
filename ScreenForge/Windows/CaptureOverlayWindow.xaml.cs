@@ -1602,7 +1602,7 @@ public partial class CaptureOverlayWindow : Window
         => SetTranslateHostZoom(false);
 
     /// <summary>
-    /// Hover zoom: ~1.35x, ekran içinde kalır (ortalanmış layout ile).
+    /// Hover zoom: ~1.35x, aktif monitör içinde kalır.
     /// </summary>
     private void SetTranslateHostZoom(bool zoomed)
     {
@@ -1610,114 +1610,50 @@ public partial class CaptureOverlayWindow : Window
 
         double w = Math.Max(1, TranslateResultHost.Width);
         double h = Math.Max(1, TranslateResultHost.Height);
-        const double margin = 20;
+        var z = TranslateResultLayout.Zoom(GetUiMonitorDip(), w, h, zoomed);
 
-        double s = 1.0;
-        if (zoomed)
-        {
-            double maxScale = Math.Min(
-                (ActualWidth - 2 * margin) / w,
-                (ActualHeight - 2 * margin) / h);
-            s = Math.Min(1.35, Math.Max(1.0, maxScale));
-            if (s < 1.05) s = 1.0;
-        }
+        TranslateHostScale.ScaleX = z.Scale;
+        TranslateHostScale.ScaleY = z.Scale;
+        Canvas.SetLeft(TranslateResultHost, z.Left);
+        Canvas.SetTop(TranslateResultHost, z.Top);
+        _translateBaseLeft = z.Left;
+        _translateBaseTop = z.Top;
 
-        TranslateHostScale.ScaleX = s;
-        TranslateHostScale.ScaleY = s;
-
-        // Merkez sabit: base zaten ekran ortası
-        double cx = ActualWidth / 2;
-        double cy = ActualHeight / 2;
-        double visW = w * s;
-        double visH = h * s;
-        double left = cx - visW / 2;
-        double top = cy - visH / 2;
-        left = Math.Clamp(left, margin, Math.Max(margin, ActualWidth - visW - margin));
-        top = Math.Clamp(top, margin, Math.Max(margin, ActualHeight - visH - margin));
-
-        // ScaleTransform origin 0.5,0.5 olduğu için Canvas sol-üst unscaled olmalı
-        Canvas.SetLeft(TranslateResultHost, left + (visW - w) / 2);
-        Canvas.SetTop(TranslateResultHost, top + (visH - h) / 2);
-        _translateBaseLeft = Canvas.GetLeft(TranslateResultHost);
-        _translateBaseTop = Canvas.GetTop(TranslateResultHost);
-
-        System.Windows.Controls.Panel.SetZIndex(TranslateResultHost, zoomed && s > 1.01 ? 1000 : 50);
+        System.Windows.Controls.Panel.SetZIndex(TranslateResultHost, zoomed && z.Scale > 1.01 ? 1000 : 50);
         System.Windows.Controls.Panel.SetZIndex(TranslateDim, 40);
         System.Windows.Controls.Panel.SetZIndex(TranslateCloseButton, 1100);
         System.Windows.Controls.Panel.SetZIndex(TranslateCopyButton, 1100);
     }
 
     /// <summary>
-    /// Seçim boyutuna yakın göster; biraz büyüt (okunaklılık) ama ekranı kaplamasın.
+    /// Seçim boyutuna yakın göster; aktif monitörde ortala, sanal masaüstünde değil.
     /// </summary>
     private void LayoutCenteredTranslateImage(BitmapSource image)
     {
-        double screenW = Math.Max(1, ActualWidth);
-        double screenH = Math.Max(1, ActualHeight);
-        double imgW = Math.Max(1, image.PixelWidth);
-        double imgH = Math.Max(1, image.PixelHeight);
-        double imgAspect = imgW / imgH;
+        var mon = GetUiMonitorDip();
+        var host = TranslateResultLayout.Host(
+            mon, image.PixelWidth, image.PixelHeight, _selDip.Width, _selDip.Height);
 
-        // 1) Seçim kutusu (DIP) + hafif büyütme — Google zaten doğru punto basıyor
-        double hostW;
-        double hostH;
-        double selW = _selDip.Width;
-        double selH = _selDip.Height;
-        if (selW > 2 && selH > 2)
-        {
-            double s = Math.Min(selW / imgW, selH / imgH);
-            hostW = imgW * s * 1.08;
-            hostH = imgH * s * 1.08;
-        }
-        else
-        {
-            hostW = imgW;
-            hostH = imgH;
-        }
+        _translateBaseLeft = host.Left;
+        _translateBaseTop = host.Top;
+        TranslateResultHost.Width = host.Width;
+        TranslateResultHost.Height = host.Height;
+        TranslateResultImage.Clip = new RectangleGeometry(new Rect(0, 0, host.Width, host.Height), 13, 13);
+        Canvas.SetLeft(TranslateResultHost, host.Left);
+        Canvas.SetTop(TranslateResultHost, host.Top);
 
-        // 2) Min yükseklik: ekranın %14'ü
-        double minH = Math.Max(72, screenH * 0.14);
-        if (hostH < minH && hostH > 0.5)
-        {
-            double f = minH / hostH;
-            if (selH > 2)
-                f = Math.Min(f, 1.45);
-            hostW *= f;
-            hostH *= f;
-        }
+        PlaceTranslateChrome(mon);
+    }
 
-        // 3) Tavan
-        double maxW = screenW * 0.88;
-        double maxH = screenH * 0.75;
-        if (hostW > maxW || hostH > maxH)
-        {
-            double f = Math.Min(maxW / hostW, maxH / hostH);
-            hostW *= f;
-            hostH *= f;
-        }
-
-        // En-boy oranını kilitle
-        if (Math.Abs(hostW / hostH - imgAspect) > 0.01)
-        {
-            if (hostW / hostH > imgAspect) hostW = hostH * imgAspect;
-            else hostH = hostW / imgAspect;
-        }
-
-        _translateBaseLeft = (screenW - hostW) / 2;
-        _translateBaseTop = (screenH - hostH) / 2;
-        TranslateResultHost.Width = Math.Max(1, hostW);
-        TranslateResultHost.Height = Math.Max(1, hostH);
-        Canvas.SetLeft(TranslateResultHost, _translateBaseLeft);
-        Canvas.SetTop(TranslateResultHost, _translateBaseTop);
-
-        // Sağ üst kapat
-        Canvas.SetLeft(TranslateCloseButton, screenW - 40 - 20);
-        Canvas.SetTop(TranslateCloseButton, 20);
-        // Sağ alt kopyala
+    private void PlaceTranslateChrome(WpfRect mon)
+    {
         TranslateCopyButton.UpdateLayout();
         double copyW = TranslateCopyButton.ActualWidth > 1 ? TranslateCopyButton.ActualWidth : 160;
-        Canvas.SetLeft(TranslateCopyButton, screenW - copyW - 24);
-        Canvas.SetTop(TranslateCopyButton, screenH - 40 - 24);
+        var chrome = TranslateResultLayout.Chrome(mon, copyW);
+        Canvas.SetLeft(TranslateCloseButton, chrome.CloseLeft);
+        Canvas.SetTop(TranslateCloseButton, chrome.CloseTop);
+        Canvas.SetLeft(TranslateCopyButton, chrome.CopyLeft);
+        Canvas.SetTop(TranslateCopyButton, chrome.CopyTop);
     }
 
     private void SuppressRegionSelectionChrome()
@@ -1795,7 +1731,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void ShowTranslateResult(BitmapSource image, WpfRect regionDip)
     {
-        _ = regionDip; // artık seçim konumunda değil; ortalanmış layout
+        _ = regionDip; // konum seçim kutusu değil; aktif monitör ortası
         _translateViewOpen = true;
         SuppressRegionSelectionChrome();
 
@@ -1834,13 +1770,7 @@ public partial class CaptureOverlayWindow : Window
         ResetCopyButtonLabel();
         System.Windows.Controls.Panel.SetZIndex(TranslateCloseButton, 1100);
         System.Windows.Controls.Panel.SetZIndex(TranslateCopyButton, 1100);
-        // Kopyala butonu genişliğini ölçüp sağ alta hizala
-        TranslateCopyButton.UpdateLayout();
-        double copyW = Math.Max(160, TranslateCopyButton.ActualWidth);
-        Canvas.SetLeft(TranslateCopyButton, ActualWidth - copyW - 24);
-        Canvas.SetTop(TranslateCopyButton, ActualHeight - 40 - 24);
-        Canvas.SetLeft(TranslateCloseButton, ActualWidth - 40 - 20);
-        Canvas.SetTop(TranslateCloseButton, 20);
+        PlaceTranslateChrome(GetUiMonitorDip());
 
         Focusable = true;
         Activate();

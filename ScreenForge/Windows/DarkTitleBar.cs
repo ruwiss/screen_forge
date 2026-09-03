@@ -14,6 +14,8 @@ internal static partial class DarkTitleBar
         var hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == 0) return;
         int value = 1;
+        // 20: dark mode, 33: yuvarlak köşe (Win11)
         DwmSetWindowAttribute(hwnd, 20, ref value, sizeof(int));
+        DwmSetWindowAttribute(hwnd, 33, ref value, sizeof(int));
     }
 }
