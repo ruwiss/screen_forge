@@ -263,6 +263,16 @@ public sealed partial class GifEditorWindow
             }
         };
 
+        NumericDrag.Attach(box, 0, 100, v =>
+        {
+            display = (int)v;
+            box.Text = display.ToString();
+            float op = (float)(v / 100);
+            foreach (var item in items)
+                item.Opacity = op;
+            CommitObjectChange();
+        }, pixelsPerUnit: 3.0, integer: true);
+
         ObjectPropertyPanel.Children.Add(box);
     }
 

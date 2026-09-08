@@ -53,6 +53,14 @@ public sealed class GoogleLensClient : IDisposable
         if (pngBytes.Length == 0) throw new ArgumentException("Empty image.", nameof(pngBytes));
         if (width <= 0 || height <= 0) throw new ArgumentException("Invalid dimensions.");
 
+        return await SendLensAsync(
+            BuildRequest(pngBytes, width, height, targetLanguage, sourceLanguage),
+            targetLanguage, ct).ConfigureAwait(false);
+    }
+
+    private async Task<LensTranslateResult> SendLensAsync(
+        byte[] payload, string targetLanguage, CancellationToken ct)
+    {
         string endpoint = Environment.GetEnvironmentVariable("SCREENFORGE_LENS_ENDPOINT")
             ?? DefaultEndpoint;
 
@@ -64,7 +72,6 @@ public sealed class GoogleLensClient : IDisposable
         {
             try
             {
-                byte[] payload = BuildRequest(pngBytes, width, height, targetLanguage, sourceLanguage);
                 using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
                 {
                     Version = HttpVersion.Version20,
@@ -104,6 +111,15 @@ public sealed class GoogleLensClient : IDisposable
 
         throw new InvalidOperationException(
             "Görüntü çevirisi başarısız. Ağ bağlantısını kontrol edin veya daha sonra tekrar deneyin.", last);
+    }
+
+    public Task<LensTranslateResult> ExtractTextAsync(
+        byte[] pngBytes, int width, int height, CancellationToken ct = default)
+    {
+        if (pngBytes.Length == 0) throw new ArgumentException("Empty image.", nameof(pngBytes));
+        if (width <= 0 || height <= 0) throw new ArgumentException("Invalid dimensions.");
+
+        return SendLensAsync(BuildOcrRequest(pngBytes, width, height), "tr", ct);
     }
 
     internal static byte[] BuildRequest(
@@ -147,6 +163,48 @@ public sealed class GoogleLensClient : IDisposable
                                     tr.WriteString(2, sourceLang);
                             });
                         });
+                    });
+                });
+            });
+            objects.WriteMessage(3, image =>
+            {
+                image.WriteMessage(1, payload => payload.WriteBytes(1, imageBytes));
+                image.WriteMessage(3, meta =>
+                {
+                    meta.WriteInt32(1, width);
+                    meta.WriteInt32(2, height);
+                });
+            });
+        });
+        return root.ToArray();
+    }
+
+    internal static byte[] BuildOcrRequest(byte[] imageBytes, int width, int height)
+    {
+        const int PlatformWeb = 3;
+        const int SurfaceChromium = 4;
+
+        ulong uuid = (ulong)Random.Shared.NextInt64(1, long.MaxValue);
+
+        var root = new ProtoWriter();
+        root.WriteMessage(1, objects =>
+        {
+            objects.WriteMessage(1, ctx =>
+            {
+                ctx.WriteMessage(3, rid =>
+                {
+                    rid.WriteUInt64(1, uuid);
+                    rid.WriteInt32(2, 1);
+                    rid.WriteInt32(3, 1);
+                });
+                ctx.WriteMessage(4, client =>
+                {
+                    client.WriteEnum(1, PlatformWeb);
+                    client.WriteEnum(2, SurfaceChromium);
+                    client.WriteMessage(4, locale =>
+                    {
+                        locale.WriteString(2, "US");
+                        locale.WriteString(3, "America/New_York");
                     });
                 });
             });

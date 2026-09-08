@@ -58,7 +58,8 @@ internal static class EyedropperOverlay
 
     /// <param name="onPicked">Sol tık ile renk seçildiğinde çağrılır (overlay kapanır).</param>
     /// <param name="onHover">Fare gezdikçe anlık renk — canlı önizleme isteyen çağıranlar için.</param>
-    public static void Show(Action<Color> onPicked, Action<Color>? onHover = null)
+    /// <param name="onCancel">Esc veya overlay kapanışı, renk seçilmeden.</param>
+    public static void Show(Action<Color> onPicked, Action<Color>? onHover = null, Action? onCancel = null)
     {
         var overlay = new Window
         {
@@ -125,6 +126,8 @@ internal static class EyedropperOverlay
         rootCanvas.Children.Add(loupeCircle);
         rootCanvas.Children.Add(hexHolder);
         overlay.Content = rootCanvas;
+
+        bool picked = false;
 
         bool loupeIsCursor = false;
         overlay.SourceInitialized += (_, _) =>
@@ -198,11 +201,13 @@ internal static class EyedropperOverlay
         {
             var screenPt = overlay.PointToScreen(e.GetPosition(overlay));
             var col = SampleScreen((int)screenPt.X, (int)screenPt.Y);
+            picked = true;
             overlay.Close();
             onPicked(col);
         };
 
         overlay.KeyDown += (_, e) => { if (e.Key == Key.Escape) overlay.Close(); };
+        overlay.Closed += (_, _) => { if (!picked) onCancel?.Invoke(); };
 
         overlay.Show();
         overlay.Focus();

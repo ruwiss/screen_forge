@@ -113,6 +113,14 @@ public sealed partial class GifEditorWindow
 
         _widthBox = NumberBox(_document.Width.ToString());
         _heightBox = NumberBox(_document.Height.ToString());
+        NumericDrag.Attach(_widthBox, 1, 4096, v =>
+        {
+            _widthBox.Text = ((int)v).ToString();
+        }, pixelsPerUnit: 2.0, integer: true);
+        NumericDrag.Attach(_heightBox, 1, 4096, v =>
+        {
+            _heightBox.Text = ((int)v).ToString();
+        }, pixelsPerUnit: 2.0, integer: true);
         _keepAspectCheck = Check("Oranı koru", true);
 
         var sizeRow = new StackPanel { Orientation = Orientation.Horizontal };
@@ -205,6 +213,10 @@ public sealed partial class GifEditorWindow
 
         _delayBox = NumberBox("100");
         _delayBox.ToolTip = "Seçili karelerin ekranda kalma süresi (ms)";
+        NumericDrag.Attach(_delayBox, 10, 60000, v =>
+        {
+            _delayBox.Text = ((int)v).ToString();
+        }, pixelsPerUnit: 1.0, integer: true);
 
         var applyRow = new StackPanel { Orientation = Orientation.Horizontal };
         applyRow.Children.Add(_delayBox);

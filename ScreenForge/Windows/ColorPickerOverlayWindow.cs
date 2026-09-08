@@ -2,6 +2,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shapes;
+using System.Windows.Threading;
 using FontFamily = System.Windows.Media.FontFamily;
 
 namespace ScreenForge.Windows;
@@ -13,26 +15,88 @@ namespace ScreenForge.Windows;
 /// </summary>
 public sealed class ColorPickerOverlayWindow
 {
+    private static ColorPickerOverlayWindow? _open;
+
+    private Window? _panel;
+    private Border? _swatch;
+    private TextBlock? _hexLabel;
+    private TextBlock? _hexVal;
+    private Button? _hexCopyBtn;
+    private UIElement? _copyIcon;
+    private UIElement? _checkIcon;
+    private TextBlock? _rgbVal;
+    private TextBlock? _hslVal;
+    private string _hex = "";
+    private string _rgb = "";
+    private string _hsl = "";
+    private DispatcherTimer? _copiedTimer;
+
     public void Show()
     {
-        EyedropperOverlay.Show(col =>
-        {
-            string hex = $"#{col.R:X2}{col.G:X2}{col.B:X2}";
-            Clipboard.SetText(hex);
-            ShowResultPanel(col, hex);
-        });
+        _open?._panel?.Close();
+        _open = this;
+        EyedropperOverlay.Show(col => ApplyPicked(col, createPanel: true));
     }
 
-    private static void ShowResultPanel(Color col, string hex)
+    private void ApplyPicked(Color col, bool createPanel)
     {
+        _hex = $"#{col.R:X2}{col.G:X2}{col.B:X2}";
+        Clipboard.SetText(_hex);
         var (hDeg, sPct, lPct) = RgbToHsl(col);
-        string rgb = $"rgb({col.R}, {col.G}, {col.B})";
-        string hsl = $"hsl({hDeg}, {sPct}%, {lPct}%)";
+        _rgb = $"rgb({col.R}, {col.G}, {col.B})";
+        _hsl = $"hsl({hDeg}, {sPct}%, {lPct}%)";
 
-        Window? panel = null;
+        if (_panel == null || createPanel)
+        {
+            ShowResultPanel(col);
+            FlashCopied();
+            return;
+        }
 
-        // Başlık satırı: küçük swatch + HEX büyük + sağda X
-        var swatch = new Border
+        if (_swatch != null)
+            _swatch.Background = new SolidColorBrush(col);
+        if (_hexLabel != null)
+            _hexLabel.Text = _hex.ToUpperInvariant();
+        if (_hexVal != null)
+            _hexVal.Text = _hex;
+        if (_rgbVal != null)
+            _rgbVal.Text = _rgb;
+        if (_hslVal != null)
+            _hslVal.Text = _hsl;
+        FlashCopied();
+        if (_panel != null)
+        {
+            _panel.Visibility = Visibility.Visible;
+            _panel.Show();
+        }
+    }
+
+    private void FlashCopied()
+    {
+        if (_hexCopyBtn == null || _copyIcon == null || _checkIcon == null) return;
+        FlashButtonIcon(_hexCopyBtn, _copyIcon, _checkIcon, ref _copiedTimer);
+    }
+
+    private static void FlashButtonIcon(Button btn, UIElement copyIcon, UIElement checkIcon, ref DispatcherTimer? timer)
+    {
+        timer?.Stop();
+        btn.Content = checkIcon;
+        timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+        var captured = timer;
+        timer.Tick += (_, _) =>
+        {
+            captured.Stop();
+            btn.Content = copyIcon;
+        };
+        timer.Start();
+    }
+
+    private void ShowResultPanel(Color col)
+    {
+        _copiedTimer?.Stop();
+        _copiedTimer = null;
+
+        _swatch = new Border
         {
             Width = 20, Height = 20,
             CornerRadius = new CornerRadius(4),
@@ -43,28 +107,16 @@ public sealed class ColorPickerOverlayWindow
             Margin = new Thickness(0, 0, 8, 0),
         };
 
-        var hexLabel = new TextBlock
+        _hexLabel = new TextBlock
         {
-            Text = hex.ToUpperInvariant(),
+            Text = _hex.ToUpperInvariant(),
             Foreground = Brushes.White,
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
             FontFamily = new FontFamily("Consolas"),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var hexCopyFeedback = new TextBlock
-        {
-            Text = "✓",
-            Foreground = new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)),
-            FontSize = 13, FontWeight = FontWeights.Bold,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(4, 0, 0, 0),
-            Visibility = Visibility.Collapsed,
-        };
 
-        Window? panelRef = null;
-
-        // Kapatma butonu — büyük ve net
         var closeBtn = new Button
         {
             Content = "✕",
@@ -79,29 +131,44 @@ public sealed class ColorPickerOverlayWindow
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        closeBtn.Click += (_, _) => panelRef?.Close();
+        closeBtn.Click += (_, _) => _panel?.Close();
 
-        // HEX satırı: swatch + hexLabel + feedback + [esnek] + closeBtn
+        var eyedropperBtn = new Button
+        {
+            Content = StrokeIcon("IconEyedropper", Brushes.White, 14),
+            Width = 28, Height = 28,
+            Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x36, 0x48)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x44, 0x50, 0x66)),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0, 0, 6, 0),
+            ToolTip = "Tekrar renk seç",
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        eyedropperBtn.Click += (_, _) => StartRepick();
+
         var titleBar = new Grid { Margin = new Thickness(0, 0, 0, 6) };
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // swatch
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // hex
-        titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // feedback
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // flex
+        titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // eyedropper
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // close
-        Grid.SetColumn(swatch, 0);
-        Grid.SetColumn(hexLabel, 1);
-        Grid.SetColumn(hexCopyFeedback, 2);
+        Grid.SetColumn(_swatch, 0);
+        Grid.SetColumn(_hexLabel, 1);
+        Grid.SetColumn(eyedropperBtn, 3);
         Grid.SetColumn(closeBtn, 4);
-        titleBar.Children.Add(swatch);
-        titleBar.Children.Add(hexLabel);
-        titleBar.Children.Add(hexCopyFeedback);
+        titleBar.Children.Add(_swatch);
+        titleBar.Children.Add(_hexLabel);
+        titleBar.Children.Add(eyedropperBtn);
         titleBar.Children.Add(closeBtn);
 
-        // Renk satırları
         var rows = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
-        rows.Children.Add(MakeColorRow("HEX", hex, hexCopyFeedback));
-        rows.Children.Add(MakeColorRow("RGB", rgb));
-        rows.Children.Add(MakeColorRow("HSL", hsl));
+        rows.Children.Add(MakeHexRow());
+        rows.Children.Add(MakeColorRow("RGB", () => _rgb, val => _rgbVal = val));
+        rows.Children.Add(MakeColorRow("HSL", () => _hsl, val => _hslVal = val));
 
         var content = new StackPanel { Margin = new Thickness(12, 10, 10, 10) };
         content.Children.Add(titleBar);
@@ -112,7 +179,6 @@ public sealed class ColorPickerOverlayWindow
             Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x24, 0x32)),
             BorderBrush = new SolidColorBrush(Color.FromRgb(0x38, 0x44, 0x5A)),
             BorderThickness = new Thickness(1, 1, 0, 0),
-            // Sadece sol üst köşe yuvarlak; sağ + alt köşeler ekrana yapışık
             CornerRadius = new CornerRadius(10, 0, 0, 0),
             Child = content,
             Effect = new System.Windows.Media.Effects.DropShadowEffect
@@ -120,7 +186,7 @@ public sealed class ColorPickerOverlayWindow
         };
 
         var wa = SystemParameters.WorkArea;
-        panel = new Window
+        _panel = new Window
         {
             WindowStyle = WindowStyle.None,
             AllowsTransparency = true,
@@ -129,41 +195,98 @@ public sealed class ColorPickerOverlayWindow
             ShowInTaskbar = false,
             SizeToContent = SizeToContent.WidthAndHeight,
             MinWidth = 220,
-            // Başlangıç — Loaded'da gerçek boyutla güncellenir
             Left = wa.Right - 240,
             Top = wa.Bottom - 130,
             ResizeMode = ResizeMode.NoResize,
             Content = panelBorder,
         };
-        panelRef = panel;
 
-        // Gerçek boyut belli olunca tam sağa-alta yapıştır
-        panel.Loaded += (_, _) =>
+        _panel.Loaded += (_, _) =>
         {
             try
             {
-                var pt = panel.PointToScreen(new Point(0, 0));
-                ChromeScale.Apply(panelBorder, ChromeScale.ForScreenPoint(panel, (int)pt.X, (int)pt.Y));
-                panel.UpdateLayout();
+                var pt = _panel.PointToScreen(new Point(0, 0));
+                ChromeScale.Apply(panelBorder, ChromeScale.ForScreenPoint(_panel, (int)pt.X, (int)pt.Y));
+                _panel.UpdateLayout();
             }
             catch { /* ölçek başarısızsa 1× kalır */ }
 
             var w = SystemParameters.WorkArea;
-            panel!.Left = w.Right - panel.ActualWidth;
-            panel.Top = w.Bottom - panel.ActualHeight;
+            _panel.Left = w.Right - _panel.ActualWidth;
+            _panel.Top = w.Bottom - _panel.ActualHeight;
         };
 
-        panel.KeyDown += (_, e) => { if (e.Key == Key.Escape) panel.Close(); };
-        panel.Show();
+        _panel.KeyDown += (_, e) => { if (e.Key == Key.Escape) _panel.Close(); };
+        _panel.Closed += (_, _) =>
+        {
+            _copiedTimer?.Stop();
+            _copiedTimer = null;
+            if (_open == this) _open = null;
+        };
+        _panel.Show();
     }
 
-    // feedback = HEX satırına ait ✓ göstergesi (sadece HEX satırı için)
-    private static UIElement MakeColorRow(string label, string copyValue, TextBlock? feedback = null)
+    private void StartRepick()
+    {
+        if (_panel == null) return;
+        _panel.Hide();
+        EyedropperOverlay.Show(
+            onPicked: col =>
+            {
+                ApplyPicked(col, createPanel: false);
+                _panel!.Show();
+            },
+            onHover: null,
+            onCancel: () => _panel?.Show());
+    }
+
+    private UIElement MakeHexRow()
+    {
+        _copyIcon = StrokeIcon("IconCopy", new SolidColorBrush(Color.FromRgb(0x88, 0x96, 0xAA)), 14);
+        _checkIcon = StrokeIcon("IconCheck", new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)), 14);
+        _hexCopyBtn = MakeCopyButton(_copyIcon);
+        _hexCopyBtn.Click += (_, _) =>
+        {
+            Clipboard.SetText(_hex);
+            FlashCopied();
+        };
+        return BuildRow("HEX", _hex, _hexCopyBtn, val => _hexVal = val);
+    }
+
+    private UIElement MakeColorRow(string label, Func<string> copyValue, Action<TextBlock> bindVal)
+    {
+        var copyIcon = StrokeIcon("IconCopy", new SolidColorBrush(Color.FromRgb(0x88, 0x96, 0xAA)), 14);
+        var checkIcon = StrokeIcon("IconCheck", new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)), 14);
+        var copyBtn = MakeCopyButton(copyIcon);
+        DispatcherTimer? timer = null;
+        copyBtn.Click += (_, _) =>
+        {
+            Clipboard.SetText(copyValue());
+            FlashButtonIcon(copyBtn, copyIcon, checkIcon, ref timer);
+        };
+        return BuildRow(label, copyValue(), copyBtn, bindVal);
+    }
+
+    private static Button MakeCopyButton(UIElement content) => new()
+    {
+        Content = content,
+        Width = 22, Height = 22,
+        Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x36, 0x48)),
+        BorderBrush = new SolidColorBrush(Color.FromRgb(0x44, 0x50, 0x66)),
+        BorderThickness = new Thickness(1),
+        Cursor = Cursors.Hand,
+        Padding = new Thickness(0),
+        VerticalContentAlignment = VerticalAlignment.Center,
+        HorizontalContentAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+
+    private static Grid BuildRow(string label, string initial, Button copyBtn, Action<TextBlock> bindVal)
     {
         var row = new Grid { Margin = new Thickness(0, 3, 0, 0) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) }); // etiket
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // değer
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // kopyala
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var lbl = new TextBlock
         {
@@ -176,91 +299,37 @@ public sealed class ColorPickerOverlayWindow
 
         var val = new TextBlock
         {
-            Text = copyValue,
+            Text = initial,
             Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xD4, 0xE4)),
             FontSize = 11, FontFamily = new FontFamily("Consolas"),
             VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(val, 1);
+        bindVal(val);
 
-        var copyBtn = new Button
-        {
-            Content = MakeCopyIcon(),
-            Width = 22, Height = 22,
-            Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x36, 0x48)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x44, 0x50, 0x66)),
-            BorderThickness = new Thickness(1),
-            Cursor = Cursors.Hand,
-            Padding = new Thickness(0),
-            VerticalContentAlignment = VerticalAlignment.Center,
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-
-        // Kopyalama feedback: ikon geçici ✓'ye dönüşür
-        var feedbackRef = feedback; // null ise kendi satırına ait anonim feedback
-        TextBlock? ownFeedback = null;
-        if (feedbackRef == null)
-        {
-            ownFeedback = new TextBlock
-            {
-                Text = "✓",
-                Foreground = new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)),
-                FontSize = 11, FontWeight = FontWeights.Bold,
-                VerticalAlignment = VerticalAlignment.Center,
-                Visibility = Visibility.Collapsed,
-            };
-        }
-
-        copyBtn.Click += (_, _) =>
-        {
-            Clipboard.SetText(copyValue);
-            var fb = feedbackRef ?? ownFeedback!;
-            fb.Visibility = Visibility.Visible;
-            var timer = new System.Windows.Threading.DispatcherTimer
-                { Interval = TimeSpan.FromSeconds(1.2) };
-            timer.Tick += (_, _) => { fb.Visibility = Visibility.Collapsed; timer.Stop(); };
-            timer.Start();
-        };
         Grid.SetColumn(copyBtn, 2);
-
         row.Children.Add(lbl);
         row.Children.Add(val);
         row.Children.Add(copyBtn);
-        if (ownFeedback != null)
-        {
-            // ✓ değer'in üstüne overlay gibi koy (Grid'de zaten aynı column'da)
-            ownFeedback.HorizontalAlignment = HorizontalAlignment.Right;
-            ownFeedback.Margin = new Thickness(0, 0, 26, 0);
-            Grid.SetColumn(ownFeedback, 1);
-            row.Children.Add(ownFeedback);
-        }
         return row;
     }
 
-    private static UIElement MakeCopyIcon()
+    private static UIElement StrokeIcon(string key, Brush stroke, double size)
     {
-        // SVG path'leri 24×24 viewBox, scale → 14×14
-        const string frontPath = "M6 11C6 8.17 6 6.76 6.88 5.88C7.76 5 9.17 5 12 5H15C17.83 5 19.24 5 20.12 5.88C21 6.76 21 8.17 21 11V16C21 18.83 21 20.24 20.12 21.12C19.24 22 17.83 22 15 22H12C9.17 22 7.76 22 6.88 21.12C6 20.24 6 18.83 6 16Z";
-        const string backPath  = "M6 19C4.34 19 3 17.66 3 16V10C3 6.23 3 4.34 4.17 3.17C5.34 2 7.23 2 11 2H15C16.66 2 18 3.34 18 5";
-        var iconColor = new SolidColorBrush(Color.FromRgb(0x88, 0x96, 0xAA));
-        var c = new System.Windows.Controls.Canvas { Width = 14, Height = 14, IsHitTestVisible = false };
-        var scale = new System.Windows.Media.ScaleTransform(14.0 / 24.0, 14.0 / 24.0);
-        c.Children.Add(new System.Windows.Shapes.Path
+        return new Path
         {
-            Data = Geometry.Parse(backPath), Stroke = iconColor, StrokeThickness = 1.5,
-            StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
-            Fill = Brushes.Transparent, Opacity = 0.55,
-            RenderTransform = scale,
-        });
-        c.Children.Add(new System.Windows.Shapes.Path
-        {
-            Data = Geometry.Parse(frontPath), Stroke = iconColor, StrokeThickness = 1.5,
-            StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+            Data = Application.Current?.TryFindResource(key) as Geometry ?? Geometry.Empty,
+            Stroke = stroke,
+            StrokeThickness = 1.5,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
             Fill = Brushes.Transparent,
-            RenderTransform = scale,
-        });
-        return c;
+            Width = size,
+            Height = size,
+            Stretch = Stretch.Uniform,
+            IsHitTestVisible = false,
+        };
     }
 
     private static (int h, int s, int l) RgbToHsl(Color c)

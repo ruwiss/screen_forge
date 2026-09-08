@@ -14,6 +14,7 @@ using ScreenForge.Editor;
 using ScreenForge.Settings;
 using ScreenForge.Record;
 using ScreenForge.Translate;
+using ScreenForge.Search;
 using ScreenForge.Upload;
 using WpfPoint = System.Windows.Point;
 using WpfRect = System.Windows.Rect;
@@ -76,6 +77,11 @@ public partial class CaptureOverlayWindow : Window
     private SKPoint? _lastScenePointer;
     private CancellationTokenSource? _toastCts;
     private Button? _recorderButton;
+    private Button? _reverseSearchButton;
+    private bool _searchBusy;
+    private bool _ocrBusy;
+    private CancellationTokenSource? _searchCts;
+    private ReverseImageSearch? _reverseSearch;
 
     // Pencere algılama — sadece ilk Region+Select fazında aktif
     private bool _windowHoverActive = true;
@@ -136,6 +142,11 @@ public partial class CaptureOverlayWindow : Window
             _translateCts?.Dispose();
             _copyFeedbackCts?.Cancel();
             _copyFeedbackCts?.Dispose();
+            _searchCts?.Cancel();
+            _searchCts?.Dispose();
+            _searchCts = null;
+            _reverseSearch?.Dispose();
+            _reverseSearch = null;
             _lensClient?.Dispose();
             _lensClient = null;
             if (_visualClient != null)
@@ -1517,7 +1528,14 @@ public partial class CaptureOverlayWindow : Window
             ActionStack.Children.Add(MakeCmd("IconTranslate", "Çevir",
                 $"Seçili alanı çevir → {tgt}  (kaynak: ayarlar)",
                 () => _ = DoTranslateAsync()));
+            ActionStack.Children.Add(MakeCmd("IconOcr", "Metin",
+                "Seçili alandaki yazıyı panoya kopyala",
+                () => _ = DoExtractTextAsync()));
         }
+        _reverseSearchButton = MakeCmd("IconSearch", "Ters arama",
+            "Yandex Görseller veya Google Lens (varsayılan tarayıcı)",
+            OpenReverseSearchPicker);
+        ActionStack.Children.Add(_reverseSearchButton);
         ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala",
             _mode == CaptureMode.Free
                 ? "Dışa aktar / panoya kopyala · seçili öğe için Ctrl+C"
@@ -1960,6 +1978,153 @@ public partial class CaptureOverlayWindow : Window
             onVideo: () => StartRecording(RecordingKind.Video)).Open();
     }
 
+    private void OpenReverseSearchPicker()
+    {
+        if (_reverseSearchButton == null) return;
+        new ReverseSearchPickerPopup(
+            _reverseSearchButton,
+            this,
+            onYandex: () => _ = DoReverseSearchAsync(ReverseSearchEngine.Yandex),
+            onGoogle: () => _ = DoReverseSearchAsync(ReverseSearchEngine.GoogleLens)).Open();
+    }
+
+    private byte[] CaptureSelectionPngForSearch()
+    {
+        using var bmp = RenderWithBackground(transparent: false);
+        using var data = ImageExporter.Encode(bmp, ImageFormat.Png, 100);
+        return data.ToArray();
+    }
+
+    private async Task DoReverseSearchAsync(ReverseSearchEngine engine)
+    {
+        if (_searchBusy || _phase != Phase.Edit) return;
+        if (_mode != CaptureMode.Free && (_selDip.Width < 2 || _selDip.Height < 2))
+        {
+            ShowToast("Önce bir alan seçin");
+            return;
+        }
+        if (_scene == null) return;
+
+        _searchBusy = true;
+        try
+        {
+            byte[] png = await Task.Run(CaptureSelectionPngForSearch).ConfigureAwait(true);
+            var toast = new StatusToastWindow();
+            toast.ShowBusy("Görsel aranıyor…");
+            Hide();
+            Close();
+            toast.Activate();
+            _ = FinishReverseSearchAsync(toast, png, engine);
+        }
+        catch (Exception ex)
+        {
+            _searchBusy = false;
+            ShowToast("Ters arama başarısız: " + ex.Message);
+        }
+    }
+
+    private static async Task FinishReverseSearchAsync(StatusToastWindow toast, byte[] png, ReverseSearchEngine engine)
+    {
+        try
+        {
+            using var search = new ReverseImageSearch();
+            var url = await search.SearchAsync(png, engine, CancellationToken.None).ConfigureAwait(false);
+            await RunOnToastAsync(toast, () =>
+            {
+                ReverseImageSearch.OpenInDefaultBrowser(url);
+                toast.Close();
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await RunOnToastAsync(toast, () => toast.ShowResult("Ters arama başarısız: " + ex.Message))
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task DoExtractTextAsync()
+    {
+        if (_ocrBusy || _translateBusy || _phase != Phase.Edit) return;
+        if (_mode == CaptureMode.Free)
+        {
+            ShowToast("Metin çıkarma serbest modda desteklenmiyor");
+            return;
+        }
+        if (_selDip.Width < 2 || _selDip.Height < 2)
+        {
+            ShowToast("Önce bir alan seçin");
+            return;
+        }
+
+        _ocrBusy = true;
+        try
+        {
+            var (pngBytes, imgW, imgH) = await Task.Run(() =>
+            {
+                using var regionBmp = CaptureSelectionBitmapForTranslate();
+                int w = regionBmp.Width, h = regionBmp.Height;
+                using var skImage = SKImage.FromBitmap(regionBmp);
+                using var pngData = skImage.Encode(SKEncodedImageFormat.Png, 100)
+                    ?? throw new InvalidOperationException("PNG kodlanamadı.");
+                return (pngData.ToArray(), w, h);
+            }).ConfigureAwait(true);
+
+            var toast = new StatusToastWindow();
+            toast.ShowBusy("Metin çıkarılıyor…");
+            Hide();
+            Close();
+            toast.Activate();
+            _ = FinishExtractTextAsync(toast, pngBytes, imgW, imgH);
+        }
+        catch (Exception ex)
+        {
+            _ocrBusy = false;
+            ShowToast("Metin çıkarılamadı: " + ex.Message);
+        }
+    }
+
+    private static async Task FinishExtractTextAsync(StatusToastWindow toast, byte[] pngBytes, int imgW, int imgH)
+    {
+        try
+        {
+            using var lens = new GoogleLensClient();
+            var result = await lens.ExtractTextAsync(pngBytes, imgW, imgH).ConfigureAwait(false);
+            await RunOnToastAsync(toast, () =>
+            {
+                string text = (result.OcrText ?? "").Trim();
+                if (string.IsNullOrEmpty(text))
+                {
+                    toast.ShowResult("Bu alanda metin yok");
+                    return;
+                }
+                Clipboard.SetText(text);
+                toast.ShowResult("Metin kopyalandı");
+            }).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("empty OCR", StringComparison.OrdinalIgnoreCase)
+            || (ex.InnerException?.Message.Contains("empty OCR", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            await RunOnToastAsync(toast, () => toast.ShowResult("Bu alanda metin yok")).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await RunOnToastAsync(toast, () => toast.ShowResult("Metin çıkarılamadı: " + ex.Message))
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static Task RunOnToastAsync(StatusToastWindow toast, Action update)
+    {
+        var dispatcher = toast.Dispatcher ?? Application.Current?.Dispatcher;
+        if (dispatcher == null)
+        {
+            update();
+            return Task.CompletedTask;
+        }
+        return dispatcher.InvokeAsync(update).Task;
+    }
+
     private void StartRecording(RecordingKind kind)
     {
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
@@ -2136,6 +2301,13 @@ public partial class CaptureOverlayWindow : Window
                 e.Handled = true;
             }
         };
+
+        NumericDrag.Attach(box, 0, 100, v =>
+        {
+            display = (int)v;
+            box.Text = display.ToString();
+            onChange(display);
+        }, pixelsPerUnit: 3.0, integer: true);
 
         OptionStack.Children.Add(box);
         OptionStack.Children.Add(new TextBlock
@@ -3716,6 +3888,13 @@ public partial class CaptureOverlayWindow : Window
         _toastCts?.Cancel();
         _toastCts?.Dispose();
         _toastCts = null;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = null;
+        _reverseSearch?.Dispose();
+        _reverseSearch = null;
+        _lensClient?.Dispose();
+        _lensClient = null;
         DetachSceneEvents(_scene);
         _settings.Save();
         base.OnClosed(e);
