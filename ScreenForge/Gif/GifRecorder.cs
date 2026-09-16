@@ -491,6 +491,8 @@ public sealed class GifRecorder : IDisposable, IRecordingSession
             if (GetDIBits(_memoryDc, _bitmap, 0, (uint)h, _scratch, ref _bitmapInfo, 0) == 0)
                 return;
 
+            SetOpaque(_scratch);
+
             long now = _stopwatch.ElapsedMilliseconds;
             var input = CaptureInputSnapshot(ClampCursor(_cursor, w, h));
 
@@ -508,10 +510,6 @@ public sealed class GifRecorder : IDisposable, IRecordingSession
                 return;
             }
 
-            var frame = new byte[_frameByteCount];
-            Buffer.BlockCopy(_scratch, 0, frame, 0, _frameByteCount);
-            SetOpaque(frame);
-
             bool stored;
             lock (_frameLock)
             {
@@ -519,7 +517,7 @@ public sealed class GifRecorder : IDisposable, IRecordingSession
                 if (_store.Count > 0 && _frameDelays.Count > 0)
                     _frameDelays[^1] = ClampDelay(now - _lastStoredTicks);
 
-                stored = TryStoreFrameCore(frame, _targetIntervalMs, input);
+                stored = TryStoreFrameCore(_scratch, _targetIntervalMs, input);
                 if (stored)
                     _lastStoredTicks = now;
             }
@@ -601,31 +599,48 @@ public sealed class GifRecorder : IDisposable, IRecordingSession
 
         _frameDelays.Add(Math.Clamp(delayMs, 1, MaxDelayMs));
         _frameInputs.Add(input ?? new FrameInput());
-        _lastFrame = frame;
+        RememberLastFrame(frame);
         _frameBytes += stored;
         return true;
     }
 
+    private void RememberLastFrame(byte[] frame)
+    {
+        if (_lastFrame == null || _lastFrame.Length != _frameByteCount)
+            _lastFrame = new byte[_frameByteCount];
+
+        if (!ReferenceEquals(frame, _lastFrame))
+            Buffer.BlockCopy(frame, 0, _lastFrame, 0, _frameByteCount);
+    }
+
     internal (List<byte[]> Frames, List<int> FrameDelays, List<FrameInput> Inputs) DetachFrames()
+    {
+        var packed = DetachPacked();
+        var frames = new List<byte[]>(packed.Packed.Count);
+        foreach (var block in packed.Packed)
+            frames.Add(FrameStore.Decompress(block, packed.FrameByteCount));
+
+        return (frames, packed.FrameDelays, packed.Inputs);
+    }
+
+    internal (List<byte[]> Packed, int FrameByteCount, List<int> FrameDelays, List<FrameInput> Inputs) DetachPacked()
     {
         Stop();
 
         lock (_frameLock)
         {
-            // Kareler burada açılır; düzenleyici ham piksellerle çalışır.
-            var frames = _store.DrainAll();
+            var packed = _store.DrainPacked();
             var frameDelays = _frameDelays;
             var inputs = _frameInputs;
 
-            // Girdi listesi kare listesiyle aynı uzunlukta olmalı.
-            while (inputs.Count < frames.Count) inputs.Add(new FrameInput());
+            while (inputs.Count < packed.Count) inputs.Add(new FrameInput());
 
             _store = new FrameStore(_frameByteCount);
             _frameDelays = new List<int>();
             _frameInputs = new List<FrameInput>();
             _lastFrame = null;
             _frameBytes = 0;
-            return (frames, frameDelays, inputs);
+            return (packed, _frameByteCount, frameDelays, inputs);
         }
     }
 

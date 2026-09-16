@@ -139,20 +139,20 @@ public sealed partial class GifEditorWindow : Window
         _recorder = recorder;
         _settings = settings;
 
-        var recording = recorder.DetachFrames();
-        var frames = new List<EditorFrame>(recording.Frames.Count);
+        var recording = recorder.DetachPacked();
+        var frames = new List<EditorFrame>(recording.Packed.Count);
 
-        for (int i = 0; i < recording.Frames.Count; i++)
+        for (int i = 0; i < recording.Packed.Count; i++)
         {
-            frames.Add(new EditorFrame
-            {
-                Pixels = recording.Frames[i],
-                Delay = i < recording.FrameDelays.Count ? recording.FrameDelays[i] : 100,
-                Input = i < recording.Inputs.Count ? recording.Inputs[i] : new Gif.Input.FrameInput(),
-            });
+            frames.Add(EditorFrame.FromPacked(
+                recording.Packed[i],
+                recording.FrameByteCount,
+                i < recording.FrameDelays.Count ? recording.FrameDelays[i] : 100,
+                i < recording.Inputs.Count ? recording.Inputs[i] : new Gif.Input.FrameInput()));
         }
 
         _document = new EditorDocument(frames, recorder.Width, recorder.Height);
+        _rawBytesAtOpen = (long)frames.Count * recording.FrameByteCount;
         _rangeEnd = Math.Max(0, frames.Count - 1);
 
         // Çizim stilleri ekran alıntısı araçlarıyla ortak hatırlanır.
@@ -282,13 +282,53 @@ public sealed partial class GifEditorWindow : Window
 
         PreviewKeyDown += OnWindowKeyDown;
         Closing += OnWindowClosing;
-        Closed += (_, _) =>
+        Closed += (_, _) => ReleaseEditor();
+    }
+
+    private bool _released;
+    private EditorFrame? _previewFrame;
+    private readonly long _rawBytesAtOpen;
+
+    private void ReleaseEditor()
+    {
+        if (_released)
+            return;
+        _released = true;
+
+        StopPlayback();
+        _exportCts?.Cancel();
+        _exportCts?.Dispose();
+        _exportCts = null;
+        _playTimer?.Stop();
+        _playTimer = null;
+
+        _document.Changed -= OnDocumentChanged;
+        _previewFrame?.ReleaseDecoded();
+        _previewFrame = null;
+
+        PreviewImage.Source = null;
+        foreach (var item in _timelineItems)
+            item.Thumbnail = null;
+        _timelineItems.Clear();
+        Timeline.ItemsSource = null;
+        _thumbnails.Clear();
+        _duplicatedFrames.Clear();
+        _history.Clear();
+
+        if (_annotationCanvas != null)
         {
-            StopPlayback();
-            _exportCts?.Cancel();
-            _exportCts?.Dispose();
-            _recorder.Dispose();
-        };
+            _annotationCanvas.Detach();
+            AnnotationHost.Content = null;
+            _annotationCanvas = null;
+        }
+
+        ClipRows.ItemsSource = null;
+        _clipRows.Clear();
+
+        _document.Release();
+        _recorder.Dispose();
+        if (_rawBytesAtOpen >= 1_000_000)
+            MemoryUtil.Collect();
     }
 
     private void ToggleMaximize()
@@ -598,8 +638,8 @@ public sealed partial class GifEditorWindow : Window
             var item = _timelineItems[i];
             item.Number = i + 1;
             item.Delay = frames[i].Delay;
-            item.Thumbnail = _thumbnails.Get(frames[i].Pixels);
-            item.IsDuplicate = _duplicatedPixels.Contains(frames[i].Pixels);
+            item.Thumbnail = _thumbnails.Get(frames[i]);
+            item.IsDuplicate = _duplicatedFrames.Contains(frames[i]);
         }
 
         RefreshPlayheadMarks();
@@ -621,6 +661,12 @@ public sealed partial class GifEditorWindow : Window
 
         // Etkin katman tuvalde canlı düzenlendiği için burada yalnızca
         // diğer katmanlar karenin üzerine işlenir; aksi hâlde çizim iki kez görünür.
+        if (!ReferenceEquals(_previewFrame, frame))
+        {
+            _previewFrame?.ReleaseDecoded();
+            _previewFrame = frame;
+        }
+
         var pixels = ComposePreviewPixels(frame.Pixels, index);
 
         var source = BitmapSource.Create(_document.Width, _document.Height, 96, 96,
@@ -694,21 +740,21 @@ public sealed partial class GifEditorWindow : Window
             int copy = sourceFrames[i] + i + 1;
 
             if (copy >= 0 && copy < _timelineItems.Count)
-                _duplicatedPixels.Add(_document.Frames[copy].Pixels);
+                _duplicatedFrames.Add(_document.Frames[copy]);
         }
 
         RefreshDuplicateMarks();
     }
 
-    /// <summary>Çoğaltma sonucu üretilen kare pikselleri.</summary>
-    private readonly HashSet<byte[]> _duplicatedPixels = new(ReferenceEqualityComparer.Instance);
+    /// <summary>Çoğaltma sonucu üretilen kareler.</summary>
+    private readonly HashSet<EditorFrame> _duplicatedFrames = new(ReferenceEqualityComparer.Instance);
 
     private void RefreshDuplicateMarks()
     {
         var frames = _document.Frames;
 
         for (int i = 0; i < _timelineItems.Count && i < frames.Count; i++)
-            _timelineItems[i].IsDuplicate = _duplicatedPixels.Contains(frames[i].Pixels);
+            _timelineItems[i].IsDuplicate = _duplicatedFrames.Contains(frames[i]);
     }
 
     // ─── Kare üzerindeki eylem düğmeleri ──────────────────────────────────────

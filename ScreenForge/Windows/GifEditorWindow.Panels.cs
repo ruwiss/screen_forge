@@ -1134,6 +1134,8 @@ public sealed partial class GifEditorWindow
             _exporting = false;
             _exportCts?.Dispose();
             _exportCts = null;
+            _document.ReleaseDecoded();
+            _previewFrame = null;
 
             SidePanel.IsEnabled = true;
             ExportProgress.Visibility = Visibility.Collapsed;

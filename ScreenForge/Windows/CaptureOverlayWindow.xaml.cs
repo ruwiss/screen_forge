@@ -3895,6 +3895,7 @@ public partial class CaptureOverlayWindow : Window
         _reverseSearch = null;
         _lensClient?.Dispose();
         _lensClient = null;
+        ScreenImage.Source = null;
         DetachSceneEvents(_scene);
         _settings.Save();
         base.OnClosed(e);

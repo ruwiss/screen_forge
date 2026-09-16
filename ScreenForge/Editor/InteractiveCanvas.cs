@@ -223,6 +223,7 @@ public sealed class InteractiveCanvas : SKElement
         Focusable = true;
         ClipToBounds = true;
         System.Windows.Media.CompositionTarget.Rendering += OnRenderingTick;
+        Unloaded += (_, _) => Detach();
     }
 
     /// <summary>
@@ -255,16 +256,24 @@ public sealed class InteractiveCanvas : SKElement
         InvalidateVisual();
     }
 
+    private bool _detached;
+
+    public void Detach()
+    {
+        if (_detached)
+            return;
+        _detached = true;
+        System.Windows.Media.CompositionTarget.Rendering -= OnRenderingTick;
+        Scene.Changed -= OnSceneChanged;
+        Scene.SelectionRestore -= OnSelectionRestore;
+    }
+
     // Pencere kapanınca event'i temizle (aksi halde her zaman ateşlenir)
     protected override void OnVisualParentChanged(System.Windows.DependencyObject oldParent)
     {
         base.OnVisualParentChanged(oldParent);
         if (Parent == null)
-        {
-            System.Windows.Media.CompositionTarget.Rendering -= OnRenderingTick;
-            Scene.Changed -= OnSceneChanged;
-            Scene.SelectionRestore -= OnSelectionRestore;
-        }
+            Detach();
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)

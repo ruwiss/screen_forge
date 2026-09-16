@@ -3,20 +3,54 @@ using ScreenForge.Gif.Input;
 namespace ScreenForge.Gif.Editing;
 
 /// <summary>Tek bir karenin verisi: pikseller, gecikme ve girdi bilgisi.</summary>
+/// <remarks>
+/// Ham BGRA yalnızca ihtiyaç olunca açılır. Kayıt ve zaman çizelgesi
+/// sıkıştırılmış kopyayı tutar; aksi hâlde 1080p'de kare başı ~8 MB LOH'da kalır.
+/// </remarks>
 public sealed class EditorFrame
 {
-    /// <summary>BGRA piksel verisi. Kareler arasında paylaşılabilir; asla yerinde değiştirilmez.</summary>
-    public required byte[] Pixels { get; init; }
+    private readonly byte[] _packed;
+    private readonly int _rawLength;
+    private byte[]? _decoded;
+
+    public EditorFrame(byte[] pixels, int delay, FrameInput? input = null)
+        : this(FrameStore.Compress(pixels), pixels.Length, delay, input ?? new FrameInput(), pixels)
+    {
+    }
+
+    private EditorFrame(byte[] packed, int rawLength, int delay, FrameInput input, byte[]? decoded)
+    {
+        _packed = packed;
+        _rawLength = rawLength;
+        Delay = delay;
+        Input = input;
+        _decoded = decoded;
+    }
+
+    /// <summary>Sıkıştırılmış kareden üretir; ham pikseller açılmaz.</summary>
+    public static EditorFrame FromPacked(byte[] packed, int rawLength, int delay, FrameInput input)
+        => new(packed, rawLength, delay, input, decoded: null);
+
+    /// <summary>BGRA piksel verisi. İlk erişiste açılır ve önbelleğe alınır.</summary>
+    public byte[] Pixels => _decoded ??= FrameStore.Decompress(_packed, _rawLength);
 
     /// <summary>Karenin ekranda kalma süresi (ms).</summary>
-    public required int Delay { get; init; }
+    public int Delay { get; }
 
     /// <summary>Bu karede olan fare/klavye etkinliği.</summary>
-    public required FrameInput Input { get; init; }
+    public FrameInput Input { get; }
 
-    public EditorFrame WithDelay(int delay) => new() { Pixels = Pixels, Delay = delay, Input = Input };
+    internal byte[] Packed => _packed;
+    internal int RawLength => _rawLength;
+    internal bool IsDecoded => _decoded != null;
 
-    public EditorFrame WithPixels(byte[] pixels) => new() { Pixels = pixels, Delay = Delay, Input = Input };
+    public EditorFrame WithDelay(int delay)
+        => delay == Delay ? this : new EditorFrame(_packed, _rawLength, delay, Input, _decoded);
+
+    public EditorFrame WithPixels(byte[] pixels)
+        => new(FrameStore.Compress(pixels), pixels.Length, Delay, Input, decoded: null);
+
+    public void ReleaseDecoded() => _decoded = null;
 }
 
 /// <summary>Düzenlenebilir kare dizisinin değişmez anlık görüntüsü.</summary>
@@ -35,7 +69,7 @@ public sealed class EditorSnapshot
     public double AverageDelay => Frames.Count == 0 ? 0 : Frames.Average(f => f.Delay);
 
     /// <summary>Karelerin kapladığı ham bellek.</summary>
-    public long ByteSize => Frames.Sum(f => (long)f.Pixels.Length);
+    public long ByteSize => Frames.Sum(f => (long)f.RawLength);
 }
 
 /// <summary>
@@ -103,6 +137,7 @@ public sealed class EditorDocument
 
     private void PushUndo(string label)
     {
+        ReleaseDecoded(_current);
         _undo.Add(_current);
         _undoLabels.Add(label);
 
@@ -119,6 +154,7 @@ public sealed class EditorDocument
         if (_undo.Count == 0)
             return false;
 
+        ReleaseDecoded(_current);
         _redo.Add(_current);
         _redoLabels.Add(_undoLabels[^1]);
 
@@ -135,6 +171,7 @@ public sealed class EditorDocument
         if (_redo.Count == 0)
             return false;
 
+        ReleaseDecoded(_current);
         _undo.Add(_current);
         _undoLabels.Add(_redoLabels[^1]);
 
@@ -152,6 +189,29 @@ public sealed class EditorDocument
         _redo.Clear();
         _undoLabels.Clear();
         _redoLabels.Clear();
+    }
+
+    /// <summary>Açılmış kare tamponlarını bırakır; sıkıştırılmış veri kalır.</summary>
+    public void ReleaseDecoded()
+    {
+        ReleaseDecoded(_current);
+        foreach (var snap in _undo) ReleaseDecoded(snap);
+        foreach (var snap in _redo) ReleaseDecoded(snap);
+    }
+
+    /// <summary>Belgeyi ve geçmişi tamamen boşaltır.</summary>
+    public void Release()
+    {
+        Changed = null;
+        ClearHistory();
+        ReleaseDecoded(_current);
+        _current = new EditorSnapshot { Frames = Array.Empty<EditorFrame>(), Width = 0, Height = 0 };
+    }
+
+    private static void ReleaseDecoded(EditorSnapshot snap)
+    {
+        foreach (var frame in snap.Frames)
+            frame.ReleaseDecoded();
     }
 
     /// <summary>Seçili kareye kadarki kümülatif süre.</summary>

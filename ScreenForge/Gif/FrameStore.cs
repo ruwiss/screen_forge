@@ -19,7 +19,7 @@ namespace ScreenForge.Gif;
 /// </remarks>
 internal sealed class FrameStore
 {
-    private readonly List<byte[]> _compressed = new();
+    private List<byte[]> _compressed = new();
     private readonly int _frameByteCount;
 
     private long _compressedBytes;
@@ -65,12 +65,21 @@ internal sealed class FrameStore
     /// <summary>Tüm kareleri açar ve depoyu boşaltır.</summary>
     public List<byte[]> DrainAll()
     {
-        var frames = new List<byte[]>(_compressed.Count);
-        foreach (var packed in _compressed)
-            frames.Add(Decompress(packed, _frameByteCount));
+        var packed = DrainPacked();
+        var frames = new List<byte[]>(packed.Count);
+        foreach (var block in packed)
+            frames.Add(Decompress(block, _frameByteCount));
 
-        Clear();
         return frames;
+    }
+
+    /// <summary>Sıkıştırılmış kareleri devreder; açmaz.</summary>
+    public List<byte[]> DrainPacked()
+    {
+        var packed = _compressed;
+        _compressed = new List<byte[]>();
+        _compressedBytes = 0;
+        return packed;
     }
 
     public void Clear()
@@ -95,20 +104,23 @@ internal sealed class FrameStore
     internal static byte[] Decompress(byte[] packed, int expectedLength)
     {
         var result = new byte[expectedLength];
+        Decompress(packed, result.AsSpan(0, expectedLength));
+        return result;
+    }
 
+    internal static void Decompress(byte[] packed, Span<byte> dest)
+    {
         using var input = new MemoryStream(packed);
         using var deflate = new DeflateStream(input, CompressionMode.Decompress);
 
         int offset = 0;
-        while (offset < expectedLength)
+        while (offset < dest.Length)
         {
-            int read = deflate.Read(result, offset, expectedLength - offset);
+            int read = deflate.Read(dest.Slice(offset));
             if (read <= 0)
                 break;
 
             offset += read;
         }
-
-        return result;
     }
 }

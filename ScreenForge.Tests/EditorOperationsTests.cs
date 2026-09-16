@@ -342,12 +342,10 @@ public sealed class EditorOperationsTests
     public void RemoveDuplicates_KeepsFramesCarryingInput()
     {
         var pixels = MakePixels(4, 4, 0x40);
-        var withClick = new EditorFrame
-        {
-            Pixels = pixels,
-            Delay = 100,
-            Input = new FrameInput { CursorVisible = true, Buttons = MouseButtons.Left, ClickStarted = true },
-        };
+        var withClick = new EditorFrame(
+            pixels,
+            100,
+            new FrameInput { CursorVisible = true, Buttons = MouseButtons.Left, ClickStarted = true });
 
         var frames = new List<EditorFrame> { MakeFrameWith(pixels, 100), withClick };
 
@@ -538,7 +536,7 @@ public sealed class EditorOperationsTests
         => MakeFrameWith(MakePixels(width, height, value), delay);
 
     private static EditorFrame MakeFrameWith(byte[] pixels, int delay)
-        => new() { Pixels = pixels, Delay = delay, Input = new FrameInput() };
+        => new(pixels, delay);
 
     private static byte[] MakePixels(int width, int height, byte value)
     {

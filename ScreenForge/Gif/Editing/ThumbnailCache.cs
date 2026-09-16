@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -5,17 +6,11 @@ using System.Windows.Media.Imaging;
 namespace ScreenForge.Gif.Editing;
 
 /// <summary>
-/// Kare küçük resimlerini piksel dizisine göre önbelleğe alır.
+/// Kare küçük resimlerini kare kimliğine göre önbelleğe alır.
 /// </summary>
 /// <remarks>
-/// Kare pikselleri değişmezdir: sıralama işlemleri (ters çevirme, taşıma, silme,
-/// çoğaltma) aynı dizileri yeniden kullanır. Bu yüzden anahtar olarak dizinin
-/// <b>kimliği</b> kullanılabilir; içeriği yeniden okumaya gerek kalmaz.
-/// <para>
-/// Önbellek olmadan her düzenleme tüm kareleri yeniden ölçekliyordu; 1920×1080
-/// ve 60 karede bu, düzenleme başına yarım gigabaytlık bitmap işi demekti ve
-/// arayüzü kilitliyordu.
-/// </para>
+/// Küçük resim, karenin tam boy kopyası tutulmadan üretilir. Aksi hâlde
+/// 1080p zaman çizelgesi kare başı bir BitmapSource daha (~8 MB) tutardı.
 /// <para>
 /// <see cref="ConditionalWeakTable{TKey,TValue}"/> kullanıldığı için bir kare
 /// artık kullanılmadığında küçük resmi de otomatik toplanır.
@@ -23,7 +18,7 @@ namespace ScreenForge.Gif.Editing;
 /// </remarks>
 internal sealed class ThumbnailCache
 {
-    private readonly ConditionalWeakTable<byte[], ImageSource> _cache = new();
+    private readonly ConditionalWeakTable<EditorFrame, ImageSource> _cache = new();
     private readonly int _targetWidth;
 
     private int _width;
@@ -46,30 +41,64 @@ internal sealed class ThumbnailCache
     }
 
     /// <summary>Verilen karenin küçük resmini döndürür; yoksa üretir.</summary>
-    public ImageSource Get(byte[] pixels)
+    public ImageSource Get(EditorFrame frame)
     {
-        if (_cache.TryGetValue(pixels, out var cached))
+        if (_cache.TryGetValue(frame, out var cached))
             return cached;
 
-        var thumbnail = Render(pixels);
-        _cache.Add(pixels, thumbnail);
+        var thumbnail = Render(frame);
+        _cache.Add(frame, thumbnail);
         return thumbnail;
     }
 
     public void Clear() => _cache.Clear();
 
-    private ImageSource Render(byte[] pixels)
+    private ImageSource Render(EditorFrame frame)
     {
         if (_width <= 0 || _height <= 0)
             return CreatePlaceholder();
 
-        var source = BitmapSource.Create(_width, _height, 96, 96,
-            PixelFormats.Bgra32, null, pixels, _width * 4);
-
         double scale = Math.Min(1.0, _targetWidth / (double)_width);
-        var scaled = new TransformedBitmap(source, new ScaleTransform(scale, scale));
-        scaled.Freeze();
-        return scaled;
+        int dstW = Math.Max(1, (int)Math.Round(_width * scale));
+        int dstH = Math.Max(1, (int)Math.Round(_height * scale));
+
+        int raw = frame.RawLength;
+        var rented = ArrayPool<byte>.Shared.Rent(raw);
+        try
+        {
+            FrameStore.Decompress(frame.Packed, rented.AsSpan(0, raw));
+            var small = Downscale(rented, _width, _height, dstW, dstH);
+            var source = BitmapSource.Create(dstW, dstH, 96, 96,
+                PixelFormats.Bgra32, null, small, dstW * 4);
+            source.Freeze();
+            return source;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static byte[] Downscale(byte[] src, int srcW, int srcH, int dstW, int dstH)
+    {
+        var dst = new byte[dstW * dstH * 4];
+        for (int y = 0; y < dstH; y++)
+        {
+            int srcY = y * srcH / dstH;
+            int srcRow = srcY * srcW;
+            int dstRow = y * dstW;
+            for (int x = 0; x < dstW; x++)
+            {
+                int si = (srcRow + x * srcW / dstW) * 4;
+                int di = (dstRow + x) * 4;
+                dst[di] = src[si];
+                dst[di + 1] = src[si + 1];
+                dst[di + 2] = src[si + 2];
+                dst[di + 3] = src[si + 3];
+            }
+        }
+
+        return dst;
     }
 
     private static ImageSource CreatePlaceholder()
