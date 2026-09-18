@@ -1542,7 +1542,7 @@ public partial class CaptureOverlayWindow : Window
                 : "Kopyala (Ctrl+C)",
             DoCopy));
         ActionStack.Children.Add(MakeCmd("IconSave", "Kaydet", "Kaydet (Ctrl+S)", DoSave));
-        ActionStack.Children.Add(MakeCmd("IconCloud", "Yükle", "Buluta Yükle", DoUpload, accent: true));
+        ActionStack.Children.Add(MakeCmd("IconCloud", "Bulut", "Buluta Yükle", DoUpload, accent: true));
         if (_mode == CaptureMode.Free)
             ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle (iç pano kalır)", DoClearScene));
         ActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
