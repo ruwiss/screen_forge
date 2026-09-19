@@ -38,6 +38,9 @@ public sealed class AppSettings
     // ---- Video kayıt tercihleri ----
     public VideoSettings Video { get; set; } = new();
 
+    // ---- Canlı sunum (ZoomIt-benzeri) ----
+    public PresenterSettings Presenter { get; set; } = new();
+
     // ---- Çeviri ----
     /// <summary>Kaynak dil kodu; "auto" = otomatik algıla (görüntü çevirisi).</summary>
     public string TranslateSourceLanguage { get; set; } = "auto";
@@ -103,6 +106,9 @@ public sealed class AppSettings
 
         Gif.Fps = Math.Clamp(Gif.Fps, 1, 60);
         Video.Fps = Math.Clamp(Video.Fps, 1, 60);
+
+        Presenter ??= new PresenterSettings();
+        Presenter.Normalize();
 
         if (string.IsNullOrWhiteSpace(TranslateNativeLanguage))
             TranslateNativeLanguage = TranslateLanguageDefaults.MapUiCulture(uiCulture);
@@ -190,6 +196,156 @@ public sealed class GifSettings
     public double HighlightRadius { get; set; } = 12;
 }
 
+/// <summary>Canlı sunum katmanı tercihleri ve kısayolları.</summary>
+public sealed class PresenterSettings
+{
+    public int DefaultsRevision { get; set; }
+
+    public bool PenEnabled { get; set; }
+    public HotkeyConfig PenHotkey { get; set; } = new();
+    public bool LaserEnabled { get; set; }
+    public HotkeyConfig LaserHotkey { get; set; } = new();
+    public bool RectangleEnabled { get; set; }
+    public HotkeyConfig RectangleHotkey { get; set; } = new();
+    public bool EllipseEnabled { get; set; }
+    public HotkeyConfig EllipseHotkey { get; set; } = new();
+    public bool ArrowEnabled { get; set; }
+    public HotkeyConfig ArrowHotkey { get; set; } = new();
+    public bool LineEnabled { get; set; }
+    public HotkeyConfig LineHotkey { get; set; } = new();
+    public bool SpotlightEnabled { get; set; }
+    public HotkeyConfig SpotlightHotkey { get; set; } = new();
+    public bool ArrowBendEnabled { get; set; }
+    public HotkeyConfig ArrowBendHotkey { get; set; } = new();
+    public bool CancelEnabled { get; set; } = true;
+    public HotkeyConfig CancelHotkey { get; set; } = new() { Key = "Escape" };
+
+    public string PenColor { get; set; } = "#FFEA6F12";
+    public double PenWidth { get; set; } = 5;
+    public string LaserColor { get; set; } = "#FFFF3D6E";
+    public double LaserWidth { get; set; } = 2;
+    public int LaserFadeMs { get; set; } = 700;
+    public double SpotlightRadius { get; set; } = 200;
+    public double SpotlightSoftness { get; set; } = 20;
+    public double SpotlightDim { get; set; } = 0.40;
+    public int ZoomAnimationMs { get; set; } = 280;
+
+    public List<PresenterZoomPreset> ZoomPresets { get; set; } =
+    [
+        new() { Factor = 2 },
+        new() { Factor = 4 },
+    ];
+
+    public List<PresenterColorBind> ColorBinds { get; set; } = [];
+
+    public void Normalize()
+    {
+        PenWidth = Math.Clamp(PenWidth, 1, 24);
+        LaserWidth = Math.Clamp(LaserWidth, 1, 24);
+        LaserFadeMs = Math.Clamp(LaserFadeMs, 150, 3000);
+        SpotlightRadius = Math.Clamp(SpotlightRadius, 40, 600);
+        SpotlightSoftness = Math.Clamp(SpotlightSoftness, 8, 80);
+        SpotlightDim = Math.Clamp(SpotlightDim, 0.15, 0.85);
+        ZoomAnimationMs = Math.Clamp(ZoomAnimationMs, 80, 800);
+        if (DefaultsRevision < 4)
+            ApplyZoomItDefaults();
+        if (string.IsNullOrWhiteSpace(PenColor)) PenColor = "#FFEA6F12";
+        if (string.IsNullOrWhiteSpace(LaserColor)) LaserColor = "#FFFF3D6E";
+        if (CancelHotkey is not { IsValid: true })
+            CancelHotkey = new HotkeyConfig { Key = "Escape" };
+        if (ArrowBendHotkey is not { IsValid: true })
+            ArrowBendHotkey = new HotkeyConfig { Key = "Space" };
+        if (IsOldSpotlightFactory())
+        {
+            SpotlightRadius = 200;
+            SpotlightSoftness = 20;
+            SpotlightDim = 0.40;
+        }
+        if (Math.Abs(LaserWidth - 6) < 0.01 && string.Equals(LaserColor, "#FFE5484D", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(LaserColor, "#CCE5484D", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(LaserColor, "#FFE5484D", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Math.Abs(LaserWidth - 6) < 0.01) LaserWidth = 3;
+            LaserColor = "#FFFF3D6E";
+        }
+        ZoomPresets ??= [];
+        if (ZoomPresets.Count == 0)
+        {
+            ZoomPresets.Add(new PresenterZoomPreset { Factor = 2 });
+            ZoomPresets.Add(new PresenterZoomPreset { Factor = 4 });
+        }
+        foreach (var z in ZoomPresets)
+        {
+            z.Hotkey ??= new HotkeyConfig();
+            z.Factor = Math.Clamp(z.Factor, 1.25, 8);
+        }
+        ColorBinds ??= [];
+        foreach (var c in ColorBinds)
+        {
+            c.Hotkey ??= new HotkeyConfig();
+            if (string.IsNullOrWhiteSpace(c.Color)) c.Color = "#FFEA6F12";
+        }
+    }
+
+    private bool IsOldSpotlightFactory() =>
+        SpotlightSoftness > 50
+        || Near(SpotlightRadius, 155) && Near(SpotlightSoftness, 28) && Near(SpotlightDim, 0.52)
+        || Near(SpotlightRadius, 155) && Near(SpotlightSoftness, 175) && Near(SpotlightDim, 0.52)
+        || Near(SpotlightRadius, 180) && Near(SpotlightSoftness, 90) && Near(SpotlightDim, 0.55)
+        || Near(SpotlightRadius, 120) && Near(SpotlightSoftness, 36) && Near(SpotlightDim, 0.64);
+
+    private static bool Near(double a, double b) => Math.Abs(a - b) < 0.02;
+
+    public void ApplyZoomItDefaults()
+    {
+        PenEnabled = true;
+        PenHotkey = Ctrl("D2");
+        LaserEnabled = true;
+        LaserHotkey = Ctrl("D3");
+        RectangleEnabled = false;
+        RectangleHotkey = new();
+        EllipseEnabled = false;
+        EllipseHotkey = new();
+        ArrowEnabled = false;
+        ArrowHotkey = new();
+        LineEnabled = false;
+        LineHotkey = new();
+        SpotlightEnabled = true;
+        SpotlightHotkey = Ctrl("D4");
+        ArrowBendEnabled = false;
+        ArrowBendHotkey = new();
+        CancelEnabled = true;
+        CancelHotkey = new HotkeyConfig { Key = "Escape" };
+        LaserWidth = 2;
+        ZoomPresets =
+        [
+            new() { Factor = 1.5, Enabled = true, Hotkey = Ctrl("D1") },
+            new() { Factor = 2, Enabled = false, Hotkey = new() },
+        ];
+        ColorBinds = [];
+        DefaultsRevision = 4;
+    }
+
+    private static HotkeyConfig Ctrl(string key, bool shift = false) => new()
+    {
+        Modifiers = shift ? ModifierKeys.Control | ModifierKeys.Shift : ModifierKeys.Control,
+        Key = key,
+    };
+}
+
+public sealed class PresenterZoomPreset
+{
+    public bool Enabled { get; set; }
+    public double Factor { get; set; } = 2;
+    public HotkeyConfig Hotkey { get; set; } = new();
+}
+
+public sealed class PresenterColorBind
+{
+    public string Color { get; set; } = "#FFEA6F12";
+    public HotkeyConfig Hotkey { get; set; } = new();
+}
+
 public enum VideoQuality
 {
     Low,
@@ -236,8 +392,15 @@ public sealed class HotkeyConfig
         if (Modifiers.HasFlag(ModifierKeys.Alt)) parts.Add("Alt");
         if (Modifiers.HasFlag(ModifierKeys.Shift)) parts.Add("Shift");
         if (Modifiers.HasFlag(ModifierKeys.Windows)) parts.Add("Win");
-        parts.Add(Key);
+        parts.Add(DisplayKey(Key));
         return string.Join(" + ", parts);
+    }
+
+    private static string DisplayKey(string key)
+    {
+        if (key.Length == 2 && (key[0] is 'D' or 'd') && char.IsDigit(key[1]))
+            return key[1].ToString();
+        return key;
     }
 }
 

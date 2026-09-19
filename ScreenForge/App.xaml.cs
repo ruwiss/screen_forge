@@ -15,6 +15,7 @@ public partial class App : Application
     private bool _ownsInstanceMutex;
     private TrayIconService? _tray;
     private HotkeyService? _hotkeys;
+    private Presenter.PresenterService? _presenter;
 
     public static AppSettings Settings { get; private set; } = new();
 
@@ -60,6 +61,7 @@ public partial class App : Application
         _tray.ExitRequested += OnExit;
 
         // ---- Global kısayollar ----
+        _presenter = new Presenter.PresenterService(() => Settings);
         _hotkeys = new HotkeyService();
         RegisterHotkeys();
 
@@ -86,6 +88,7 @@ public partial class App : Application
         _hotkeys.Register(Settings.FullScreenUploadHotkey, OnCaptureFullScreenUpload, "Tam ekran anında yükleme");
         _hotkeys.Register(Settings.CollageHotkey, OnCollage, "Kolaj / yerleştirme");
         _hotkeys.Register(Settings.QuickTranslateHotkey, OnQuickTranslate, "Hızlı çeviri");
+        RegisterPresenterHotkeys();
 
         if (_hotkeys.FailedRegistrations.Count > 0)
         {
@@ -94,6 +97,45 @@ public partial class App : Application
                 string.Join("\n", _hotkeys.FailedRegistrations));
         }
     }
+
+    private void RegisterPresenterHotkeys()
+    {
+        if (_hotkeys == null || _presenter == null) return;
+        var p = Settings.Presenter;
+        var svc = _presenter;
+        if (p.PenEnabled)
+            _hotkeys.Register(p.PenHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Pen), "Kalem");
+        if (p.LaserEnabled)
+            _hotkeys.Register(p.LaserHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Laser), "Lazer");
+        if (p.RectangleEnabled)
+            _hotkeys.Register(p.RectangleHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Rectangle), "Dikdörtgen");
+        if (p.EllipseEnabled)
+            _hotkeys.Register(p.EllipseHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Ellipse), "Daire");
+        if (p.ArrowEnabled)
+            _hotkeys.Register(p.ArrowHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Arrow), "Ok");
+        if (p.LineEnabled)
+            _hotkeys.Register(p.LineHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Line), "Çizgi");
+        if (p.SpotlightEnabled)
+            _hotkeys.Register(p.SpotlightHotkey, svc.ToggleSpotlight, "Spotlight");
+        if (p.CancelEnabled && !IsPresenterSessionEscape(p.CancelHotkey))
+            _hotkeys.Register(p.CancelHotkey, svc.Cancel, "Sunum iptal");
+        foreach (var preset in p.ZoomPresets)
+        {
+            if (!preset.Enabled) continue;
+            double factor = preset.Factor;
+            _hotkeys.Register(preset.Hotkey, () => svc.ToggleZoom(factor), $"Zoom {factor:0.##}×");
+        }
+        foreach (var bind in p.ColorBinds)
+        {
+            string hex = bind.Color;
+            _hotkeys.Register(bind.Hotkey, () => svc.ApplyColor(hex), "Kalem rengi");
+        }
+    }
+
+    private static bool IsPresenterSessionEscape(HotkeyConfig config) =>
+        config.IsValid
+        && config.Modifiers == ScreenForge.Settings.ModifierKeys.None
+        && string.Equals(config.Key, "Escape", StringComparison.OrdinalIgnoreCase);
 
     private bool _captureInProgress;
 
@@ -293,6 +335,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _presenter?.Dispose();
         _hotkeys?.Dispose();
         _tray?.Dispose();
         if (_ownsInstanceMutex)

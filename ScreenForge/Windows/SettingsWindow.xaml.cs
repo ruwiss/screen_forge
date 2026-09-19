@@ -23,6 +23,8 @@ public partial class SettingsWindow : Window
     private HotkeyConfig? _recConfig;
     private string _recSavedKey = "";
     private SfModifierKeys _recSavedMods;
+    private string? _presenterSel;
+    private readonly Dictionary<string, Border> _presenterTiles = new();
 
     private static readonly SolidColorBrush _hkBg = new(Color.FromRgb(0x27, 0x2D, 0x3B));
     private static readonly SolidColorBrush _hkBorder = new(Color.FromRgb(0x3A, 0x42, 0x54));
@@ -38,7 +40,7 @@ public partial class SettingsWindow : Window
         LoadValues();
         WireEvents();
         BuildHotkeyPanel();
-        BtnClose.Click += (_, _) => Close();
+        BuildPresenterTiles();
         Loaded += (_, _) => FixTabHeight();
         SourceInitialized += (_, e) =>
         {
@@ -208,92 +210,12 @@ public partial class SettingsWindow : Window
             ("Hızlı çeviri", "Seçili metni çevirir; seçim yoksa yazarak çeviri açılır", _settings.QuickTranslateHotkey),
         };
 
-        var cardStyle = (Style)FindResource("Card");
-        var labelStyle = (Style)FindResource("Label");
-        var mutedStyle = (Style)FindResource("Muted");
-        var btnStyle = (Style)FindResource("SecondaryButton");
-        var textBrush = (Brush)FindResource("TextBrush");
-
         foreach (var (title, desc, config) in items)
-        {
-            var hkLabel = new TextBlock
-            {
-                Text = config.ToString(),
-                Foreground = textBrush,
-                FontSize = 12,
-                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-
-            var hkBorder = new Border
-            {
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 5, 10, 5),
-                Background = _hkBg,
-                BorderBrush = _hkBorder,
-                BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand,
-                VerticalAlignment = VerticalAlignment.Center,
-                MinWidth = 130,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Child = hkLabel,
-            };
-
-            var resetBtn = new Button
-            {
-                Content = "Sıfırla",
-                Style = btnStyle,
-                Height = 24,
-                Padding = new Thickness(8, 0, 8, 0),
-                FontSize = 11,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(8, 0, 0, 0),
-            };
-
-            // Click → start recording
-            hkBorder.MouseLeftButtonDown += (_, e) =>
-            {
-                BeginRecording(hkLabel, hkBorder, config);
-                e.Handled = true;
-            };
-
-            // Reset
-            var cfg = config; // capture
-            var lbl = hkLabel;
-            var brd = hkBorder;
-            resetBtn.Click += (_, _) =>
-            {
-                if (_recConfig == cfg) FinishRecording(true);
-                cfg.Key = "";
-                cfg.Modifiers = SfModifierKeys.None;
-                lbl.Text = cfg.ToString();
-                lbl.Foreground = Brushes.White;
-                brd.BorderBrush = _hkBorder;
-                brd.Background = _hkBg;
-                Apply(() => { });
-            };
-
-            // Layout
-            var infoStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-            infoStack.Children.Add(new TextBlock { Text = title, Style = labelStyle });
-            infoStack.Children.Add(new TextBlock { Text = desc, Style = mutedStyle, FontSize = 11, Margin = new Thickness(0, 1, 0, 0) });
-
-            var dock = new DockPanel();
-            DockPanel.SetDock(resetBtn, Dock.Right);
-            DockPanel.SetDock(hkBorder, Dock.Right);
-            dock.Children.Add(resetBtn);
-            dock.Children.Add(hkBorder);
-            dock.Children.Add(infoStack);
-
-            var card = new Border { Style = cardStyle, Padding = new Thickness(12, 10, 12, 10) };
-            card.Child = dock;
-            HotkeyPanel.Children.Add(card);
-        }
+            AddHotkeyRow(HotkeyPanel, title, desc, config);
 
         var hint = new TextBlock
         {
-            Style = mutedStyle,
+            Style = (Style)FindResource("Muted"),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 2, 0, 0),
             FontSize = 11,
@@ -306,6 +228,426 @@ public partial class SettingsWindow : Window
         {
             if (_recConfig != null) FinishRecording(true);
         };
+    }
+
+    private void BuildPresenterTiles()
+    {
+        PresenterTileHost.Children.Clear();
+        _presenterTiles.Clear();
+        var p = _settings.Presenter;
+        EnsureZoomSlots();
+        AddPresenterTile("zoom2", "Zoom 1.5×", p.ZoomPresets[0].Enabled, p.ZoomPresets[0].Hotkey, v => p.ZoomPresets[0].Enabled = v);
+        AddPresenterTile("zoom4", "Zoom 2×", p.ZoomPresets[1].Enabled, p.ZoomPresets[1].Hotkey, v => p.ZoomPresets[1].Enabled = v);
+        AddPresenterTile("pen", "Kalem", p.PenEnabled, p.PenHotkey, v => p.PenEnabled = v);
+        AddPresenterTile("laser", "Lazer", p.LaserEnabled, p.LaserHotkey, v => p.LaserEnabled = v);
+        AddPresenterTile("rect", "Dikdörtgen", p.RectangleEnabled, p.RectangleHotkey, v => p.RectangleEnabled = v);
+        AddPresenterTile("ell", "Daire", p.EllipseEnabled, p.EllipseHotkey, v => p.EllipseEnabled = v);
+        AddPresenterTile("arrow", "Ok", p.ArrowEnabled, p.ArrowHotkey, v => p.ArrowEnabled = v);
+        AddPresenterTile("line", "Çizgi", p.LineEnabled, p.LineHotkey, v => p.LineEnabled = v);
+        AddPresenterTile("spot", "Spotlight", p.SpotlightEnabled, p.SpotlightHotkey, v => p.SpotlightEnabled = v);
+        AddPresenterTile("cancel", "İptal", p.CancelEnabled, p.CancelHotkey, v => p.CancelEnabled = v);
+        PaintPresenterSelection();
+        FillPresenterDetail();
+    }
+
+    private void EnsureZoomSlots()
+    {
+        var p = _settings.Presenter;
+        while (p.ZoomPresets.Count < 2)
+            p.ZoomPresets.Add(new PresenterZoomPreset { Factor = p.ZoomPresets.Count == 0 ? 1.5 : 2 });
+    }
+
+    private void AddPresenterTile(string id, string title, bool on, HotkeyConfig hk, Action<bool> setOn)
+    {
+        var card = new Border
+        {
+            Margin = new Thickness(3),
+            Padding = new Thickness(8, 7, 8, 7),
+            CornerRadius = new CornerRadius(8),
+            Background = new SolidColorBrush(Color.FromRgb(0x27, 0x2D, 0x3B)),
+            BorderBrush = _hkBorder,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            Opacity = on ? 1 : 0.5,
+            Tag = id,
+        };
+        var keyTb = new TextBlock
+        {
+            Text = on && hk.IsValid ? hk.ToString() : "kapalı",
+            Style = (Style)FindResource("Muted"),
+            FontSize = 10,
+            Margin = new Thickness(0, 3, 0, 0),
+        };
+        var sw = MakeSwitch(on, v =>
+        {
+            setOn(v);
+            card.Opacity = v ? 1 : 0.5;
+            keyTb.Text = v && hk.IsValid ? hk.ToString() : "kapalı";
+            _presenterSel = id;
+            PaintPresenterSelection();
+            Apply(() => { });
+        });
+        var head = new DockPanel();
+        DockPanel.SetDock(sw, Dock.Right);
+        head.Children.Add(sw);
+        head.Children.Add(new TextBlock
+        {
+            Text = title,
+            Style = (Style)FindResource("Label"),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        var body = new StackPanel();
+        body.Children.Add(head);
+        body.Children.Add(keyTb);
+        card.Child = body;
+        card.MouseLeftButtonDown += (_, e) =>
+        {
+            _presenterSel = id;
+            PaintPresenterSelection();
+            FillPresenterDetail();
+            e.Handled = true;
+        };
+        _presenterTiles[id] = card;
+        PresenterTileHost.Children.Add(card);
+    }
+
+    private void PaintPresenterSelection()
+    {
+        foreach (var (id, card) in _presenterTiles)
+        {
+            bool selected = _presenterSel == id;
+            card.Background = new SolidColorBrush(selected ? Color.FromRgb(0x2A, 0x20, 0x10) : Color.FromRgb(0x1F, 0x24, 0x30));
+            card.BorderBrush = selected ? _hkActiveBorder : _hkBorder;
+        }
+    }
+
+    private Border MakeSwitch(bool on, Action<bool> set)
+    {
+        bool value = on;
+        var thumb = new Border
+        {
+            Width = 12,
+            Height = 12,
+            CornerRadius = new CornerRadius(6),
+            Background = Brushes.White,
+            Margin = new Thickness(2, 0, 2, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+        };
+        var track = new Border
+        {
+            Width = 30,
+            Height = 16,
+            CornerRadius = new CornerRadius(8),
+            Child = thumb,
+            Cursor = Cursors.Hand,
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Brushes.Transparent,
+        };
+        void Paint()
+        {
+            thumb.HorizontalAlignment = value ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            track.Background = new SolidColorBrush(value
+                ? Color.FromRgb(0xEA, 0x6F, 0x12)
+                : Color.FromRgb(0x3A, 0x42, 0x54));
+        }
+        Paint();
+        track.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            value = !value;
+            Paint();
+            set(value);
+            e.Handled = true;
+        };
+        return track;
+    }
+
+    private void FillPresenterDetail()
+    {
+        PresenterDetailPanel.Children.Clear();
+        if (_presenterSel == null)
+        {
+            PresenterDetailCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+        PresenterDetailCard.Visibility = Visibility.Visible;
+        var p = _settings.Presenter;
+        EnsureZoomSlots();
+        switch (_presenterSel)
+        {
+            case "zoom2":
+                PresenterDetailPanel.Children.Add(DetailTitle("Zoom 1.5×"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ZoomPresets[0].Hotkey));
+                PresenterDetailPanel.Children.Add(ZoomAnimSlider());
+                break;
+            case "zoom4":
+                PresenterDetailPanel.Children.Add(DetailTitle("Zoom 2×"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ZoomPresets[1].Hotkey));
+                PresenterDetailPanel.Children.Add(ZoomAnimSlider());
+                break;
+            case "pen":
+                PresenterDetailPanel.Children.Add(DetailTitle("Kalem"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.PenHotkey));
+                PresenterDetailPanel.Children.Add(ColorAndWidth("Kalınlık", p.PenColor, p.PenWidth, 1, 16,
+                    c => p.PenColor = c, v => p.PenWidth = v));
+                break;
+            case "laser":
+                PresenterDetailPanel.Children.Add(DetailTitle("Lazer"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.LaserHotkey));
+                PresenterDetailPanel.Children.Add(ColorAndWidth("Kalınlık", p.LaserColor, p.LaserWidth, 1, 16,
+                    c => p.LaserColor = c, v => p.LaserWidth = v));
+                PresenterDetailPanel.Children.Add(LabeledSlider("Sönme", p.LaserFadeMs, 150, 2000, v =>
+                {
+                    p.LaserFadeMs = (int)v;
+                    return FadeLabel(p.LaserFadeMs);
+                }));
+                break;
+            case "rect":
+                PresenterDetailPanel.Children.Add(DetailTitle("Dikdörtgen"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.RectangleHotkey));
+                break;
+            case "ell":
+                PresenterDetailPanel.Children.Add(DetailTitle("Daire"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.EllipseHotkey));
+                break;
+            case "arrow":
+                PresenterDetailPanel.Children.Add(DetailTitle("Ok"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ArrowHotkey));
+                PresenterDetailPanel.Children.Add(new TextBlock
+                {
+                    Text = "Eğim — yalnızca ok çizerken",
+                    Style = (Style)FindResource("Muted"),
+                    FontSize = 11,
+                    Margin = new Thickness(0, 10, 0, 4),
+                });
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ArrowBendHotkey));
+                break;
+            case "line":
+                PresenterDetailPanel.Children.Add(DetailTitle("Çizgi"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.LineHotkey));
+                break;
+            case "spot":
+                PresenterDetailPanel.Children.Add(DetailTitle("Spotlight"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.SpotlightHotkey));
+                PresenterDetailPanel.Children.Add(LabeledSlider("Boyut", p.SpotlightRadius, 60, 400, v =>
+                {
+                    p.SpotlightRadius = v;
+                    return ((int)v).ToString();
+                }));
+                PresenterDetailPanel.Children.Add(LabeledSlider("Kenar", p.SpotlightSoftness, 8, 70, v =>
+                {
+                    p.SpotlightSoftness = v;
+                    return ((int)v).ToString();
+                }));
+                PresenterDetailPanel.Children.Add(LabeledSlider("Karartma", p.SpotlightDim, 0.2, 0.8, v =>
+                {
+                    p.SpotlightDim = v;
+                    return $"{(int)(v * 100)}%";
+                }));
+                break;
+            case "cancel":
+                PresenterDetailPanel.Children.Add(DetailTitle("İptal"));
+                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.CancelHotkey));
+                break;
+        }
+    }
+
+    private TextBlock DetailTitle(string t) => new()
+    {
+        Text = t,
+        Style = (Style)FindResource("Label"),
+        Margin = new Thickness(0, 0, 0, 8),
+    };
+
+    private UIElement ZoomAnimSlider()
+    {
+        var p = _settings.Presenter;
+        return LabeledSlider("Animasyon", p.ZoomAnimationMs, 80, 600, v =>
+        {
+            p.ZoomAnimationMs = (int)v;
+            return $"{p.ZoomAnimationMs} ms";
+        });
+    }
+
+    private UIElement ColorAndWidth(string widthLabel, string hex, double width, double min, double max,
+        Action<string> setColor, Action<double> setWidth)
+    {
+        var row = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+        var swatch = new Border
+        {
+            Width = 22, Height = 22, CornerRadius = new CornerRadius(4),
+            BorderBrush = _hkBorder, BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(ParseHex(hex, Color.FromRgb(0xEA, 0x6F, 0x12))),
+            Cursor = Cursors.Hand, VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        swatch.MouseLeftButtonUp += (_, e) =>
+        {
+            var current = (swatch.Background as SolidColorBrush)?.Color
+                ?? ParseHex(hex, Color.FromRgb(0xEA, 0x6F, 0x12));
+            PickColor(swatch, current, c =>
+            {
+                setColor(ToHex(c));
+                swatch.Background = new SolidColorBrush(c);
+                Apply(() => { });
+            });
+            e.Handled = true;
+        };
+        DockPanel.SetDock(swatch, Dock.Right);
+        row.Children.Add(swatch);
+        row.Children.Add(LabeledSlider(widthLabel, width, min, max, v =>
+        {
+            setWidth(v);
+            return ((int)v).ToString();
+        }));
+        return row;
+    }
+
+    private DockPanel LabeledSlider(string label, double value, double min, double max, Func<double, string> apply)
+    {
+        var caption = new TextBlock
+        {
+            Style = (Style)FindResource("Label"),
+            Width = 90,
+            VerticalAlignment = VerticalAlignment.Center,
+            Text = $"{label} {apply(value)}",
+        };
+        var sld = new Slider { Minimum = min, Maximum = max, Value = value, VerticalAlignment = VerticalAlignment.Center };
+        var dock = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+        DockPanel.SetDock(caption, Dock.Left);
+        dock.Children.Add(caption);
+        dock.Children.Add(sld);
+        sld.ValueChanged += (_, _) =>
+        {
+            caption.Text = $"{label} {apply(sld.Value)}";
+            Apply(() => { });
+        };
+        return dock;
+    }
+
+    private void AddHotkeyRow(StackPanel panel, string title, string desc, HotkeyConfig config)
+    {
+        var cardStyle = (Style)FindResource("Card");
+        var labelStyle = (Style)FindResource("Label");
+        var mutedStyle = (Style)FindResource("Muted");
+        var btnStyle = (Style)FindResource("SecondaryButton");
+        var textBrush = (Brush)FindResource("TextBrush");
+
+        var hkLabel = new TextBlock
+        {
+            Text = config.ToString(),
+            Foreground = textBrush,
+            FontSize = 12,
+            FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var hkBorder = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 5, 10, 5),
+            Background = _hkBg,
+            BorderBrush = _hkBorder,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 130,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Child = hkLabel,
+        };
+
+        var resetBtn = new Button
+        {
+            Content = "Sıfırla",
+            Style = btnStyle,
+            Height = 24,
+            Padding = new Thickness(8, 0, 8, 0),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+
+        hkBorder.MouseLeftButtonDown += (_, e) =>
+        {
+            BeginRecording(hkLabel, hkBorder, config);
+            e.Handled = true;
+        };
+
+        var cfg = config;
+        var lbl = hkLabel;
+        var brd = hkBorder;
+        resetBtn.Click += (_, _) =>
+        {
+            if (_recConfig == cfg) FinishRecording(true);
+            cfg.Key = "";
+            cfg.Modifiers = SfModifierKeys.None;
+            lbl.Text = cfg.ToString();
+            lbl.Foreground = Brushes.White;
+            brd.BorderBrush = _hkBorder;
+            brd.Background = _hkBg;
+            Apply(() => { });
+        };
+
+        var infoStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+        infoStack.Children.Add(new TextBlock { Text = title, Style = labelStyle });
+        if (!string.IsNullOrEmpty(desc))
+            infoStack.Children.Add(new TextBlock { Text = desc, Style = mutedStyle, FontSize = 11, Margin = new Thickness(0, 1, 0, 0) });
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(resetBtn, Dock.Right);
+        DockPanel.SetDock(hkBorder, Dock.Right);
+        dock.Children.Add(resetBtn);
+        dock.Children.Add(hkBorder);
+        dock.Children.Add(infoStack);
+
+        var card = new Border { Style = cardStyle, Padding = new Thickness(12, 10, 12, 10) };
+        card.Child = dock;
+        panel.Children.Add(card);
+    }
+
+    private Border MakeHotkeyChip(HotkeyConfig config)
+    {
+        var textBrush = (Brush)FindResource("TextBrush");
+        var hkLabel = new TextBlock
+        {
+            Text = config.ToString(),
+            Foreground = textBrush,
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var hkBorder = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 4, 8, 4),
+            Background = _hkBg,
+            BorderBrush = _hkBorder,
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            MinWidth = 108,
+            Child = hkLabel,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = "Tıkla: ata · sağ tık: sil",
+        };
+        hkBorder.MouseLeftButtonDown += (_, e) =>
+        {
+            BeginRecording(hkLabel, hkBorder, config);
+            e.Handled = true;
+        };
+        hkBorder.MouseRightButtonDown += (_, e) =>
+        {
+            if (_recConfig == config) FinishRecording(true);
+            config.Key = "";
+            config.Modifiers = SfModifierKeys.None;
+            hkLabel.Text = config.ToString();
+            Apply(() => { });
+            e.Handled = true;
+        };
+        return hkBorder;
     }
 
     private void BeginRecording(TextBlock label, Border border, HotkeyConfig config)
@@ -336,11 +678,23 @@ public partial class SettingsWindow : Window
         _recBorder.BorderBrush = _hkBorder;
         _recBorder.Background = _hkBg;
         var didChange = !cancel;
+        var recCfg = _recConfig;
         _recLabel = null;
         _recBorder = null;
         _recConfig = null;
         RemoveKeyboardHook();
-        if (didChange) Apply(() => { });
+        if (didChange)
+        {
+            Apply(() => { });
+            if (_presenterSel != null)
+            {
+                FillPresenterDetail();
+                if (_presenterTiles.TryGetValue(_presenterSel, out var card)
+                    && card.Child is StackPanel sp && sp.Children.Count > 1
+                    && sp.Children[1] is TextBlock keyTb)
+                    keyTb.Text = recCfg.IsValid ? recCfg.ToString() : "kapalı";
+            }
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -362,6 +716,7 @@ public partial class SettingsWindow : Window
             }
         }
         TabCtrl.SelectedIndex = saved;
+        maxH = Math.Min(maxH, 460);
         foreach (TabItem ti in TabCtrl.Items)
             if (ti.Content is FrameworkElement fe)
                 fe.MinHeight = maxH;
@@ -575,6 +930,22 @@ public partial class SettingsWindow : Window
             _settings.TranslatePairLanguage = GetLangComboCode(CmbTranslatePair) ?? "en";
         });
     }
+
+    private void PickColor(UIElement target, Color initial, Action<Color> onPicked)
+    {
+        var popup = new ColorPickerPopup(target, initial, onPicked);
+        popup.Open();
+    }
+
+    private static Color ParseHex(string hex, Color fallback)
+    {
+        var sk = Editor.InteractiveCanvas.ColorFromHex(hex);
+        return sk.Alpha == 0 ? fallback : Color.FromArgb(sk.Alpha, sk.Red, sk.Green, sk.Blue);
+    }
+
+    private static string ToHex(Color c) => $"#{c.A:X2}{c.R:X2}{c.G:X2}{c.B:X2}";
+
+    private static string FadeLabel(int ms) => $"{ms / 1000.0:0.#} sn";
 
     private void SyncAutoCloseState()
     {

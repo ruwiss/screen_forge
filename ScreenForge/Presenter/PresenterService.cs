@@ -1,0 +1,409 @@
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Threading;
+using SkiaSharp;
+using ScreenForge.Settings;
+using SfModifierKeys = ScreenForge.Settings.ModifierKeys;
+
+namespace ScreenForge.Presenter;
+
+public sealed class PresenterService : IDisposable
+{
+    private readonly Func<AppSettings> _settings;
+    private readonly PresenterRenderer _renderer = new();
+    private readonly Magnifier _magnifier = new();
+    private readonly PresenterMouseHook _mouse = new();
+    private PresenterOverlayWindow? _overlay;
+    private DispatcherTimer? _zoomTimer;
+    private bool _disposed;
+
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+
+    private float _magFrom = 1f;
+    private float _magTo = 1f;
+    private float _magNow = 1f;
+    private float _focusX;
+    private float _focusY;
+    private long _animStart;
+    private int _animMs;
+    private bool _animating;
+    private bool _exiting;
+    private bool _spotlightOn;
+    private long _lastZoomTick;
+
+    public PresenterService(Func<AppSettings> settings)
+    {
+        _settings = settings;
+        _mouse.Pressed += p => OnBegin(ToCanvas(p));
+        _mouse.Moved += p => OnMove(ToCanvas(p));
+        _mouse.Released += p => OnEnd(ToCanvas(p));
+        _mouse.Escape += () =>
+        {
+            if (Cfg.CancelEnabled) Cancel();
+        };
+        _mouse.TryEatKey = vk => TryEatBendKey(vk) || TryEatZoomKey(vk) || TryEatUndoKey(vk);
+        _mouse.AteKeyUp = OnAteKeyUp;
+    }
+
+    private HotkeyConfig BendHotkey =>
+        Cfg.ArrowBendHotkey is { IsValid: true } hk
+            ? hk
+            : new HotkeyConfig { Key = "Space" };
+
+    private bool TryEatBendKey(int vk)
+    {
+        if (_renderer.Tool != PresenterTool.Arrow && _renderer.DraftArrow == null)
+            return false;
+        if (!MatchesHotkey(BendHotkey, vk)) return false;
+        SetBendHeld(true);
+        return true;
+    }
+
+    private void OnAteKeyUp(int vk)
+    {
+        if (!MatchesHotkey(BendHotkey, vk)) return;
+        SetBendHeld(false);
+    }
+
+    private void SetBendHeld(bool held)
+    {
+        _renderer.BendHeld = held;
+        if (_overlay == null || _renderer.DraftArrow == null) return;
+        _renderer.ApplyArrowBend(_overlay.CanvasBounds);
+        _overlay.Redraw();
+    }
+
+    private bool TryEatUndoKey(int vk)
+    {
+        if (vk != 0x5A) return false;
+        if (!IsDown(0x11) && !IsDown(0xA2) && !IsDown(0xA3)) return false;
+        if (IsDown(0x10) || IsDown(0xA0) || IsDown(0xA1)) return false;
+        if (IsDown(0x12) || IsDown(0xA4) || IsDown(0xA5)) return false;
+        if (!_renderer.Undo())
+            return false;
+        _overlay?.Redraw();
+        return true;
+    }
+
+    private bool TryEatZoomKey(int vk)
+    {
+        foreach (var preset in Cfg.ZoomPresets)
+        {
+            if (!preset.Enabled || !MatchesHotkey(preset.Hotkey, vk)) continue;
+            ToggleZoom(preset.Factor);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool MatchesHotkey(HotkeyConfig hk, int vk)
+    {
+        if (!hk.IsValid) return false;
+        if (!Enum.TryParse<Key>(hk.Key, true, out var key) || key == Key.None)
+            return false;
+        if (KeyInterop.VirtualKeyFromKey(key) != vk)
+            return false;
+        var mods = SfModifierKeys.None;
+        if (IsDown(0x11) || IsDown(0xA2) || IsDown(0xA3)) mods |= SfModifierKeys.Control;
+        if (IsDown(0x10) || IsDown(0xA0) || IsDown(0xA1)) mods |= SfModifierKeys.Shift;
+        if (IsDown(0x12) || IsDown(0xA4) || IsDown(0xA5)) mods |= SfModifierKeys.Alt;
+        if (IsDown(0x5B) || IsDown(0x5C)) mods |= SfModifierKeys.Windows;
+        return hk.Modifiers == mods;
+    }
+
+    private static bool IsDown(int vk) => (GetAsyncKeyState(vk) & unchecked((short)0x8000)) != 0;
+
+    private SKPoint ToCanvas(SKPoint screen) =>
+        _overlay?.ToCanvas(screen) ?? screen;
+
+    private PresenterSettings Cfg => _settings().Presenter;
+
+    public void ToggleTool(PresenterTool tool)
+    {
+        if (_exiting) return;
+        if (_renderer.Tool == tool)
+        {
+            _renderer.Clear();
+        }
+        else
+        {
+            if (_renderer.IsDrawing)
+                _renderer.End();
+            _renderer.Tool = tool;
+        }
+        _renderer.StrokeColor = PresenterRenderer.Parse(Cfg.PenColor, _renderer.StrokeColor);
+        _renderer.StrokeWidth = (float)Cfg.PenWidth;
+        EnsureOverlay();
+        UpdateInput();
+    }
+
+    public void ToggleSpotlight()
+    {
+        if (_exiting) return;
+        _spotlightOn = !_spotlightOn;
+        _renderer.Spotlight = _spotlightOn;
+        EnsureOverlay();
+        UpdateInput();
+    }
+
+    public void ToggleZoom(double factor)
+    {
+        if (_exiting) return;
+        long now = Environment.TickCount64;
+        if (now - _lastZoomTick < 80)
+            return;
+        _lastZoomTick = now;
+
+        float want = (float)Math.Clamp(factor, 1.25, 8);
+        bool zoomed = _magNow > 1.02f || _magTo > 1.02f;
+        bool atWant = Math.Abs(_magTo - want) < 0.08f || Math.Abs(_magNow - want) < 0.08f;
+        StartZoom(zoomed && atWant ? 1f : want);
+    }
+
+    public void ApplyColor(string hex)
+    {
+        if (_exiting) return;
+        var color = PresenterRenderer.Parse(hex, _renderer.StrokeColor);
+        _renderer.StrokeColor = color;
+        Cfg.PenColor = hex;
+        if (_renderer.Tool is PresenterTool.None or PresenterTool.Laser)
+            _renderer.Tool = PresenterTool.Pen;
+        EnsureOverlay();
+        UpdateInput();
+    }
+
+    public void BendArrow()
+    {
+        SetBendHeld(_renderer.BendHeld);
+    }
+
+    public void Cancel()
+    {
+        if (_exiting) return;
+        _exiting = true;
+        _renderer.Tool = PresenterTool.None;
+        _renderer.Clear();
+        _spotlightOn = false;
+        _renderer.Spotlight = false;
+        UpdateInput();
+
+        if (_magNow > 1.02f || _magTo > 1.02f)
+            StartZoom(1f);
+        else
+            ShutdownOverlay();
+    }
+
+    private void EnsureOverlay()
+    {
+        if (_overlay != null) return;
+        var prevMain = Application.Current?.MainWindow;
+        _overlay = new PresenterOverlayWindow(Paint);
+        _overlay.FrameTick += OnTick;
+        _overlay.Closed += (_, _) =>
+        {
+            if (_overlay == null) return;
+            _overlay = null;
+            _mouse.Eat = false;
+            _mouse.SessionActive = false;
+            _magNow = _magTo = _magFrom = 1f;
+            _animating = false;
+            _exiting = false;
+            _spotlightOn = false;
+            _renderer.Tool = PresenterTool.None;
+            _renderer.Spotlight = false;
+            _renderer.SpotlightAmount = 0;
+            _renderer.Clear();
+        };
+        _overlay.Show();
+        _mouse.SessionActive = true;
+        if (prevMain != null && Application.Current != null)
+            Application.Current.MainWindow = prevMain;
+        UpdateInput();
+    }
+
+    private void Paint(SKCanvas canvas, int w, int h) => _renderer.Render(canvas, w, h, Cfg);
+
+    private void OnBegin(SKPoint p)
+    {
+        _renderer.Cursor = p;
+        _renderer.Begin(p, Cfg);
+        _overlay?.Redraw();
+    }
+
+    private void OnMove(SKPoint p)
+    {
+        _renderer.Cursor = p;
+        if (_renderer.IsDrawing)
+            _renderer.Move(p, Cfg);
+        _overlay?.Redraw();
+    }
+
+    private void OnEnd(SKPoint p)
+    {
+        _renderer.Cursor = p;
+        _renderer.End();
+        _overlay?.Redraw();
+    }
+
+    private void OnTick()
+    {
+        if (_overlay == null) return;
+        var cursor = _overlay.CursorCanvas();
+        _renderer.Cursor = cursor;
+
+        float targetSpot = _spotlightOn ? 1f : 0f;
+        float spotSpeed = 0.42f;
+        _renderer.SpotlightAmount += (targetSpot - _renderer.SpotlightAmount) * spotSpeed;
+        if (Math.Abs(_renderer.SpotlightAmount - targetSpot) < 0.01f)
+            _renderer.SpotlightAmount = targetSpot;
+
+        bool drawDirty = _renderer.Tick(Cfg);
+        if (drawDirty || _renderer.Tool != PresenterTool.None || _spotlightOn)
+            _overlay.Redraw();
+
+        if (!_animating && !_exiting && ShouldIdleClose())
+            Application.Current?.Dispatcher.BeginInvoke(ShutdownOverlay, DispatcherPriority.Background);
+    }
+
+    private bool ShouldIdleClose()
+    {
+        if (_renderer.Tool != PresenterTool.None) return false;
+        if (_spotlightOn || _renderer.SpotlightAmount > 0.02f) return false;
+        if (_renderer.HasInk || _renderer.HasLaser) return false;
+        if (_magNow > 1.02f || _magTo > 1.02f) return false;
+        return true;
+    }
+
+    private void StartZoom(float target)
+    {
+        if (target > 1.02f)
+        {
+            GetCursorPos(out var p);
+            _focusX = p.X;
+            _focusY = p.Y;
+        }
+        _magFrom = _magNow;
+        _magTo = target;
+        _animMs = Math.Max(80, Cfg.ZoomAnimationMs);
+        _animStart = Environment.TickCount64;
+        _animating = true;
+        _mouse.SessionActive = true;
+        EnsureZoomTimer();
+        TickZoom();
+    }
+
+    private void EnsureZoomTimer()
+    {
+        if (_zoomTimer != null) return;
+        _zoomTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _zoomTimer.Tick += (_, _) => TickZoom();
+        _zoomTimer.Start();
+    }
+
+    private void TickZoom()
+    {
+        if (_animating)
+        {
+            float t = ZoomMath.EaseOutCubic((Environment.TickCount64 - _animStart) / (float)_animMs);
+            _magNow = ZoomMath.Lerp(_magFrom, _magTo, t);
+            if (t >= 1f)
+            {
+                _magNow = _magTo;
+                _animating = false;
+            }
+        }
+
+        if (_magTo <= 1.001f && _magNow <= 1.001f)
+        {
+            RunWithoutOverlay(_magnifier.ClearTransform);
+            StopZoomTimer();
+            if (_exiting)
+                Application.Current?.Dispatcher.BeginInvoke(ShutdownOverlay, DispatcherPriority.Background);
+            else if (_overlay == null)
+                _mouse.SessionActive = false;
+            return;
+        }
+
+        if (_magNow > 1.001f)
+        {
+            ZoomMath.OffsetsKeepingPoint(_magNow, _focusX, _focusY, out int ox, out int oy);
+            _magnifier.Apply(_magNow, ox, oy);
+        }
+
+        if (!_animating && _magNow > 1.001f)
+            StopZoomTimer();
+    }
+
+    private void StopZoomTimer()
+    {
+        _zoomTimer?.Stop();
+        _zoomTimer = null;
+    }
+
+    private void RunWithoutOverlay(Action action)
+    {
+        var w = _overlay;
+        if (w == null)
+        {
+            action();
+            return;
+        }
+
+        var prevMain = Application.Current?.MainWindow;
+        bool show = w.IsVisible;
+        try
+        {
+            w.Hide();
+            action();
+        }
+        finally
+        {
+            if (show && _overlay == w)
+            {
+                w.Show();
+                if (prevMain != null && Application.Current != null)
+                    Application.Current.MainWindow = prevMain;
+            }
+        }
+    }
+
+    private void UpdateInput()
+    {
+        _mouse.Eat = _renderer.Tool is not PresenterTool.None;
+        _overlay?.Redraw();
+    }
+
+    private void ShutdownOverlay()
+    {
+        _mouse.Eat = false;
+        _mouse.SessionActive = false;
+        _zoomTimer?.Stop();
+        _zoomTimer = null;
+        var overlay = _overlay;
+        _overlay = null;
+        overlay?.Close();
+        _magnifier.Reset();
+        _magNow = 1f;
+        _magTo = 1f;
+        _magFrom = 1f;
+        _animating = false;
+        _exiting = false;
+        _spotlightOn = false;
+        _renderer.Tool = PresenterTool.None;
+        _renderer.Spotlight = false;
+        _renderer.SpotlightAmount = 0;
+        _renderer.Clear();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        ShutdownOverlay();
+        _mouse.Dispose();
+        _magnifier.Dispose();
+    }
+}

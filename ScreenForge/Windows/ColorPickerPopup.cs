@@ -133,8 +133,12 @@ public sealed class ColorPickerPopup
 
     public void Open()
     {
+        if (Mouse.LeftButton == MouseButtonState.Pressed)
+        {
+            _popup.Dispatcher.BeginInvoke(Open, System.Windows.Threading.DispatcherPriority.Input);
+            return;
+        }
         _popup.IsOpen = true;
-        // Popup ayrı HWND olabilir; ölçeği kartın kendi pencere DPI'sinden al (overlay DPI ile çift zoom olmasın).
         if (_popup.Child is FrameworkElement card)
         {
             try
@@ -142,7 +146,7 @@ public sealed class ColorPickerPopup
                 var pt = card.PointToScreen(new Point(0, 0));
                 ChromeScale.Apply(card, ChromeScale.ForScreenPoint(card, (int)pt.X, (int)pt.Y));
             }
-            catch { /* ölçek başarısızsa 1× kalır */ }
+            catch { }
         }
     }
 
