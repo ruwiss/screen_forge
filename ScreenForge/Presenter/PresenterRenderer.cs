@@ -34,7 +34,25 @@ public sealed class PresenterRenderer
     public bool HasLaser => _liveLaser != null || _lasers.Exists(l => !l.IsEmpty);
     public bool IsDrawing => _draft != null || _liveLaser != null;
     public ArrowItem? DraftArrow => _draft as ArrowItem;
+    public FreehandItem? LastFreehand => _ink.Count > 0 ? _ink[^1] as FreehandItem : null;
     public bool BendHeld { get; set; }
+
+    public void Replace(IReadOnlyList<SceneItem> remove, SceneItem add)
+    {
+        if (remove.Count == 0) return;
+        for (int i = _ink.Count - 1; i >= 0; i--)
+        {
+            for (int j = 0; j < remove.Count; j++)
+            {
+                if (ReferenceEquals(_ink[i], remove[j]))
+                {
+                    _ink.RemoveAt(i);
+                    break;
+                }
+            }
+        }
+        _ink.Add(add);
+    }
 
     public void Clear()
     {

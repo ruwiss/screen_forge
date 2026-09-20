@@ -253,6 +253,7 @@ public sealed class PresenterSettings
             ApplyZoomItDefaults();
         if (string.IsNullOrWhiteSpace(PenColor)) PenColor = "#FFEA6F12";
         if (string.IsNullOrWhiteSpace(LaserColor)) LaserColor = "#FFFF3D6E";
+        CancelEnabled = true;
         if (CancelHotkey is not { IsValid: true })
             CancelHotkey = new HotkeyConfig { Key = "Escape" };
         if (ArrowBendHotkey is not { IsValid: true })

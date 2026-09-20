@@ -12,6 +12,7 @@ public sealed class PresenterService : IDisposable
 {
     private readonly Func<AppSettings> _settings;
     private readonly PresenterRenderer _renderer = new();
+    private readonly InkBeautifier _beautify;
     private readonly Magnifier _magnifier = new();
     private readonly PresenterMouseHook _mouse = new();
     private PresenterOverlayWindow? _overlay;
@@ -37,12 +38,14 @@ public sealed class PresenterService : IDisposable
     public PresenterService(Func<AppSettings> settings)
     {
         _settings = settings;
+        _beautify = new InkBeautifier(_renderer);
+        _beautify.Applied += () => _overlay?.Redraw();
         _mouse.Pressed += p => OnBegin(ToCanvas(p));
         _mouse.Moved += p => OnMove(ToCanvas(p));
         _mouse.Released += p => OnEnd(ToCanvas(p));
         _mouse.Escape += () =>
         {
-            if (Cfg.CancelEnabled) Cancel();
+            Cancel();
         };
         _mouse.TryEatKey = vk => TryEatBendKey(vk) || TryEatZoomKey(vk) || TryEatUndoKey(vk);
         _mouse.AteKeyUp = OnAteKeyUp;
@@ -84,6 +87,7 @@ public sealed class PresenterService : IDisposable
         if (IsDown(0x12) || IsDown(0xA4) || IsDown(0xA5)) return false;
         if (!_renderer.Undo())
             return false;
+        _beautify.Reset();
         _overlay?.Redraw();
         return true;
     }
@@ -126,7 +130,7 @@ public sealed class PresenterService : IDisposable
         if (_exiting) return;
         if (_renderer.Tool == tool)
         {
-            _renderer.Clear();
+            ClearInk();
         }
         else
         {
@@ -185,7 +189,7 @@ public sealed class PresenterService : IDisposable
         if (_exiting) return;
         _exiting = true;
         _renderer.Tool = PresenterTool.None;
-        _renderer.Clear();
+        ClearInk();
         _spotlightOn = false;
         _renderer.Spotlight = false;
         UpdateInput();
@@ -215,7 +219,7 @@ public sealed class PresenterService : IDisposable
             _renderer.Tool = PresenterTool.None;
             _renderer.Spotlight = false;
             _renderer.SpotlightAmount = 0;
-            _renderer.Clear();
+            ClearInk();
         };
         _overlay.Show();
         _mouse.SessionActive = true;
@@ -228,6 +232,7 @@ public sealed class PresenterService : IDisposable
 
     private void OnBegin(SKPoint p)
     {
+        _beautify.Pause();
         _renderer.Cursor = p;
         _renderer.Begin(p, Cfg);
         _overlay?.Redraw();
@@ -245,6 +250,8 @@ public sealed class PresenterService : IDisposable
     {
         _renderer.Cursor = p;
         _renderer.End();
+        if (_renderer.Tool == PresenterTool.Pen && _renderer.LastFreehand is { } stroke)
+            _beautify.Enqueue(stroke);
         _overlay?.Redraw();
     }
 
@@ -395,6 +402,12 @@ public sealed class PresenterService : IDisposable
         _renderer.Tool = PresenterTool.None;
         _renderer.Spotlight = false;
         _renderer.SpotlightAmount = 0;
+        ClearInk();
+    }
+
+    private void ClearInk()
+    {
+        _beautify.Reset();
         _renderer.Clear();
     }
 

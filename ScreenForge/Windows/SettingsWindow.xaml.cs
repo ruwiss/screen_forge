@@ -245,7 +245,7 @@ public partial class SettingsWindow : Window
         AddPresenterTile("arrow", "Ok", p.ArrowEnabled, p.ArrowHotkey, v => p.ArrowEnabled = v);
         AddPresenterTile("line", "Çizgi", p.LineEnabled, p.LineHotkey, v => p.LineEnabled = v);
         AddPresenterTile("spot", "Spotlight", p.SpotlightEnabled, p.SpotlightHotkey, v => p.SpotlightEnabled = v);
-        AddPresenterTile("cancel", "İptal", p.CancelEnabled, p.CancelHotkey, v => p.CancelEnabled = v);
+        AddPresenterTile("cancel", "İptal", true, p.CancelHotkey, _ => p.CancelEnabled = true, locked: true);
         PaintPresenterSelection();
         FillPresenterDetail();
     }
@@ -257,8 +257,9 @@ public partial class SettingsWindow : Window
             p.ZoomPresets.Add(new PresenterZoomPreset { Factor = p.ZoomPresets.Count == 0 ? 1.5 : 2 });
     }
 
-    private void AddPresenterTile(string id, string title, bool on, HotkeyConfig hk, Action<bool> setOn)
+    private void AddPresenterTile(string id, string title, bool on, HotkeyConfig hk, Action<bool> setOn, bool locked = false)
     {
+        if (locked) on = true;
         var card = new Border
         {
             Margin = new Thickness(3),
@@ -278,18 +279,21 @@ public partial class SettingsWindow : Window
             FontSize = 10,
             Margin = new Thickness(0, 3, 0, 0),
         };
-        var sw = MakeSwitch(on, v =>
-        {
-            setOn(v);
-            card.Opacity = v ? 1 : 0.5;
-            keyTb.Text = v && hk.IsValid ? hk.ToString() : "kapalı";
-            _presenterSel = id;
-            PaintPresenterSelection();
-            Apply(() => { });
-        });
         var head = new DockPanel();
-        DockPanel.SetDock(sw, Dock.Right);
-        head.Children.Add(sw);
+        if (!locked)
+        {
+            var sw = MakeSwitch(on, v =>
+            {
+                setOn(v);
+                card.Opacity = v ? 1 : 0.5;
+                keyTb.Text = v && hk.IsValid ? hk.ToString() : "kapalı";
+                _presenterSel = id;
+                PaintPresenterSelection();
+                Apply(() => { });
+            });
+            DockPanel.SetDock(sw, Dock.Right);
+            head.Children.Add(sw);
+        }
         head.Children.Add(new TextBlock
         {
             Text = title,
