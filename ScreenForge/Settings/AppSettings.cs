@@ -201,6 +201,8 @@ public sealed class PresenterSettings
 {
     public int DefaultsRevision { get; set; }
 
+    public bool Enabled { get; set; } = true;
+
     public bool PenEnabled { get; set; }
     public HotkeyConfig PenHotkey { get; set; } = new();
     public bool LaserEnabled { get; set; }

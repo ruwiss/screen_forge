@@ -97,6 +97,7 @@ public sealed class PresenterSettingsTests
     {
         var settings = new AppSettings();
         settings.Normalize();
+        Assert.True(settings.Presenter.Enabled);
         Assert.True(settings.Presenter.PenEnabled);
         Assert.Equal("D2", settings.Presenter.PenHotkey.Key);
         Assert.Equal(ModifierKeys.Control, settings.Presenter.PenHotkey.Modifiers);

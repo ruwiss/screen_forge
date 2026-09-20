@@ -22,6 +22,8 @@ public sealed class TrayIconService : IDisposable
     public event Action? SettingsRequested;
     public event Action? AboutRequested;
     public event Action? ExitRequested;
+    public event Action<bool>? PresenterEnabledChanged;
+    public Func<bool>? GetPresenterEnabled { get; set; }
 
     public TrayIconService()
     {
@@ -54,12 +56,32 @@ public sealed class TrayIconService : IDisposable
         menu.Items.Add(MenuItem("Renk Seçici", () => ColorPickerRequested?.Invoke()));
         menu.Items.Add(MenuItem("Yükleme Yap", () => TrayUploadRequested?.Invoke()));
         menu.Items.Add(new Separator());
+        menu.Items.Add(PresenterToggle());
+        menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Ayarlar", () => SettingsRequested?.Invoke()));
         menu.Items.Add(MenuItem("Hakkında", () => AboutRequested?.Invoke()));
         menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Çıkış", () => ExitRequested?.Invoke()));
 
+        menu.Opened += (_, _) =>
+        {
+            if (menu.Items.OfType<MenuItem>().FirstOrDefault(i => i.Tag as string == "presenter") is { } item)
+                item.IsChecked = GetPresenterEnabled?.Invoke() ?? true;
+        };
         return menu;
+    }
+
+    private MenuItem PresenterToggle()
+    {
+        var item = new MenuItem
+        {
+            Header = "Sunum araçları",
+            IsCheckable = true,
+            IsChecked = GetPresenterEnabled?.Invoke() ?? true,
+            Tag = "presenter",
+        };
+        item.Click += (_, _) => PresenterEnabledChanged?.Invoke(item.IsChecked == true);
+        return item;
     }
 
     private static MenuItem MenuItem(string header, Action action, bool isDefault = false)

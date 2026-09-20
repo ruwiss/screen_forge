@@ -59,6 +59,8 @@ public partial class App : Application
         _tray.SettingsRequested += OnSettings;
         _tray.AboutRequested += OnAbout;
         _tray.ExitRequested += OnExit;
+        _tray.GetPresenterEnabled = () => Settings.Presenter.Enabled;
+        _tray.PresenterEnabledChanged += OnPresenterEnabledChanged;
 
         // ---- Global kısayollar ----
         _presenter = new Presenter.PresenterService(() => Settings);
@@ -98,10 +100,20 @@ public partial class App : Application
         }
     }
 
+    private void OnPresenterEnabledChanged(bool enabled)
+    {
+        Settings.Presenter.Enabled = enabled;
+        Settings.Save();
+        if (!enabled)
+            _presenter?.Cancel();
+        RegisterHotkeys();
+    }
+
     private void RegisterPresenterHotkeys()
     {
         if (_hotkeys == null || _presenter == null) return;
         var p = Settings.Presenter;
+        if (!p.Enabled) return;
         var svc = _presenter;
         if (p.PenEnabled)
             _hotkeys.Register(p.PenHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Pen), "Kalem");
