@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using SkiaSharp;
+using ScreenForge.Editor;
 using ScreenForge.Settings;
 using SfModifierKeys = ScreenForge.Settings.ModifierKeys;
 
@@ -21,11 +22,14 @@ public sealed class PresenterService : IDisposable
 
     private bool _exiting;
     private bool _spotlightOn;
+    private SKPoint _holdAnchor;
+    private long _holdStartMs;
+    private bool _isHolding;
 
     public PresenterService(Func<AppSettings> settings)
     {
         _settings = settings;
-        _beautify = new InkBeautifier(_renderer);
+        _beautify = new InkBeautifier(_renderer, () => Cfg);
         _beautify.Applied += () => _overlay?.Redraw();
         _mouse.Pressed += p => OnBegin(ToCanvas(p));
         _mouse.Moved += p => OnMove(ToCanvas(p));
@@ -223,6 +227,9 @@ public sealed class PresenterService : IDisposable
     private void OnBegin(SKPoint p)
     {
         _beautify.Pause();
+        _holdAnchor = p;
+        _holdStartMs = Environment.TickCount64;
+        _isHolding = false;
         _renderer.Cursor = p;
         _renderer.Begin(p, Cfg);
         _overlay?.Redraw();
@@ -232,16 +239,37 @@ public sealed class PresenterService : IDisposable
     {
         _renderer.Cursor = p;
         if (_renderer.IsDrawing)
+        {
+            if (_renderer.Tool == PresenterTool.Pen)
+            {
+                float dist = SKPoint.Distance(p, _holdAnchor);
+                if (dist > 7f)
+                {
+                    _holdAnchor = p;
+                    _holdStartMs = Environment.TickCount64;
+                    if (_isHolding && dist > 14f)
+                    {
+                        _renderer.RevertSnap();
+                        _isHolding = false;
+                    }
+                }
+            }
             _renderer.Move(p, Cfg);
+        }
         _overlay?.Redraw();
     }
 
     private void OnEnd(SKPoint p)
     {
+        _isHolding = false;
         _renderer.Cursor = p;
+        bool wasSnapped = _renderer.SnappedFrom != null;
         _renderer.End();
-        if (_renderer.Tool == PresenterTool.Pen && _renderer.LastFreehand is { } stroke)
-            _beautify.Enqueue(stroke);
+        if (!wasSnapped && _renderer.Tool == PresenterTool.Pen && _renderer.LastFreehand is { } stroke)
+        {
+            if (Cfg.InkShapeConvert == InkShapeConvertMode.Auto || Cfg.InkTextConvertEnabled)
+                _beautify.Enqueue(stroke);
+        }
         _overlay?.Redraw();
     }
 
@@ -250,6 +278,25 @@ public sealed class PresenterService : IDisposable
         if (_overlay == null) return;
         var cursor = _overlay.CursorCanvas();
         _renderer.Cursor = cursor;
+
+        // Draw and hold shape detection
+        if (_renderer.Tool == PresenterTool.Pen && _renderer.IsDrawing && Cfg.InkShapeConvert == InkShapeConvertMode.DrawAndHold)
+        {
+            if (!_isHolding && _renderer.Draft is FreehandItem pen && pen.Points.Count >= 5)
+            {
+                long now = Environment.TickCount64;
+                if (now - _holdStartMs >= 360)
+                {
+                    var shape = InkStrokeFit.TryFitAnyShape(pen.Points, pen);
+                    if (shape != null)
+                    {
+                        _renderer.SnapDraft(shape, pen);
+                        _isHolding = true;
+                        _overlay.Redraw();
+                    }
+                }
+            }
+        }
 
         float targetSpot = _spotlightOn ? 1f : 0f;
         float spotSpeed = 0.42f;
@@ -296,6 +343,7 @@ public sealed class PresenterService : IDisposable
 
     private void ClearInk()
     {
+        _isHolding = false;
         _beautify.Reset();
         _renderer.Clear();
     }

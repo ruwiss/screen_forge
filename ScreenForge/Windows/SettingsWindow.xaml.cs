@@ -380,6 +380,7 @@ public partial class SettingsWindow : Window
                     p.PenWidth = v;
                     return ((int)v).ToString();
                 }));
+                PresenterDetailPanel.Children.Add(ShapeConvertControl(p));
                 break;
             case "laser":
                 PresenterDetailPanel.Children.Add(DetailTitle("Lazer"));
@@ -510,6 +511,70 @@ public partial class SettingsWindow : Window
             TextWrapping = TextWrapping.Wrap,
         });
         return col;
+    }
+
+    private UIElement ShapeConvertControl(PresenterSettings p)
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Şekil dönüştürme",
+            Style = (Style)FindResource("Muted"),
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+
+        var cmb = new ComboBox
+        {
+            Style = (Style)FindResource("DarkComboBox"),
+            Height = 28,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        cmb.Items.Add(new ComboBoxItem { Content = "Çiz ve Bekle (Basılı tutunca - Önerilen)", Tag = InkShapeConvertMode.DrawAndHold });
+        cmb.Items.Add(new ComboBoxItem { Content = "Çizim Bitince (Otomatik)", Tag = InkShapeConvertMode.Auto });
+        cmb.Items.Add(new ComboBoxItem { Content = "Kapalı (Sadece serbest çizim)", Tag = InkShapeConvertMode.Disabled });
+
+        cmb.SelectedIndex = p.InkShapeConvert switch
+        {
+            InkShapeConvertMode.DrawAndHold => 0,
+            InkShapeConvertMode.Auto => 1,
+            InkShapeConvertMode.Disabled => 2,
+            _ => 0,
+        };
+
+        cmb.SelectionChanged += (_, _) =>
+        {
+            if (cmb.SelectedItem is ComboBoxItem item && item.Tag is InkShapeConvertMode mode)
+            {
+                p.InkShapeConvert = mode;
+                Apply(() => { });
+            }
+        };
+        panel.Children.Add(cmb);
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Çiz ve bekle: Şekli çizdikten sonra bırakmadan duraklarsanız düzgün şekle dönüşür, karalamalar korunur. Ctrl+Z ile şekil silinir.",
+            Style = (Style)FindResource("Muted"),
+            FontSize = 10,
+            Margin = new Thickness(0, 6, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        var chkText = new CheckBox
+        {
+            Content = "El yazısını metne dönüştür",
+            IsChecked = p.InkTextConvertEnabled,
+            Margin = new Thickness(0, 10, 0, 0),
+        };
+        chkText.Click += (_, _) =>
+        {
+            p.InkTextConvertEnabled = chkText.IsChecked == true;
+            Apply(() => { });
+        };
+        panel.Children.Add(chkText);
+
+        return panel;
     }
 
     private static SolidColorBrush SwatchEdge(Color c)

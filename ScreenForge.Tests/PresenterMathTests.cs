@@ -155,6 +155,180 @@ public sealed class PresenterMathTests
         Assert.True(trail.Length <= LaserTrail.MaxLength + 4);
         Assert.True(trail.Points[0].X > 0);
     }
+
+    [Fact]
+    public void InkStrokeFit_Scribble_DetectedAndRejected()
+    {
+        List<SKPoint> pts = [];
+        for (int i = 0; i < 8; i++)
+        {
+            pts.Add(new SKPoint(100, 100 + (i % 2 == 0 ? 0 : 25)));
+            pts.Add(new SKPoint(150, 100 + (i % 2 == 0 ? 25 : 0)));
+        }
+        Assert.True(InkStrokeFit.IsScribble(pts));
+        var fitted = InkStrokeFit.TryFitAnyShape(pts, new LineItem { StrokeWidth = 5 });
+        Assert.Null(fitted);
+    }
+
+    [Fact]
+    public void InkStrokeFit_Circle_FitsEllipseItem()
+    {
+        List<SKPoint> pts = [];
+        for (int i = 0; i <= 24; i++)
+        {
+            float angle = (float)(i * 2.0 * Math.PI / 24.0);
+            pts.Add(new SKPoint(100 + 50 * MathF.Cos(angle), 100 + 50 * MathF.Sin(angle)));
+        }
+        Assert.False(InkStrokeFit.IsScribble(pts));
+        var fitted = InkStrokeFit.TryFitAnyShape(pts, new LineItem { StrokeWidth = 5 });
+        var ellipse = Assert.IsType<EllipseItem>(fitted);
+        Assert.InRange(ellipse.Bounds.Width, 95, 105);
+        Assert.InRange(ellipse.Bounds.Height, 95, 105);
+    }
+
+    [Fact]
+    public void InkStrokeFit_Rectangle_FitsRectItem()
+    {
+        List<SKPoint> pts =
+        [
+            new(50, 50), new(80, 50), new(120, 50), new(160, 50), new(200, 50),
+            new(200, 80), new(200, 110), new(200, 150),
+            new(160, 150), new(120, 150), new(80, 150), new(50, 150),
+            new(50, 110), new(50, 80), new(50, 52),
+        ];
+        Assert.False(InkStrokeFit.IsScribble(pts));
+        var fitted = InkStrokeFit.TryFitAnyShape(pts, new LineItem { StrokeWidth = 5 });
+        var rect = Assert.IsType<RectItem>(fitted);
+        Assert.InRange(rect.Bounds.Width, 140, 160);
+        Assert.InRange(rect.Bounds.Height, 90, 110);
+    }
+
+    [Fact]
+    public void PresenterRenderer_Undo_RemovesSnappedShapeDirectly()
+    {
+        var renderer = new PresenterRenderer { Tool = PresenterTool.Pen };
+        var settings = new PresenterSettings();
+
+        renderer.Begin(new SKPoint(0, 0), settings);
+        renderer.Move(new SKPoint(50, 50), settings);
+        renderer.Move(new SKPoint(100, 100), settings);
+
+        var original = (FreehandItem)renderer.Draft!;
+        var snappedShape = new LineItem { Start = new SKPoint(0, 0), End = new SKPoint(100, 100) };
+
+        renderer.SnapDraft(snappedShape, original);
+        renderer.End();
+
+        Assert.True(renderer.HasInk);
+
+        // Undo removes snapped shape directly (does not revert to rough drawing)
+        bool undone = renderer.Undo();
+        Assert.True(undone);
+        Assert.False(renderer.HasInk);
+    }
+
+    [Fact]
+    public void PresenterRenderer_Undo_RemovesReplacedItemDirectly()
+    {
+        var renderer = new PresenterRenderer { Tool = PresenterTool.Pen };
+        var fh1 = new FreehandItem();
+        var fh2 = new FreehandItem();
+        var text = new TextItem { Text = "Test" };
+
+        renderer.Replace([fh1, fh2], text);
+        Assert.True(renderer.HasInk);
+
+        bool undone = renderer.Undo();
+        Assert.True(undone);
+        Assert.False(renderer.HasInk);
+    }
+
+    [Fact]
+    public void PresenterRenderer_SingleClick_CreatesDot()
+    {
+        var renderer = new PresenterRenderer { Tool = PresenterTool.Pen };
+        var settings = new PresenterSettings();
+
+        renderer.Begin(new SKPoint(150, 200), settings);
+        renderer.End();
+
+        Assert.True(renderer.HasInk);
+        var dot = Assert.IsType<FreehandItem>(renderer.LastFreehand);
+        Assert.Single(dot.Points);
+        Assert.Equal(new SKPoint(150, 200), dot.Points[0]);
+
+        Assert.False(dot.Bounds.IsEmpty);
+        Assert.True(dot.Bounds.Contains(150, 200));
+
+        Assert.True(renderer.Undo());
+        Assert.False(renderer.HasInk);
+    }
+
+    [Fact]
+    public void InkBeautifier_ResolveHandwritingFont_ReturnsValidFont()
+    {
+        string font = InkBeautifier.ResolveHandwritingFont();
+        Assert.Equal("Ink Free", font);
+    }
+
+    [Fact]
+    public void InkStrokeFit_Triangle_FitsPolygonItem()
+    {
+        List<SKPoint> pts =
+        [
+            new(100, 50), new(125, 100), new(150, 150), new(200, 250),
+            new(150, 250), new(100, 250), new(0, 250),
+            new(50, 150), new(75, 100), new(98, 52),
+        ];
+        Assert.False(InkStrokeFit.IsScribble(pts));
+        var fitted = InkStrokeFit.TryFitAnyShape(pts, new LineItem { StrokeWidth = 5 });
+        var poly = Assert.IsType<InkPolygonItem>(fitted);
+        Assert.Equal(3, poly.Vertices.Length);
+    }
+
+    [Fact]
+    public void InkStrokeFit_WavyUnderline_DoesNotBecomeStraightLine()
+    {
+        List<SKPoint> pts = [];
+        for (int x = 0; x <= 200; x += 10)
+        {
+            float y = MathF.Sin(x * 0.1f) * 15f;
+            pts.Add(new SKPoint(x, y));
+        }
+        var line = InkStrokeFit.TryFitLine(pts, new LineItem { StrokeWidth = 5 });
+        Assert.Null(line);
+    }
+
+    [Fact]
+    public void PresenterRenderer_MultipleStrokes_NeverDeletesPreviousStroke()
+    {
+        var renderer = new PresenterRenderer { Tool = PresenterTool.Pen };
+        var settings = new PresenterSettings();
+
+        renderer.Begin(new SKPoint(10, 10), settings);
+        renderer.Move(new SKPoint(20, 20), settings);
+        renderer.End();
+        var stroke1 = renderer.LastFreehand;
+        Assert.NotNull(stroke1);
+
+        renderer.Begin(new SKPoint(100, 100), settings);
+        renderer.Move(new SKPoint(200, 100), settings);
+        renderer.End();
+
+        var stroke2 = renderer.LastFreehand;
+        Assert.NotNull(stroke2);
+
+        var line = new LineItem { Start = new SKPoint(100, 100), End = new SKPoint(200, 100) };
+        renderer.Replace([stroke2], line);
+
+        // 1st undo: removes converted shape directly, leaving stroke1 intact
+        Assert.True(renderer.Undo());
+        Assert.Same(stroke1, renderer.LastFreehand);
+
+        // 2nd undo: removes stroke1
+        Assert.True(renderer.Undo());
+        Assert.False(renderer.HasInk);
+    }
 }
 
 public sealed class PresenterSettingsTests
@@ -214,5 +388,13 @@ public sealed class PresenterSettingsTests
         var p = new PresenterSettings { PenWidth = 99 };
         p.Normalize();
         Assert.Equal(24, p.PenWidth);
+    }
+
+    [Fact]
+    public void PresenterSettings_InkShapeConvert_DefaultsToDrawAndHold()
+    {
+        var p = new PresenterSettings();
+        p.Normalize();
+        Assert.Equal(InkShapeConvertMode.DrawAndHold, p.InkShapeConvert);
     }
 }

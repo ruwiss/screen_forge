@@ -22,6 +22,20 @@ public sealed class PresenterRenderer
     private readonly SKPath _laserPath = new();
     private readonly SKPaint _spotPaint = new() { IsAntialias = true, Style = SKPaintStyle.Fill };
 
+    private interface IPresenterUndoAction
+    {
+        void Undo(List<SceneItem> ink);
+    }
+
+    private sealed class AddAction(SceneItem item) : IPresenterUndoAction
+    {
+        public SceneItem Item => item;
+        public void Undo(List<SceneItem> ink) => ink.Remove(item);
+    }
+
+    private readonly List<IPresenterUndoAction> _actions = [];
+    private FreehandItem? _snappedFrom;
+
     public PresenterTool Tool { get; set; }
     public bool Spotlight { get; set; }
     public float SpotlightAmount { get; set; }
@@ -33,9 +47,26 @@ public sealed class PresenterRenderer
     public bool HasInk => _ink.Count > 0 || _draft != null;
     public bool HasLaser => _liveLaser != null || _lasers.Exists(l => !l.IsEmpty);
     public bool IsDrawing => _draft != null || _liveLaser != null;
+    public SceneItem? Draft => _draft;
     public ArrowItem? DraftArrow => _draft as ArrowItem;
     public FreehandItem? LastFreehand => _ink.Count > 0 ? _ink[^1] as FreehandItem : null;
+    public FreehandItem? SnappedFrom => _snappedFrom;
     public bool BendHeld { get; set; }
+
+    public void SnapDraft(SceneItem shape, FreehandItem original)
+    {
+        _snappedFrom = original;
+        _draft = shape;
+    }
+
+    public void RevertSnap()
+    {
+        if (_snappedFrom != null)
+        {
+            _draft = _snappedFrom;
+            _snappedFrom = null;
+        }
+    }
 
     public void SetInkColor(SKColor c)
     {
@@ -58,15 +89,19 @@ public sealed class PresenterRenderer
                 }
             }
         }
+        _actions.RemoveAll(a => a is AddAction aa && remove.Any(r => ReferenceEquals(aa.Item, r)));
         _ink.Add(add);
+        _actions.Add(new AddAction(add));
     }
 
     public void Clear()
     {
         _ink.Clear();
+        _actions.Clear();
         _lasers.Clear();
         _liveLaser = null;
         _draft = null;
+        _snappedFrom = null;
         _arrowFlipped = false;
     }
 
@@ -75,8 +110,16 @@ public sealed class PresenterRenderer
         if (_draft != null || _liveLaser != null)
         {
             _draft = null;
+            _snappedFrom = null;
             _liveLaser = null;
             _arrowFlipped = false;
+            return true;
+        }
+        if (_actions.Count > 0)
+        {
+            var action = _actions[^1];
+            _actions.RemoveAt(_actions.Count - 1);
+            action.Undo(_ink);
             return true;
         }
         if (_ink.Count > 0)
@@ -157,7 +200,7 @@ public sealed class PresenterRenderer
 
     public void End()
     {
-        if (_draft is FreehandItem { Points.Count: < 2 })
+        if (_draft is FreehandItem { Points.Count: 0 })
             _draft = null;
         else if (_draft is LineItem line && SKPoint.Distance(line.Start, line.End) < 4f)
             _draft = null;
@@ -168,7 +211,15 @@ public sealed class PresenterRenderer
         }
 
         if (_draft != null)
+        {
             _ink.Add(_draft);
+            _actions.Add(new AddAction(_draft));
+            _snappedFrom = null;
+        }
+        else
+        {
+            _snappedFrom = null;
+        }
         _draft = null;
 
         if (_liveLaser != null)

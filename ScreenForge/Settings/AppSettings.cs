@@ -196,6 +196,13 @@ public sealed class GifSettings
     public double HighlightRadius { get; set; } = 12;
 }
 
+public enum InkShapeConvertMode
+{
+    DrawAndHold = 0,
+    Auto = 1,
+    Disabled = 2,
+}
+
 /// <summary>Canlı sunum katmanı tercihleri ve kısayolları.</summary>
 public sealed class PresenterSettings
 {
@@ -232,6 +239,9 @@ public sealed class PresenterSettings
     public double SpotlightSoftness { get; set; } = 20;
     public double SpotlightDim { get; set; } = 0.40;
 
+    public InkShapeConvertMode InkShapeConvert { get; set; } = InkShapeConvertMode.DrawAndHold;
+    public bool InkTextConvertEnabled { get; set; } = true;
+
     public List<PresenterColorBind> ColorBinds { get; set; } = [];
 
     public void Normalize()
@@ -242,6 +252,8 @@ public sealed class PresenterSettings
         SpotlightRadius = Math.Clamp(SpotlightRadius, 40, 600);
         SpotlightSoftness = Math.Clamp(SpotlightSoftness, 8, 80);
         SpotlightDim = Math.Clamp(SpotlightDim, 0.15, 0.85);
+        if (!Enum.IsDefined(InkShapeConvert))
+            InkShapeConvert = InkShapeConvertMode.DrawAndHold;
         if (DefaultsRevision < 5)
             ApplyZoomItDefaults();
         if (string.IsNullOrWhiteSpace(PenColor)) PenColor = "#FFEA6F12";

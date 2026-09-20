@@ -299,6 +299,12 @@ public class FreehandItem : SceneItem
     protected virtual void RecalcBounds()
     {
         if (Points.Count == 0) { Bounds = SKRect.Empty; return; }
+        if (Points.Count == 1)
+        {
+            float r = Math.Max(StrokeWidth / 2f, 1f);
+            Bounds = new SKRect(Points[0].X - r, Points[0].Y - r, Points[0].X + r, Points[0].Y + r);
+            return;
+        }
         float minX = Points[0].X, minY = Points[0].Y, maxX = minX, maxY = minY;
         foreach (var pt in Points)
         {
@@ -336,7 +342,7 @@ public class FreehandItem : SceneItem
     {
         var path = new SKPath();
         if (Points.Count == 0) return path;
-        if (Points.Count == 1) { path.AddCircle(Points[0].X, Points[0].Y, StrokeWidth / 2f); return path; }
+        if (Points.Count == 1) { path.AddCircle(Points[0].X, Points[0].Y, Math.Max(StrokeWidth / 2f, 1f)); return path; }
         if (Points.Count == 2) { path.MoveTo(Points[0]); path.LineTo(Points[1]); return path; }
 
         // Chaikin smoothing — 2 pass
@@ -369,7 +375,15 @@ public class FreehandItem : SceneItem
         canvas.Save();
         ApplyRotation(canvas);
         var path = GetOrBuildPath();
-        using var paint = new SKPaint { Style = SKPaintStyle.Stroke, Color = StrokeColor.WithAlpha(AlphaByte), StrokeWidth = StrokeWidth, IsAntialias = true, StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round };
+        using var paint = new SKPaint
+        {
+            Style = Points.Count == 1 ? SKPaintStyle.Fill : SKPaintStyle.Stroke,
+            Color = StrokeColor.WithAlpha(AlphaByte),
+            StrokeWidth = StrokeWidth,
+            IsAntialias = true,
+            StrokeCap = SKStrokeCap.Round,
+            StrokeJoin = SKStrokeJoin.Round
+        };
         canvas.DrawPath(path, paint);
         canvas.Restore();
     }
@@ -415,7 +429,7 @@ public sealed class HighlightItem : FreehandItem
         var path = GetOrBuildPath();
         using var paint = new SKPaint
         {
-            Style = SKPaintStyle.Stroke,
+            Style = Points.Count == 1 ? SKPaintStyle.Fill : SKPaintStyle.Stroke,
             Color = StrokeColor.WithAlpha((byte)(120 * Opacity)),
             StrokeWidth = StrokeWidth * 4f,
             IsAntialias = true,

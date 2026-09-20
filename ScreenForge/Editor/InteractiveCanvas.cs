@@ -1133,7 +1133,7 @@ public sealed class InteractiveCanvas : SKElement
         bool valid = _draftItem switch
         {
             LineItem l => SKPoint.Distance(l.Start, l.End) > 4,
-            FreehandItem f => f.Points.Count > 1,
+            FreehandItem f => f.Points.Count >= 1,
             _ => _draftItem.Bounds.Width > 4 && _draftItem.Bounds.Height > 4,
         };
         if (valid)
