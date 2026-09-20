@@ -94,7 +94,6 @@ public sealed class PresenterService : IDisposable
         string hex = Cfg.InkColors[slot];
         var color = PresenterRenderer.Parse(hex, _renderer.StrokeColor);
         _renderer.SetInkColor(color);
-        Cfg.PenColor = hex;
         _overlay?.Redraw();
     }
 
@@ -136,6 +135,7 @@ public sealed class PresenterService : IDisposable
     public void ToggleTool(PresenterTool tool)
     {
         if (_exiting) return;
+        bool fromIdle = _renderer.Tool == PresenterTool.None;
         if (_renderer.Tool == tool)
         {
             ClearInk();
@@ -148,6 +148,8 @@ public sealed class PresenterService : IDisposable
         }
         _renderer.StrokeColor = PresenterRenderer.Parse(Cfg.PenColor, _renderer.StrokeColor);
         _renderer.StrokeWidth = (float)Cfg.PenWidth;
+        if (fromIdle && tool is not PresenterTool.Laser)
+            ApplyInkSlot(0);
         EnsureOverlay();
         UpdateInput();
     }
