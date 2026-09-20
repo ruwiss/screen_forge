@@ -214,6 +214,9 @@ public sealed class PresenterSettingsTests
         Assert.Equal(2, settings.Presenter.ZoomPresets[1].Factor);
         Assert.Equal(4, settings.Presenter.DefaultsRevision);
         Assert.True(settings.Presenter.CancelEnabled);
+        Assert.Equal(5, settings.Presenter.InkColors.Count);
+        Assert.Equal("#FFFFFFFF", settings.Presenter.InkColors[4]);
+        Assert.Equal(settings.Presenter.PenColor, settings.Presenter.InkColors[0]);
     }
 
     [Fact]

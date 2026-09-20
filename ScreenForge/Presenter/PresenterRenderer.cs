@@ -37,6 +37,13 @@ public sealed class PresenterRenderer
     public FreehandItem? LastFreehand => _ink.Count > 0 ? _ink[^1] as FreehandItem : null;
     public bool BendHeld { get; set; }
 
+    public void SetInkColor(SKColor c)
+    {
+        StrokeColor = c;
+        if (_draft != null)
+            _draft.StrokeColor = c;
+    }
+
     public void Replace(IReadOnlyList<SceneItem> remove, SceneItem add)
     {
         if (remove.Count == 0) return;

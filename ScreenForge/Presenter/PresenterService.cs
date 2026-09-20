@@ -47,7 +47,7 @@ public sealed class PresenterService : IDisposable
         {
             Cancel();
         };
-        _mouse.TryEatKey = vk => TryEatBendKey(vk) || TryEatZoomKey(vk) || TryEatUndoKey(vk);
+        _mouse.TryEatKey = vk => TryEatBendKey(vk) || TryEatColorKey(vk) || TryEatZoomKey(vk) || TryEatUndoKey(vk);
         _mouse.AteKeyUp = OnAteKeyUp;
     }
 
@@ -77,6 +77,38 @@ public sealed class PresenterService : IDisposable
         if (_overlay == null || _renderer.DraftArrow == null) return;
         _renderer.ApplyArrowBend(_overlay.CanvasBounds);
         _overlay.Redraw();
+    }
+
+    private bool TryEatColorKey(int vk)
+    {
+        if (_renderer.Tool is PresenterTool.None or PresenterTool.Laser)
+            return false;
+        if (IsDown(0x11) || IsDown(0xA2) || IsDown(0xA3)) return false;
+        if (IsDown(0x10) || IsDown(0xA0) || IsDown(0xA1)) return false;
+        if (IsDown(0x12) || IsDown(0xA4) || IsDown(0xA5)) return false;
+        if (IsDown(0x5B) || IsDown(0x5C)) return false;
+        int slot = vk switch
+        {
+            0x31 or 0x61 => 0,
+            0x32 or 0x62 => 1,
+            0x33 or 0x63 => 2,
+            0x34 or 0x64 => 3,
+            0x35 or 0x65 => 4,
+            _ => -1,
+        };
+        if (slot < 0) return false;
+        ApplyInkSlot(slot);
+        return true;
+    }
+
+    private void ApplyInkSlot(int slot)
+    {
+        if ((uint)slot >= (uint)Cfg.InkColors.Count) return;
+        string hex = Cfg.InkColors[slot];
+        var color = PresenterRenderer.Parse(hex, _renderer.StrokeColor);
+        _renderer.SetInkColor(color);
+        Cfg.PenColor = hex;
+        _overlay?.Redraw();
     }
 
     private bool TryEatUndoKey(int vk)

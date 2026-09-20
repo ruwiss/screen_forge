@@ -223,6 +223,7 @@ public sealed class PresenterSettings
     public HotkeyConfig CancelHotkey { get; set; } = new() { Key = "Escape" };
 
     public string PenColor { get; set; } = "#FFEA6F12";
+    public List<string> InkColors { get; set; } = [];
     public double PenWidth { get; set; } = 5;
     public string LaserColor { get; set; } = "#FFFF3D6E";
     public double LaserWidth { get; set; } = 2;
@@ -252,6 +253,7 @@ public sealed class PresenterSettings
         if (DefaultsRevision < 4)
             ApplyZoomItDefaults();
         if (string.IsNullOrWhiteSpace(PenColor)) PenColor = "#FFEA6F12";
+        EnsureInkColors();
         if (string.IsNullOrWhiteSpace(LaserColor)) LaserColor = "#FFFF3D6E";
         CancelEnabled = true;
         if (CancelHotkey is not { IsValid: true })
@@ -327,6 +329,31 @@ public sealed class PresenterSettings
         ];
         ColorBinds = [];
         DefaultsRevision = 4;
+    }
+
+    public static readonly string[] DefaultInkColors =
+    [
+        "#FFEA6F12",
+        "#FF2563EB",
+        "#FF16A34A",
+        "#FFDC2626",
+        "#FFFFFFFF",
+    ];
+
+    public void EnsureInkColors()
+    {
+        InkColors ??= [];
+        if (InkColors.Count == 0)
+            InkColors.Add(string.IsNullOrWhiteSpace(PenColor) ? DefaultInkColors[0] : PenColor);
+        for (int i = InkColors.Count; i < 5; i++)
+            InkColors.Add(DefaultInkColors[i]);
+        if (InkColors.Count > 5)
+            InkColors.RemoveRange(5, InkColors.Count - 5);
+        for (int i = 0; i < 5; i++)
+        {
+            if (string.IsNullOrWhiteSpace(InkColors[i]) || InkColors[i].Length < 7)
+                InkColors[i] = DefaultInkColors[i];
+        }
     }
 
     private static HotkeyConfig Ctrl(string key, bool shift = false) => new()

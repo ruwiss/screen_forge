@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -394,8 +395,12 @@ public partial class SettingsWindow : Window
             case "pen":
                 PresenterDetailPanel.Children.Add(DetailTitle("Kalem"));
                 PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.PenHotkey));
-                PresenterDetailPanel.Children.Add(ColorAndWidth("Kalınlık", p.PenColor, p.PenWidth, 1, 16,
-                    c => p.PenColor = c, v => p.PenWidth = v));
+                PresenterDetailPanel.Children.Add(InkPalette());
+                PresenterDetailPanel.Children.Add(LabeledSlider("Kalınlık", p.PenWidth, 1, 16, v =>
+                {
+                    p.PenWidth = v;
+                    return ((int)v).ToString();
+                }));
                 break;
             case "laser":
                 PresenterDetailPanel.Children.Add(DetailTitle("Lazer"));
@@ -411,14 +416,17 @@ public partial class SettingsWindow : Window
             case "rect":
                 PresenterDetailPanel.Children.Add(DetailTitle("Dikdörtgen"));
                 PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.RectangleHotkey));
+                PresenterDetailPanel.Children.Add(InkPalette());
                 break;
             case "ell":
                 PresenterDetailPanel.Children.Add(DetailTitle("Daire"));
                 PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.EllipseHotkey));
+                PresenterDetailPanel.Children.Add(InkPalette());
                 break;
             case "arrow":
                 PresenterDetailPanel.Children.Add(DetailTitle("Ok"));
                 PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ArrowHotkey));
+                PresenterDetailPanel.Children.Add(InkPalette());
                 PresenterDetailPanel.Children.Add(new TextBlock
                 {
                     Text = "Eğim — yalnızca ok çizerken",
@@ -431,6 +439,7 @@ public partial class SettingsWindow : Window
             case "line":
                 PresenterDetailPanel.Children.Add(DetailTitle("Çizgi"));
                 PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.LineHotkey));
+                PresenterDetailPanel.Children.Add(InkPalette());
                 break;
             case "spot":
                 PresenterDetailPanel.Children.Add(DetailTitle("Spotlight"));
@@ -473,6 +482,73 @@ public partial class SettingsWindow : Window
             p.ZoomAnimationMs = (int)v;
             return $"{p.ZoomAnimationMs} ms";
         });
+    }
+
+    private UIElement InkPalette()
+    {
+        var p = _settings.Presenter;
+        p.EnsureInkColors();
+        var col = new StackPanel { Margin = new Thickness(0, 10, 0, 4) };
+        var grid = new UniformGrid { Columns = 5, Rows = 1 };
+        for (int i = 0; i < 5; i++)
+        {
+            int idx = i;
+            var fill = ParseHex(p.InkColors[idx], Color.FromRgb(0xEA, 0x6F, 0x12));
+            var swatch = new Border
+            {
+                Width = 28,
+                Height = 28,
+                CornerRadius = new CornerRadius(7),
+                Background = new SolidColorBrush(fill),
+                BorderBrush = SwatchEdge(fill),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            swatch.MouseLeftButtonUp += (_, e) =>
+            {
+                var current = (swatch.Background as SolidColorBrush)?.Color ?? fill;
+                PickColor(swatch, current, c =>
+                {
+                    p.InkColors[idx] = ToHex(c);
+                    if (idx == 0) p.PenColor = p.InkColors[idx];
+                    swatch.Background = new SolidColorBrush(c);
+                    swatch.BorderBrush = SwatchEdge(c);
+                    Apply(() => { });
+                });
+                e.Handled = true;
+            };
+            var cell = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
+            cell.Children.Add(swatch);
+            cell.Children.Add(new TextBlock
+            {
+                Text = $"{idx + 1}",
+                Style = (Style)FindResource("Muted"),
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 5, 0, 0),
+            });
+            grid.Children.Add(cell);
+        }
+        col.Children.Add(grid);
+        col.Children.Add(new TextBlock
+        {
+            Text = "Çizerken 1–5 tuşuyla renk değiştir.",
+            Style = (Style)FindResource("Muted"),
+            FontSize = 11,
+            Margin = new Thickness(0, 10, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+        });
+        return col;
+    }
+
+    private static SolidColorBrush SwatchEdge(Color c)
+    {
+        int lum = (c.R * 3 + c.G * 6 + c.B) / 10;
+        return lum > 200
+            ? new SolidColorBrush(Color.FromRgb(0x5A, 0x64, 0x78))
+            : new SolidColorBrush(Color.FromRgb(0x3A, 0x42, 0x54));
     }
 
     private UIElement ColorAndWidth(string widthLabel, string hex, double width, double min, double max,
