@@ -131,12 +131,6 @@ public partial class App : Application
             _hotkeys.Register(p.SpotlightHotkey, svc.ToggleSpotlight, "Spotlight");
         if (p.CancelEnabled && !IsPresenterSessionEscape(p.CancelHotkey))
             _hotkeys.Register(p.CancelHotkey, svc.Cancel, "Sunum iptal");
-        foreach (var preset in p.ZoomPresets)
-        {
-            if (!preset.Enabled) continue;
-            double factor = preset.Factor;
-            _hotkeys.Register(preset.Hotkey, () => svc.ToggleZoom(factor), $"Zoom {factor:0.##}×");
-        }
         foreach (var bind in p.ColorBinds)
         {
             string hex = bind.Color;

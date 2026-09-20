@@ -236,9 +236,6 @@ public partial class SettingsWindow : Window
         PresenterTileHost.Children.Clear();
         _presenterTiles.Clear();
         var p = _settings.Presenter;
-        EnsureZoomSlots();
-        AddPresenterTile("zoom2", "Zoom 1.5×", p.ZoomPresets[0].Enabled, p.ZoomPresets[0].Hotkey, v => p.ZoomPresets[0].Enabled = v);
-        AddPresenterTile("zoom4", "Zoom 2×", p.ZoomPresets[1].Enabled, p.ZoomPresets[1].Hotkey, v => p.ZoomPresets[1].Enabled = v);
         AddPresenterTile("pen", "Kalem", p.PenEnabled, p.PenHotkey, v => p.PenEnabled = v);
         AddPresenterTile("laser", "Lazer", p.LaserEnabled, p.LaserHotkey, v => p.LaserEnabled = v);
         AddPresenterTile("rect", "Dikdörtgen", p.RectangleEnabled, p.RectangleHotkey, v => p.RectangleEnabled = v);
@@ -249,13 +246,6 @@ public partial class SettingsWindow : Window
         AddPresenterTile("cancel", "İptal", true, p.CancelHotkey, _ => p.CancelEnabled = true, locked: true);
         PaintPresenterSelection();
         FillPresenterDetail();
-    }
-
-    private void EnsureZoomSlots()
-    {
-        var p = _settings.Presenter;
-        while (p.ZoomPresets.Count < 2)
-            p.ZoomPresets.Add(new PresenterZoomPreset { Factor = p.ZoomPresets.Count == 0 ? 1.5 : 2 });
     }
 
     private void AddPresenterTile(string id, string title, bool on, HotkeyConfig hk, Action<bool> setOn, bool locked = false)
@@ -379,19 +369,8 @@ public partial class SettingsWindow : Window
         }
         PresenterDetailCard.Visibility = Visibility.Visible;
         var p = _settings.Presenter;
-        EnsureZoomSlots();
         switch (_presenterSel)
         {
-            case "zoom2":
-                PresenterDetailPanel.Children.Add(DetailTitle("Zoom 1.5×"));
-                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ZoomPresets[0].Hotkey));
-                PresenterDetailPanel.Children.Add(ZoomAnimSlider());
-                break;
-            case "zoom4":
-                PresenterDetailPanel.Children.Add(DetailTitle("Zoom 2×"));
-                PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.ZoomPresets[1].Hotkey));
-                PresenterDetailPanel.Children.Add(ZoomAnimSlider());
-                break;
             case "pen":
                 PresenterDetailPanel.Children.Add(DetailTitle("Kalem"));
                 PresenterDetailPanel.Children.Add(MakeHotkeyChip(p.PenHotkey));
@@ -473,16 +452,6 @@ public partial class SettingsWindow : Window
         Style = (Style)FindResource("Label"),
         Margin = new Thickness(0, 0, 0, 8),
     };
-
-    private UIElement ZoomAnimSlider()
-    {
-        var p = _settings.Presenter;
-        return LabeledSlider("Animasyon", p.ZoomAnimationMs, 80, 600, v =>
-        {
-            p.ZoomAnimationMs = (int)v;
-            return $"{p.ZoomAnimationMs} ms";
-        });
-    }
 
     private UIElement InkPalette()
     {

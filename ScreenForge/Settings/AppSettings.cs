@@ -231,13 +231,6 @@ public sealed class PresenterSettings
     public double SpotlightRadius { get; set; } = 200;
     public double SpotlightSoftness { get; set; } = 20;
     public double SpotlightDim { get; set; } = 0.40;
-    public int ZoomAnimationMs { get; set; } = 280;
-
-    public List<PresenterZoomPreset> ZoomPresets { get; set; } =
-    [
-        new() { Factor = 2 },
-        new() { Factor = 4 },
-    ];
 
     public List<PresenterColorBind> ColorBinds { get; set; } = [];
 
@@ -249,8 +242,7 @@ public sealed class PresenterSettings
         SpotlightRadius = Math.Clamp(SpotlightRadius, 40, 600);
         SpotlightSoftness = Math.Clamp(SpotlightSoftness, 8, 80);
         SpotlightDim = Math.Clamp(SpotlightDim, 0.15, 0.85);
-        ZoomAnimationMs = Math.Clamp(ZoomAnimationMs, 80, 800);
-        if (DefaultsRevision < 4)
+        if (DefaultsRevision < 5)
             ApplyZoomItDefaults();
         if (string.IsNullOrWhiteSpace(PenColor)) PenColor = "#FFEA6F12";
         EnsureInkColors();
@@ -273,17 +265,6 @@ public sealed class PresenterSettings
             if (Math.Abs(LaserWidth - 6) < 0.01) LaserWidth = 3;
             LaserColor = "#FFFF3D6E";
         }
-        ZoomPresets ??= [];
-        if (ZoomPresets.Count == 0)
-        {
-            ZoomPresets.Add(new PresenterZoomPreset { Factor = 2 });
-            ZoomPresets.Add(new PresenterZoomPreset { Factor = 4 });
-        }
-        foreach (var z in ZoomPresets)
-        {
-            z.Hotkey ??= new HotkeyConfig();
-            z.Factor = Math.Clamp(z.Factor, 1.25, 8);
-        }
         ColorBinds ??= [];
         foreach (var c in ColorBinds)
         {
@@ -304,9 +285,9 @@ public sealed class PresenterSettings
     public void ApplyZoomItDefaults()
     {
         PenEnabled = true;
-        PenHotkey = Ctrl("D2");
+        PenHotkey = Ctrl("D1");
         LaserEnabled = true;
-        LaserHotkey = Ctrl("D3");
+        LaserHotkey = Ctrl("D2");
         RectangleEnabled = false;
         RectangleHotkey = new();
         EllipseEnabled = false;
@@ -316,19 +297,14 @@ public sealed class PresenterSettings
         LineEnabled = false;
         LineHotkey = new();
         SpotlightEnabled = true;
-        SpotlightHotkey = Ctrl("D4");
+        SpotlightHotkey = Ctrl("D3");
         ArrowBendEnabled = false;
         ArrowBendHotkey = new();
         CancelEnabled = true;
         CancelHotkey = new HotkeyConfig { Key = "Escape" };
         LaserWidth = 2;
-        ZoomPresets =
-        [
-            new() { Factor = 1.5, Enabled = true, Hotkey = Ctrl("D1") },
-            new() { Factor = 2, Enabled = false, Hotkey = new() },
-        ];
         ColorBinds = [];
-        DefaultsRevision = 4;
+        DefaultsRevision = 5;
     }
 
     public static readonly string[] DefaultInkColors =
@@ -361,13 +337,6 @@ public sealed class PresenterSettings
         Modifiers = shift ? ModifierKeys.Control | ModifierKeys.Shift : ModifierKeys.Control,
         Key = key,
     };
-}
-
-public sealed class PresenterZoomPreset
-{
-    public bool Enabled { get; set; }
-    public double Factor { get; set; } = 2;
-    public HotkeyConfig Hotkey { get; set; } = new();
 }
 
 public sealed class PresenterColorBind

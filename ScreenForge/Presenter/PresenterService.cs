@@ -13,27 +13,14 @@ public sealed class PresenterService : IDisposable
     private readonly Func<AppSettings> _settings;
     private readonly PresenterRenderer _renderer = new();
     private readonly InkBeautifier _beautify;
-    private readonly Magnifier _magnifier = new();
     private readonly PresenterMouseHook _mouse = new();
     private PresenterOverlayWindow? _overlay;
-    private DispatcherTimer? _zoomTimer;
     private bool _disposed;
 
-    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
-    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
 
-    private float _magFrom = 1f;
-    private float _magTo = 1f;
-    private float _magNow = 1f;
-    private float _focusX;
-    private float _focusY;
-    private long _animStart;
-    private int _animMs;
-    private bool _animating;
     private bool _exiting;
     private bool _spotlightOn;
-    private long _lastZoomTick;
 
     public PresenterService(Func<AppSettings> settings)
     {
@@ -47,7 +34,7 @@ public sealed class PresenterService : IDisposable
         {
             Cancel();
         };
-        _mouse.TryEatKey = vk => TryEatBendKey(vk) || TryEatColorKey(vk) || TryEatZoomKey(vk) || TryEatUndoKey(vk);
+        _mouse.TryEatKey = vk => TryEatBendKey(vk) || TryEatColorKey(vk) || TryEatUndoKey(vk);
         _mouse.AteKeyUp = OnAteKeyUp;
     }
 
@@ -124,17 +111,6 @@ public sealed class PresenterService : IDisposable
         return true;
     }
 
-    private bool TryEatZoomKey(int vk)
-    {
-        foreach (var preset in Cfg.ZoomPresets)
-        {
-            if (!preset.Enabled || !MatchesHotkey(preset.Hotkey, vk)) continue;
-            ToggleZoom(preset.Factor);
-            return true;
-        }
-        return false;
-    }
-
     private static bool MatchesHotkey(HotkeyConfig hk, int vk)
     {
         if (!hk.IsValid) return false;
@@ -185,20 +161,6 @@ public sealed class PresenterService : IDisposable
         UpdateInput();
     }
 
-    public void ToggleZoom(double factor)
-    {
-        if (_exiting) return;
-        long now = Environment.TickCount64;
-        if (now - _lastZoomTick < 80)
-            return;
-        _lastZoomTick = now;
-
-        float want = (float)Math.Clamp(factor, 1.25, 8);
-        bool zoomed = _magNow > 1.02f || _magTo > 1.02f;
-        bool atWant = Math.Abs(_magTo - want) < 0.08f || Math.Abs(_magNow - want) < 0.08f;
-        StartZoom(zoomed && atWant ? 1f : want);
-    }
-
     public void ApplyColor(string hex)
     {
         if (_exiting) return;
@@ -225,11 +187,7 @@ public sealed class PresenterService : IDisposable
         _spotlightOn = false;
         _renderer.Spotlight = false;
         UpdateInput();
-
-        if (_magNow > 1.02f || _magTo > 1.02f)
-            StartZoom(1f);
-        else
-            ShutdownOverlay();
+        ShutdownOverlay();
     }
 
     private void EnsureOverlay()
@@ -244,8 +202,6 @@ public sealed class PresenterService : IDisposable
             _overlay = null;
             _mouse.Eat = false;
             _mouse.SessionActive = false;
-            _magNow = _magTo = _magFrom = 1f;
-            _animating = false;
             _exiting = false;
             _spotlightOn = false;
             _renderer.Tool = PresenterTool.None;
@@ -303,7 +259,7 @@ public sealed class PresenterService : IDisposable
         if (drawDirty || _renderer.Tool != PresenterTool.None || _spotlightOn)
             _overlay.Redraw();
 
-        if (!_animating && !_exiting && ShouldIdleClose())
+        if (!_exiting && ShouldIdleClose())
             Application.Current?.Dispatcher.BeginInvoke(ShutdownOverlay, DispatcherPriority.Background);
     }
 
@@ -312,101 +268,7 @@ public sealed class PresenterService : IDisposable
         if (_renderer.Tool != PresenterTool.None) return false;
         if (_spotlightOn || _renderer.SpotlightAmount > 0.02f) return false;
         if (_renderer.HasInk || _renderer.HasLaser) return false;
-        if (_magNow > 1.02f || _magTo > 1.02f) return false;
         return true;
-    }
-
-    private void StartZoom(float target)
-    {
-        if (target > 1.02f)
-        {
-            GetCursorPos(out var p);
-            _focusX = p.X;
-            _focusY = p.Y;
-        }
-        _magFrom = _magNow;
-        _magTo = target;
-        _animMs = Math.Max(80, Cfg.ZoomAnimationMs);
-        _animStart = Environment.TickCount64;
-        _animating = true;
-        _mouse.SessionActive = true;
-        EnsureZoomTimer();
-        TickZoom();
-    }
-
-    private void EnsureZoomTimer()
-    {
-        if (_zoomTimer != null) return;
-        _zoomTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        _zoomTimer.Tick += (_, _) => TickZoom();
-        _zoomTimer.Start();
-    }
-
-    private void TickZoom()
-    {
-        if (_animating)
-        {
-            float t = ZoomMath.EaseOutCubic((Environment.TickCount64 - _animStart) / (float)_animMs);
-            _magNow = ZoomMath.Lerp(_magFrom, _magTo, t);
-            if (t >= 1f)
-            {
-                _magNow = _magTo;
-                _animating = false;
-            }
-        }
-
-        if (_magTo <= 1.001f && _magNow <= 1.001f)
-        {
-            RunWithoutOverlay(_magnifier.ClearTransform);
-            StopZoomTimer();
-            if (_exiting)
-                Application.Current?.Dispatcher.BeginInvoke(ShutdownOverlay, DispatcherPriority.Background);
-            else if (_overlay == null)
-                _mouse.SessionActive = false;
-            return;
-        }
-
-        if (_magNow > 1.001f)
-        {
-            ZoomMath.OffsetsKeepingPoint(_magNow, _focusX, _focusY, out int ox, out int oy);
-            _magnifier.Apply(_magNow, ox, oy);
-        }
-
-        if (!_animating && _magNow > 1.001f)
-            StopZoomTimer();
-    }
-
-    private void StopZoomTimer()
-    {
-        _zoomTimer?.Stop();
-        _zoomTimer = null;
-    }
-
-    private void RunWithoutOverlay(Action action)
-    {
-        var w = _overlay;
-        if (w == null)
-        {
-            action();
-            return;
-        }
-
-        var prevMain = Application.Current?.MainWindow;
-        bool show = w.IsVisible;
-        try
-        {
-            w.Hide();
-            action();
-        }
-        finally
-        {
-            if (show && _overlay == w)
-            {
-                w.Show();
-                if (prevMain != null && Application.Current != null)
-                    Application.Current.MainWindow = prevMain;
-            }
-        }
     }
 
     private void UpdateInput()
@@ -419,16 +281,9 @@ public sealed class PresenterService : IDisposable
     {
         _mouse.Eat = false;
         _mouse.SessionActive = false;
-        _zoomTimer?.Stop();
-        _zoomTimer = null;
         var overlay = _overlay;
         _overlay = null;
         overlay?.Close();
-        _magnifier.Reset();
-        _magNow = 1f;
-        _magTo = 1f;
-        _magFrom = 1f;
-        _animating = false;
         _exiting = false;
         _spotlightOn = false;
         _renderer.Tool = PresenterTool.None;
@@ -449,6 +304,5 @@ public sealed class PresenterService : IDisposable
         _disposed = true;
         ShutdownOverlay();
         _mouse.Dispose();
-        _magnifier.Dispose();
     }
 }

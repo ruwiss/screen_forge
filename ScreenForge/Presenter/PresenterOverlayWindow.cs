@@ -28,8 +28,6 @@ public sealed class PresenterOverlayWindow : Window
     [DllImport("user32.dll")] private static extern bool MoveWindow(IntPtr hWnd, int x, int y, int w, int h, bool repaint);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT p);
-    [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
-    private const uint WdaExcludeFromCapture = 0x00000011;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X, Y; }
@@ -74,7 +72,6 @@ public sealed class PresenterOverlayWindow : Window
             SetWindowLong(hwnd, GwlExStyle, ex | WsExLayered | WsExTransparent | WsExNoActivate | WsExToolWindow);
             SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0,
                 SwpNomove | SwpNosize | SwpNozorder | SwpNoactivate | SwpFramechanged);
-            SetWindowDisplayAffinity(hwnd, WdaExcludeFromCapture);
             EnsureBitmap();
         };
 
