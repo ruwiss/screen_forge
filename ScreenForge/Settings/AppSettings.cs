@@ -18,11 +18,12 @@ public sealed class AppSettings
     public bool LaunchAtStartup { get; set; } = true;
 
     // ---- Klavye kısayolları ----
-    public HotkeyConfig RegionHotkey { get; set; } = new() { Modifiers = ModifierKeys.Alt | ModifierKeys.Shift, Key = "S" };
+    public HotkeyConfig RegionHotkey { get; set; } = AltShift("S");
     public HotkeyConfig FullScreenHotkey { get; set; } = new();
     public HotkeyConfig FullScreenUploadHotkey { get; set; } = new();
     public HotkeyConfig CollageHotkey { get; set; } = new();
-    public HotkeyConfig QuickTranslateHotkey { get; set; } = new();
+    public HotkeyConfig QuickTranslateHotkey { get; set; } = AltShift("T");
+    public int SettingsRevision { get; set; }
 
     // ---- Çıktı ----
     public ImageFormat OutputFormat { get; set; } = ImageFormat.Png;
@@ -114,6 +115,15 @@ public sealed class AppSettings
             TranslateNativeLanguage = TranslateLanguageDefaults.MapUiCulture(uiCulture);
         if (string.IsNullOrWhiteSpace(TranslatePairLanguage))
             TranslatePairLanguage = TranslateLanguageDefaults.DefaultPair(TranslateNativeLanguage);
+
+        if (SettingsRevision < 2)
+        {
+            if (!RegionHotkey.IsValid)
+                RegionHotkey = AltShift("S");
+            if (!QuickTranslateHotkey.IsValid)
+                QuickTranslateHotkey = AltShift("T");
+            SettingsRevision = 2;
+        }
     }
 
     public void Save()
@@ -130,6 +140,12 @@ public sealed class AppSettings
             // Yazma hatası sessizce yutulur (disk dolu / izin vs.).
         }
     }
+
+    private static HotkeyConfig AltShift(string key) => new()
+    {
+        Modifiers = ModifierKeys.Alt | ModifierKeys.Shift,
+        Key = key,
+    };
 }
 
 public enum ImageFormat

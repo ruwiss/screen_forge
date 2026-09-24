@@ -1520,7 +1520,11 @@ public partial class CaptureOverlayWindow : Window
         if (_mode is CaptureMode.Region or CaptureMode.FullScreen
             && (_settings.Gif.Enabled || _settings.Video.Enabled))
         {
-            _recorderButton = MakeCmd("IconRecord", "Kaydedici", "GIF veya ekran kaydı", OpenRecorderPicker);
+            bool gif = _settings.Gif.Enabled;
+            bool video = _settings.Video.Enabled;
+            string label = gif && video ? "Kaydedici" : gif ? "GIF Kaydet" : "Video Kaydet";
+            string tip = gif && video ? "GIF veya ekran kaydı" : gif ? "GIF kaydı başlat" : "Video kaydı başlat";
+            _recorderButton = MakeCmd("IconRecord", label, tip, OpenRecorderPicker);
             ActionStack.Children.Add(_recorderButton);
         }
         // Çevir: seçili bölgeyi Google Lens ile çevirip aynı yerde göster
@@ -2098,6 +2102,16 @@ public partial class CaptureOverlayWindow : Window
     private void OpenRecorderPicker()
     {
         if (_recorderButton == null) return;
+        if (_settings.Gif.Enabled && !_settings.Video.Enabled)
+        {
+            StartRecording(RecordingKind.Gif);
+            return;
+        }
+        if (_settings.Video.Enabled && !_settings.Gif.Enabled)
+        {
+            StartRecording(RecordingKind.Video);
+            return;
+        }
         new RecorderPickerPopup(
             _recorderButton,
             this,

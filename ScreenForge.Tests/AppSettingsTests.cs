@@ -27,7 +27,7 @@ public sealed class AppSettingsTests
     }
 
     [Fact]
-    public void Defaults_OnlyRegionHotkeyIsAssigned()
+    public void Defaults_RegionAndQuickTranslateHotkeysAreAssigned()
     {
         var settings = new AppSettings();
 
@@ -35,9 +35,30 @@ public sealed class AppSettingsTests
         Assert.Equal("S", settings.RegionHotkey.Key);
         Assert.Equal(ModifierKeys.Alt | ModifierKeys.Shift, settings.RegionHotkey.Modifiers);
 
+        Assert.Equal("T", settings.QuickTranslateHotkey.Key);
+        Assert.Equal(ModifierKeys.Alt | ModifierKeys.Shift, settings.QuickTranslateHotkey.Modifiers);
+
         Assert.False(settings.FullScreenHotkey.IsValid);
         Assert.False(settings.FullScreenUploadHotkey.IsValid);
         Assert.False(settings.CollageHotkey.IsValid);
+    }
+
+    [Fact]
+    public void Normalize_FillsUnsetQuickTranslateOnce()
+    {
+        var settings = AppSettings.Deserialize("""{ "QuickTranslateHotkey": { "Key": "" } }""");
+        Assert.NotNull(settings);
+
+        settings.Normalize(new CultureInfo("en-US"));
+
+        Assert.Equal("T", settings.QuickTranslateHotkey.Key);
+        Assert.Equal(ModifierKeys.Alt | ModifierKeys.Shift, settings.QuickTranslateHotkey.Modifiers);
+        Assert.Equal(2, settings.SettingsRevision);
+
+        settings.QuickTranslateHotkey.Key = "";
+        settings.QuickTranslateHotkey.Modifiers = ModifierKeys.None;
+        settings.Normalize(new CultureInfo("en-US"));
+
         Assert.False(settings.QuickTranslateHotkey.IsValid);
     }
 

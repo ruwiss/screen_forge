@@ -69,6 +69,7 @@ Arrow, step numbers, highlight, text, ellipse, and blur over the selection.
 | Action | Default |
 |--------|---------|
 | Capture region | `Alt + Shift + S` |
+| Quick translate | `Alt + Shift + T` |
 | Fullscreen | unset |
 | Fullscreen + upload | unset |
 | Freeform / collage | unset |

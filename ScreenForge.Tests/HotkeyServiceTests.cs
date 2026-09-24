@@ -12,6 +12,8 @@ public sealed class HotkeyServiceTests
         WpfRunner.Run(() =>
         {
             var settings = new AppSettings();
+            settings.QuickTranslateHotkey.Key = "";
+            settings.QuickTranslateHotkey.Modifiers = ModifierKeys.None;
             using var service = new HotkeyService();
 
             bool registered = service.Register(
