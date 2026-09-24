@@ -857,10 +857,12 @@ public partial class SettingsWindow : Window
 
     private void LoadRecordValues()
     {
+        ChkGifEnabled.IsChecked = _settings.Gif.Enabled;
         SelectIntTag(CmbGifFps, _settings.Gif.Fps, 20);
         ChkGifCursor.IsChecked = _settings.Gif.CaptureCursor;
         SldGifMemory.Value = Math.Clamp(_settings.Gif.MaxFrameMemoryMb, 64, 2048);
         GifMemoryValue.Text = $"{(int)SldGifMemory.Value} MB";
+        ChkVideoEnabled.IsChecked = _settings.Video.Enabled;
         SelectIntTag(CmbVideoFps, _settings.Video.Fps, 30);
         CmbVideoQuality.SelectedIndex = _settings.Video.Quality switch
         {
@@ -997,6 +999,7 @@ public partial class SettingsWindow : Window
         });
         BtnBrowse.Click += (_, _) => BrowseFolder();
 
+        ChkGifEnabled.Click += (_, _) => Apply(() => _settings.Gif.Enabled = ChkGifEnabled.IsChecked == true);
         CmbGifFps.SelectionChanged += (_, _) => Apply(() =>
         {
             _settings.Gif.Fps = GetIntTag(CmbGifFps, 20);
@@ -1007,6 +1010,7 @@ public partial class SettingsWindow : Window
             _settings.Gif.MaxFrameMemoryMb = (int)SldGifMemory.Value;
             GifMemoryValue.Text = $"{_settings.Gif.MaxFrameMemoryMb} MB";
         });
+        ChkVideoEnabled.Click += (_, _) => Apply(() => _settings.Video.Enabled = ChkVideoEnabled.IsChecked == true);
         CmbVideoFps.SelectionChanged += (_, _) => Apply(() =>
         {
             _settings.Video.Fps = GetIntTag(CmbVideoFps, 30);

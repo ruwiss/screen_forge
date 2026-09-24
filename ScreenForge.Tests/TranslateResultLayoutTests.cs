@@ -54,6 +54,15 @@ public sealed class TranslateResultLayoutTests
     }
 
     [Fact]
+    public void SelectionToolScale_ShrinksOnlyWhenBothEdgesAreShort()
+    {
+        Assert.Equal(ChromeScale.CompactToolScale, ChromeScale.ForSelection(400, 300));
+        Assert.Equal(1, ChromeScale.ForSelection(400, 800));
+        Assert.Equal(1, ChromeScale.ForSelection(900, 200));
+        Assert.Equal(1, ChromeScale.ForSelection(500, 200));
+    }
+
+    [Fact]
     public void Zoom_StaysOnActiveMonitor()
     {
         var host = TranslateResultLayout.Host(RightMon, imgW: 400, imgH: 300, selW: 200, selH: 150);

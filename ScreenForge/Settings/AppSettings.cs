@@ -147,6 +147,8 @@ public sealed class GifSettings
     /// tutulduğu için 20 fps tam 5 santisaniyeye oturur ve sapma olmaz.
     /// (15 fps 6.67cs ister, 7cs'e yuvarlanır → gerçekte ~14.3 fps oynar.)
     /// </summary>
+    public bool Enabled { get; set; } = true;
+
     public int Fps { get; set; } = 20;
 
     /// <summary>Palet boyutu: 256, 128 veya 64.</summary>
@@ -367,6 +369,8 @@ public enum VideoQuality
 /// <summary>MP4 ekran kaydı tercihleri.</summary>
 public sealed class VideoSettings
 {
+    public bool Enabled { get; set; } = true;
+
     public int Fps { get; set; } = 30;
     public VideoQuality Quality { get; set; } = VideoQuality.High;
     public bool CaptureCursor { get; set; } = true;

@@ -44,9 +44,25 @@ internal static class ChromeScale
         return Math.Abs(scale - 1) < 0.01 ? 1 : scale;
     }
 
-    public static void Apply(FrameworkElement element, double scale)
+    public const int CompactSelectionPx = 500;
+    public const double CompactToolScale = 0.84;
+
+    /// <summary>
+    /// Hem genişlik hem yükseklik eşik altındaysa araçları küçült.
+    /// Tek kenar kısa ise ölçek 1 kalır.
+    /// </summary>
+    public static double ForSelection(int widthPx, int heightPx)
     {
-        if (scale <= 0 || Math.Abs(scale - 1) < 0.01)
+        if (widthPx < 2 || heightPx < 2)
+            return 1;
+        if (widthPx < CompactSelectionPx && heightPx < CompactSelectionPx)
+            return CompactToolScale;
+        return 1;
+    }
+
+    public static void Apply(FrameworkElement element, double scale, bool snapNearOne = true)
+    {
+        if (scale <= 0 || (snapNearOne && Math.Abs(scale - 1) < 0.01))
         {
             if (element.LayoutTransform != null && !ReferenceEquals(element.LayoutTransform, Transform.Identity))
                 element.LayoutTransform = Transform.Identity;

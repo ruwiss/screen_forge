@@ -104,6 +104,8 @@
                     <TextBlock Text="GIF" Style="{StaticResource SectionTitle}" />
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
+                            <CheckBox x:Name="ChkGifEnabled" Content="Aktif" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <StackPanel IsEnabled="{Binding IsChecked, ElementName=ChkGifEnabled}">
                             <DockPanel Margin="0,2">
                                 <TextBlock Style="{StaticResource Label}" Text="FPS" Width="110" VerticalAlignment="Center" />
                                 <ComboBox x:Name="CmbGifFps" Width="120" Height="26" HorizontalAlignment="Left"
@@ -126,12 +128,15 @@
                                 <Slider x:Name="SldGifMemory" Minimum="64" Maximum="2048" TickFrequency="64"
                                         IsSnapToTickEnabled="True" VerticalAlignment="Center" />
                             </DockPanel>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
                     <TextBlock Text="Video" Style="{StaticResource SectionTitle}" />
                     <Border Style="{StaticResource Card}">
                         <StackPanel>
+                            <CheckBox x:Name="ChkVideoEnabled" Content="Aktif" FontWeight="SemiBold" Margin="0,0,0,8" />
+                            <StackPanel IsEnabled="{Binding IsChecked, ElementName=ChkVideoEnabled}">
                             <DockPanel Margin="0,2">
                                 <TextBlock Style="{StaticResource Label}" Text="FPS" Width="110" VerticalAlignment="Center" />
                                 <ComboBox x:Name="CmbVideoFps" Width="120" Height="26" HorizontalAlignment="Left"
@@ -161,6 +166,7 @@
                                 <ComboBox x:Name="CmbMicrophone" Height="26" HorizontalAlignment="Stretch"
                                           Style="{StaticResource DarkComboBox}" />
                             </DockPanel>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>

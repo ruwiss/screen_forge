@@ -1517,7 +1517,8 @@ public partial class CaptureOverlayWindow : Window
     {
         ActionStack.Children.Clear();
         _recorderButton = null;
-        if (_mode is CaptureMode.Region or CaptureMode.FullScreen)
+        if (_mode is CaptureMode.Region or CaptureMode.FullScreen
+            && (_settings.Gif.Enabled || _settings.Video.Enabled))
         {
             _recorderButton = MakeCmd("IconRecord", "Kaydedici", "GIF veya ekran kaydı", OpenRecorderPicker);
             ActionStack.Children.Add(_recorderButton);
@@ -2262,6 +2263,10 @@ public partial class CaptureOverlayWindow : Window
             (int)Math.Round(_selDip.Height * dpi.DpiScaleY));
         var dipRegion = _selDip;
         var settings = _settings;
+        if (kind == RecordingKind.Gif && !settings.Gif.Enabled)
+            return;
+        if (kind == RecordingKind.Video && !settings.Video.Enabled)
+            return;
         Close();
 
         if (pixelRegion.Width <= 0 || pixelRegion.Height <= 0)
@@ -3062,12 +3067,29 @@ public partial class CaptureOverlayWindow : Window
     private void ApplyOverlayChromeScale()
     {
         double scale = OverlayChromeScale();
-        ChromeScale.Apply(Toolbar, scale);
-        ChromeScale.Apply(ActionBar, scale);
+        double tools = scale * SelectionToolScale();
+        bool snapTools = Math.Abs(SelectionToolScale() - 1) < 0.001;
+        ChromeScale.Apply(Toolbar, tools, snapTools);
+        ChromeScale.Apply(ActionBar, tools, snapTools);
         ChromeScale.Apply(ModeBar, scale);
-        ChromeScale.Apply(CropActionBar, scale);
-        ChromeScale.Apply(OptionBar, scale);
+        ChromeScale.Apply(CropActionBar, tools, snapTools);
+        ChromeScale.Apply(OptionBar, tools, snapTools);
         ChromeScale.Apply(ToastBanner, scale);
+    }
+
+    private double SelectionToolScale()
+    {
+        if (_mode != CaptureMode.Region)
+            return 1;
+        int w = _pixelRegion.Width;
+        int h = _pixelRegion.Height;
+        if (w < 2 || h < 2)
+        {
+            var px = ToPixelRegion(_selDip);
+            w = px.Width;
+            h = px.Height;
+        }
+        return ChromeScale.ForSelection(w, h);
     }
 
     private double OverlayChromeScale()
@@ -3149,6 +3171,11 @@ public partial class CaptureOverlayWindow : Window
         }
 
         PositionActionBar(mon);
+        if (ActionBarAtMonitorTop(mon))
+        {
+            ChromeScale.Apply(ActionBar, OverlayChromeScale());
+            PositionActionBar(mon);
+        }
 
         if (CropActionBar.Visibility == Visibility.Visible)
             PositionCropActionBar(mon);
@@ -3256,6 +3283,14 @@ public partial class CaptureOverlayWindow : Window
 
         Canvas.SetLeft(ActionBar, Math.Round(bestX));
         Canvas.SetTop(ActionBar, Math.Round(bestY));
+    }
+
+    private bool ActionBarAtMonitorTop(WpfRect mon)
+    {
+        if (ActionBar.Visibility != Visibility.Visible)
+            return false;
+        double top = Canvas.GetTop(ActionBar);
+        return !double.IsNaN(top) && top <= mon.Top + 28;
     }
 
     private void PositionCropActionBar(WpfRect? monOpt = null)

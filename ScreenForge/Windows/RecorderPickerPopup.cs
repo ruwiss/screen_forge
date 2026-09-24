@@ -51,14 +51,20 @@ internal sealed class RecorderPickerPopup
         _videoSettings.Visibility = Visibility.Collapsed;
 
         _menu = new StackPanel { Margin = new Thickness(4), HorizontalAlignment = HorizontalAlignment.Stretch };
-        _menu.Children.Add(ModeRow(
-            RecordDot(), "GIF",
-            () => { Close(); onGif(); },
-            () => Show(_gifSettings)));
-        _menu.Children.Add(ModeRow(
-            StrokeIcon("IconCamera"), "Ekran kaydı",
-            () => { Close(); onVideo(); },
-            () => Show(_videoSettings)));
+        if (settings.Gif.Enabled)
+        {
+            _menu.Children.Add(ModeRow(
+                RecordDot(), "GIF",
+                () => { Close(); onGif(); },
+                () => Show(_gifSettings)));
+        }
+        if (settings.Video.Enabled)
+        {
+            _menu.Children.Add(ModeRow(
+                StrokeIcon("IconCamera"), "Ekran kaydı",
+                () => { Close(); onVideo(); },
+                () => Show(_videoSettings)));
+        }
 
         var root = new StackPanel();
         root.Children.Add(_menu);

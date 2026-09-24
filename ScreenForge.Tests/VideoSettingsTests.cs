@@ -43,6 +43,29 @@ public sealed class VideoSettingsTests
         Assert.False(settings.Video.RecordMicrophone);
         Assert.True(settings.Video.HighlightClicks);
         Assert.True(settings.Video.ShowCountdown);
+        Assert.True(settings.Video.Enabled);
+        Assert.True(settings.Gif.Enabled);
+    }
+
+    [Fact]
+    public void Deserialize_MissingEnabled_StaysOn()
+    {
+        var settings = AppSettings.Deserialize("""{ "Video": { "Fps": 24 }, "Gif": { "Fps": 10 } }""");
+
+        Assert.NotNull(settings);
+        Assert.True(settings.Video.Enabled);
+        Assert.True(settings.Gif.Enabled);
+        Assert.Equal(24, settings.Video.Fps);
+    }
+
+    [Fact]
+    public void Deserialize_EnabledFalse_StaysOff()
+    {
+        var settings = AppSettings.Deserialize("""{ "Video": { "Enabled": false }, "Gif": { "Enabled": false } }""");
+
+        Assert.NotNull(settings);
+        Assert.False(settings.Video.Enabled);
+        Assert.False(settings.Gif.Enabled);
     }
 
     [Fact]
