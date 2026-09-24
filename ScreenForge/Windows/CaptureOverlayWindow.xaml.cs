@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -119,6 +120,7 @@ public partial class CaptureOverlayWindow : Window
     /// <summary>Son çevrilmiş PNG (Ctrl+C ile panoya kopyalamak için, tam kalite).</summary>
     private byte[]? _lastTranslatedPng;
     private CancellationTokenSource? _copyFeedbackCts;
+    private int _translateZoomAnim;
 
     private static System.Windows.Input.Cursor RegionCursor => _regionCursor ??= CreateRegionCursor();
 
@@ -1583,34 +1585,100 @@ public partial class CaptureOverlayWindow : Window
         }
     }
 
-    /// <summary>Kopyala butonunda kısa süreli "Kopyalandı" geri bildirimi.</summary>
-    private async void FlashCopyButtonFeedback()
+    private void OnTranslateCopyImageClick(object sender, RoutedEventArgs e)
     {
-        _copyFeedbackCts?.Cancel();
+        if (!TryCopyTranslatedImage(out string? error))
+        {
+            ShowToast(error ?? "Kopyalanacak resim yok");
+            return;
+        }
+        FlashActionLabel(TranslateCopyImageLabel, TranslateCopyImageButton, "Kopyalandı", "Resmi Kopyala",
+            "Panoya kopyalandı", "Çevrilmiş resmi panoya kopyala");
+    }
+
+    private void OnTranslateSaveImageClick(object sender, RoutedEventArgs e)
+    {
+        if (_lastTranslatedPng is not { Length: > 32 })
+        {
+            ShowToast("Kaydedilecek resim yok");
+            return;
+        }
+
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            FileName = $"ScreenForge_ceviri_{DateTime.Now:yyyyMMdd_HHmmss}.png",
+            Filter = "PNG|*.png",
+            InitialDirectory = Directory.Exists(_settings.SaveDirectory) ? _settings.SaveDirectory : null,
+        };
+
+        bool? saved;
+        bool wasTopmost = Topmost;
+        try
+        {
+            Topmost = false;
+            saved = dlg.ShowDialog(this);
+        }
+        finally
+        {
+            Topmost = wasTopmost;
+        }
+
+        if (saved != true)
+            return;
+
+        try
+        {
+            File.WriteAllBytes(dlg.FileName, _lastTranslatedPng);
+            FlashActionLabel(TranslateSaveImageLabel, TranslateSaveImageButton, "Kaydedildi", "Resmi Kaydet",
+                "Resim kaydedildi", "Çevrilmiş resmi kaydet");
+        }
+        catch (Exception ex)
+        {
+            ShowToast("Kaydedilemedi: " + ex.Message);
+        }
+    }
+
+    /// <summary>Kopyala butonunda kısa süreli "Kopyalandı" geri bildirimi.</summary>
+    private void FlashCopyButtonFeedback()
+        => FlashActionLabel(TranslateCopyLabel, TranslateCopyButton, "Kopyalandı", "Metni kopyala",
+            "Panoya kopyalandı", "Çevrilmiş metni panoya kopyala");
+
+    private async void FlashActionLabel(
+        TextBlock? label, Button button, string done, string idle, string doneTip, string idleTip)
+    {
+        ResetActionLabels();
         _copyFeedbackCts = new CancellationTokenSource();
         var ct = _copyFeedbackCts.Token;
 
-        if (TranslateCopyLabel != null)
-            TranslateCopyLabel.Text = "Kopyalandı";
-        TranslateCopyButton.ToolTip = "Panoya kopyalandı";
+        if (label != null)
+            label.Text = done;
+        button.ToolTip = doneTip;
 
         try
         {
             await Task.Delay(1600, ct).ConfigureAwait(true);
             if (ct.IsCancellationRequested) return;
-            if (TranslateCopyLabel != null)
-                TranslateCopyLabel.Text = "Metni kopyala";
-            TranslateCopyButton.ToolTip = "Çevrilmiş metni panoya kopyala";
+            if (label != null)
+                label.Text = idle;
+            button.ToolTip = idleTip;
         }
         catch (OperationCanceledException) { /* ignore */ }
     }
 
-    private void ResetCopyButtonLabel()
+    private void ResetCopyButtonLabel() => ResetActionLabels();
+
+    private void ResetActionLabels()
     {
         _copyFeedbackCts?.Cancel();
         if (TranslateCopyLabel != null)
             TranslateCopyLabel.Text = "Metni kopyala";
         TranslateCopyButton.ToolTip = "Çevrilmiş metni panoya kopyala";
+        if (TranslateCopyImageLabel != null)
+            TranslateCopyImageLabel.Text = "Resmi Kopyala";
+        TranslateCopyImageButton.ToolTip = "Çevrilmiş resmi panoya kopyala";
+        if (TranslateSaveImageLabel != null)
+            TranslateSaveImageLabel.Text = "Resmi Kaydet";
+        TranslateSaveImageButton.ToolTip = "Çevrilmiş resmi kaydet";
     }
 
     private void OnTranslateHostMouseEnter(object sender, MouseEventArgs e)
@@ -1622,7 +1690,7 @@ public partial class CaptureOverlayWindow : Window
     /// <summary>
     /// Hover zoom: ~1.35x, aktif monitör içinde kalır.
     /// </summary>
-    private void SetTranslateHostZoom(bool zoomed)
+    private void SetTranslateHostZoom(bool zoomed, bool animate = true)
     {
         if (TranslateHostScale == null) return;
 
@@ -1630,17 +1698,63 @@ public partial class CaptureOverlayWindow : Window
         double h = Math.Max(1, TranslateResultHost.Height);
         var z = TranslateResultLayout.Zoom(GetUiMonitorDip(), w, h, zoomed);
 
-        TranslateHostScale.ScaleX = z.Scale;
-        TranslateHostScale.ScaleY = z.Scale;
-        Canvas.SetLeft(TranslateResultHost, z.Left);
-        Canvas.SetTop(TranslateResultHost, z.Top);
         _translateBaseLeft = z.Left;
         _translateBaseTop = z.Top;
 
         System.Windows.Controls.Panel.SetZIndex(TranslateResultHost, zoomed && z.Scale > 1.01 ? 1000 : 50);
         System.Windows.Controls.Panel.SetZIndex(TranslateDim, 40);
         System.Windows.Controls.Panel.SetZIndex(TranslateCloseButton, 1100);
-        System.Windows.Controls.Panel.SetZIndex(TranslateCopyButton, 1100);
+        System.Windows.Controls.Panel.SetZIndex(TranslateActionBar, 1100);
+
+        if (!animate)
+        {
+            ClearTranslateZoomAnimation();
+            TranslateHostScale.ScaleX = z.Scale;
+            TranslateHostScale.ScaleY = z.Scale;
+            Canvas.SetLeft(TranslateResultHost, z.Left);
+            Canvas.SetTop(TranslateResultHost, z.Top);
+            return;
+        }
+
+        int gen = ++_translateZoomAnim;
+        AnimateTranslateProp(TranslateHostScale, ScaleTransform.ScaleXProperty, z.Scale, gen);
+        AnimateTranslateProp(TranslateHostScale, ScaleTransform.ScaleYProperty, z.Scale, gen);
+        AnimateTranslateProp(TranslateResultHost, Canvas.LeftProperty, z.Left, gen);
+        AnimateTranslateProp(TranslateResultHost, Canvas.TopProperty, z.Top, gen);
+    }
+
+    private void ClearTranslateZoomAnimation()
+    {
+        _translateZoomAnim++;
+        TranslateHostScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        TranslateHostScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        TranslateResultHost.BeginAnimation(Canvas.LeftProperty, null);
+        TranslateResultHost.BeginAnimation(Canvas.TopProperty, null);
+    }
+
+    private void AnimateTranslateProp(IAnimatable target, DependencyProperty prop, double to, int gen)
+    {
+        var obj = (DependencyObject)target;
+        double from = (double)obj.GetValue(prop);
+        if (double.IsNaN(from) || Math.Abs(from - to) < 0.01)
+        {
+            target.BeginAnimation(prop, null);
+            obj.SetValue(prop, to);
+            return;
+        }
+
+        var anim = new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(240))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.HoldEnd,
+        };
+        anim.Completed += (_, _) =>
+        {
+            if (gen != _translateZoomAnim) return;
+            target.BeginAnimation(prop, null);
+            obj.SetValue(prop, to);
+        };
+        target.BeginAnimation(prop, anim);
     }
 
     /// <summary>
@@ -1665,13 +1779,14 @@ public partial class CaptureOverlayWindow : Window
 
     private void PlaceTranslateChrome(WpfRect mon)
     {
-        TranslateCopyButton.UpdateLayout();
-        double copyW = TranslateCopyButton.ActualWidth > 1 ? TranslateCopyButton.ActualWidth : 160;
-        var chrome = TranslateResultLayout.Chrome(mon, copyW);
+        TranslateActionBar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double barW = TranslateActionBar.DesiredSize.Width > 1 ? TranslateActionBar.DesiredSize.Width : 480;
+        double barH = TranslateActionBar.DesiredSize.Height > 1 ? TranslateActionBar.DesiredSize.Height : 40;
+        var chrome = TranslateResultLayout.Chrome(mon, barW, barH);
         Canvas.SetLeft(TranslateCloseButton, chrome.CloseLeft);
         Canvas.SetTop(TranslateCloseButton, chrome.CloseTop);
-        Canvas.SetLeft(TranslateCopyButton, chrome.CopyLeft);
-        Canvas.SetTop(TranslateCopyButton, chrome.CopyTop);
+        Canvas.SetLeft(TranslateActionBar, chrome.CopyLeft);
+        Canvas.SetTop(TranslateActionBar, chrome.CopyTop);
     }
 
     private void SuppressRegionSelectionChrome()
@@ -1705,11 +1820,11 @@ public partial class CaptureOverlayWindow : Window
 
     private void HideTranslateChrome()
     {
-        SetTranslateHostZoom(false);
+        SetTranslateHostZoom(false, animate: false);
         TranslateDim.Visibility = Visibility.Collapsed;
         TranslateResultHost.Visibility = Visibility.Collapsed;
         TranslateCloseButton.Visibility = Visibility.Collapsed;
-        TranslateCopyButton.Visibility = Visibility.Collapsed;
+        TranslateActionBar.Visibility = Visibility.Collapsed;
         TranslateResultImage.Source = null;
         _lastTranslatedText = null;
         _lastTranslatedPng = null;
@@ -1719,12 +1834,18 @@ public partial class CaptureOverlayWindow : Window
     /// <summary>Çeviri sonucu açıkken Ctrl+C → çevrilmiş görseli panoya koy, sonra overlay'i kapat.</summary>
     private void CopyTranslatedImageToClipboard()
     {
-        if (_lastTranslatedPng is not { Length: > 32 } && TranslateResultImage.Source is not BitmapSource)
+        if (!TryCopyTranslatedImage(out string? error))
         {
-            ShowToast("Kopyalanacak resim yok");
+            ShowToast(error ?? "Kopyalanacak resim yok");
             return;
         }
 
+        CloseTranslateView();
+    }
+
+    private bool TryCopyTranslatedImage(out string? error)
+    {
+        error = null;
         try
         {
             if (_lastTranslatedPng is { Length: > 32 })
@@ -1732,18 +1853,22 @@ public partial class CaptureOverlayWindow : Window
                 using var sk = SKBitmap.Decode(_lastTranslatedPng)
                     ?? throw new InvalidOperationException("PNG çözülemedi.");
                 ImageExporter.CopyToClipboard(sk);
-            }
-            else if (TranslateResultImage.Source is BitmapSource bmp)
-            {
-                Clipboard.SetImage(bmp);
+                return true;
             }
 
-            // Kopyala + kapat (normal kopyala akışı gibi)
-            CloseTranslateView();
+            if (TranslateResultImage.Source is BitmapSource bmp)
+            {
+                Clipboard.SetImage(bmp);
+                return true;
+            }
+
+            error = "Kopyalanacak resim yok";
+            return false;
         }
         catch (Exception ex)
         {
-            ShowToast("Kopyalanamadı: " + ex.Message);
+            error = "Kopyalanamadı: " + ex.Message;
+            return false;
         }
     }
 
@@ -1778,16 +1903,18 @@ public partial class CaptureOverlayWindow : Window
         LayoutCenteredTranslateImage(image);
         TranslateResultHost.Visibility = Visibility.Visible;
         System.Windows.Controls.Panel.SetZIndex(TranslateResultHost, 50);
-        SetTranslateHostZoom(false);
+        SetTranslateHostZoom(false, animate: false);
 
-        // Monitör köşeleri: kapat / kopyala
         TranslateCloseButton.Visibility = Visibility.Visible;
-        TranslateCopyButton.Visibility = Visibility.Visible;
+        TranslateActionBar.Visibility = Visibility.Visible;
+        bool hasImage = _lastTranslatedPng is { Length: > 32 } || TranslateResultImage.Source != null;
+        TranslateCopyImageButton.IsEnabled = hasImage;
+        TranslateSaveImageButton.IsEnabled = _lastTranslatedPng is { Length: > 32 };
         TranslateCopyButton.IsEnabled = !string.IsNullOrWhiteSpace(_lastTranslatedText);
         TranslateCopyButton.Opacity = TranslateCopyButton.IsEnabled ? 1.0 : 0.45;
         ResetCopyButtonLabel();
         System.Windows.Controls.Panel.SetZIndex(TranslateCloseButton, 1100);
-        System.Windows.Controls.Panel.SetZIndex(TranslateCopyButton, 1100);
+        System.Windows.Controls.Panel.SetZIndex(TranslateActionBar, 1100);
         PlaceTranslateChrome(GetUiMonitorDip());
 
         Focusable = true;

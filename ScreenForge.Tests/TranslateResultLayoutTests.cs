@@ -43,11 +43,11 @@ public sealed class TranslateResultLayoutTests
     [Fact]
     public void Chrome_PinsCloseAndCopyToActiveMonitorCorners()
     {
-        var chrome = TranslateResultLayout.Chrome(RightMon, copyButtonWidth: 160);
+        var chrome = TranslateResultLayout.Chrome(RightMon, actionBarWidth: 480, actionBarHeight: 40);
 
         Assert.Equal(RightMon.Right - 60, chrome.CloseLeft);
         Assert.Equal(RightMon.Top + 20, chrome.CloseTop);
-        Assert.Equal(RightMon.Right - 160 - 24, chrome.CopyLeft);
+        Assert.Equal(RightMon.Left + (RightMon.Width - 480) / 2, chrome.CopyLeft);
         Assert.Equal(RightMon.Bottom - 64, chrome.CopyTop);
         Assert.True(chrome.CloseLeft > 1920);
         Assert.True(chrome.CopyLeft > 1920);

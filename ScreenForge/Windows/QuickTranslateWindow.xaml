@@ -191,6 +191,7 @@
                         <Border Height="1" Margin="16,0" Background="#29EA6F12"/>
                         <Grid Grid.Row="1">
                             <ScrollViewer x:Name="ResultScroll"
+                                          MaxHeight="280"
                                           VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
                                           Padding="0,0,2,0">

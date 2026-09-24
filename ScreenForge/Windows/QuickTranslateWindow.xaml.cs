@@ -298,7 +298,7 @@ public partial class QuickTranslateWindow : Window
             LangBadge.Visibility = knownSrc ? Visibility.Visible : Visibility.Collapsed;
             if (knownSrc)
                 TxtLangs.Text = $"{shown.SourceLang} → {shownTarget}";
-            TxtResult.Text = shown.Text;
+            TxtResult.Text = shown.Text.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
             TxtStatus.Text = "";
             ShowCopyGlyph(copied: shown.Text == _lastCopied);
             BtnCopy.IsEnabled = true;

@@ -69,14 +69,19 @@ internal static class TranslateResultLayout
             hostH);
     }
 
-    public static ChromeLayout Chrome(WpfRect monitor, double copyButtonWidth)
+    public static ChromeLayout Chrome(WpfRect monitor, double actionBarWidth, double actionBarHeight = 40)
     {
-        double copyW = Math.Max(1, copyButtonWidth);
+        double barW = Math.Max(1, actionBarWidth);
+        double barH = Math.Max(1, actionBarHeight);
+        double left = monitor.Left + (monitor.Width - barW) / 2;
+        double minLeft = monitor.Left + 16;
+        double maxLeft = Math.Max(minLeft, monitor.Right - barW - 16);
+        left = Math.Clamp(left, minLeft, maxLeft);
         return new ChromeLayout(
             monitor.Right - 40 - 20,
             monitor.Top + 20,
-            monitor.Right - copyW - 24,
-            monitor.Bottom - 40 - 24);
+            left,
+            monitor.Bottom - barH - 24);
     }
 
     public static ZoomLayout Zoom(WpfRect monitor, double hostW, double hostH, bool zoomed, double margin = 20)

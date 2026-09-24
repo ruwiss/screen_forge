@@ -49,7 +49,7 @@ public sealed class GoogleTextTranslateClient
         string targetLang,
         CancellationToken cancellationToken = default)
     {
-        text = text.Trim();
+        text = NormalizeBreaks(text).Trim();
         targetLang = targetLang.Trim();
         if (text.Length == 0 || targetLang.Length == 0)
             return null;
@@ -61,11 +61,11 @@ public sealed class GoogleTextTranslateClient
                 return hit;
         }
 
-        TranslateResult? result =
-            await TryTranslateHtmlAsync(text, targetLang, cancellationToken).ConfigureAwait(false)
-            ?? await TryTranslatePaAsync(text, targetLang, cancellationToken).ConfigureAwait(false)
-            ?? await TryDictChromeAsync(text, targetLang, cancellationToken).ConfigureAwait(false)
-            ?? await TryGtxAsync(text, targetLang, cancellationToken).ConfigureAwait(false);
+        TranslateResult? result = text.Contains('\n')
+            ? await TranslateMultilineAsync(text, targetLang, cancellationToken).ConfigureAwait(false)
+            : await TranslateSingleAsync(text, targetLang, cancellationToken).ConfigureAwait(false);
+        if (result != null)
+            result = result.Value with { Text = NormalizeBreaks(result.Value.Text).Trim('\n') };
 
         if (result == null)
             return null;
@@ -78,6 +78,107 @@ public sealed class GoogleTextTranslateClient
         }
 
         return result;
+    }
+
+    private static async Task<TranslateResult?> TranslateSingleAsync(
+        string text, string targetLang, CancellationToken ct)
+        => await TryTranslateHtmlAsync(text, targetLang, ct).ConfigureAwait(false)
+           ?? await TryTranslatePaAsync(text, targetLang, ct).ConfigureAwait(false)
+           ?? await TryDictChromeAsync(text, targetLang, ct).ConfigureAwait(false)
+           ?? await TryGtxAsync(text, targetLang, ct).ConfigureAwait(false);
+
+    private async Task<TranslateResult?> TranslateMultilineAsync(
+        string text, string targetLang, CancellationToken ct)
+    {
+        var jobs = new List<(int Index, string Text)>();
+        string[] lines = text.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            string trimmed = lines[i].Trim();
+            if (trimmed.Length > 0)
+                jobs.Add((i, trimmed));
+        }
+        if (jobs.Count == 0)
+            return null;
+
+        var translated = new string?[jobs.Count];
+        string sourceLang = "";
+        int cursor = 0;
+        while (cursor < jobs.Count)
+        {
+            int take = 0;
+            int chars = 0;
+            while (cursor + take < jobs.Count && take < 40 && chars < 4000)
+            {
+                chars += jobs[cursor + take].Text.Length + 1;
+                take++;
+            }
+
+            string[] slice = new string[take];
+            for (int i = 0; i < take; i++)
+                slice[i] = jobs[cursor + i].Text;
+
+            var batch = await TryTranslateHtmlLinesAsync(slice, targetLang, ct).ConfigureAwait(false);
+            if (batch == null || batch.Value.Texts.Length != take)
+                break;
+
+            for (int i = 0; i < take; i++)
+                translated[cursor + i] = batch.Value.Texts[i];
+            if (sourceLang.Length == 0)
+                sourceLang = batch.Value.SourceLang;
+            cursor += take;
+        }
+
+        for (int i = cursor; i < jobs.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var one = await TranslateSingleAsync(jobs[i].Text, targetLang, ct).ConfigureAwait(false);
+            translated[i] = one?.Text;
+            if (sourceLang.Length == 0 && one != null)
+                sourceLang = one.Value.SourceLang;
+        }
+
+        string? joined = JoinPreservingBlanks(text, translated);
+        if (joined == null)
+            return null;
+        return new TranslateResult(joined, sourceLang);
+    }
+
+    internal static string NormalizeBreaks(string text)
+        => text.Replace("\r\n", "\n").Replace('\r', '\n')
+            .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase)
+            .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
+            .Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase);
+
+    internal static string? JoinPreservingBlanks(string normalized, IReadOnlyList<string?> translatedNonEmpty)
+    {
+        string[] lines = normalized.Split('\n');
+        int expected = 0;
+        foreach (string line in lines)
+        {
+            if (line.Trim().Length > 0)
+                expected++;
+        }
+        if (expected != translatedNonEmpty.Count || expected == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        int k = 0;
+        bool any = false;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i > 0)
+                sb.Append('\n');
+            if (lines[i].Trim().Length == 0)
+                continue;
+            string piece = (translatedNonEmpty[k++] ?? "").Trim();
+            if (piece.Length == 0)
+                piece = lines[i].Trim();
+            else
+                any = true;
+            sb.Append(piece);
+        }
+        return any ? sb.ToString() : null;
     }
 
     private static async Task<TranslateResult?> TryTranslateHtmlAsync(
@@ -100,6 +201,50 @@ public sealed class GoogleTextTranslateClient
         req.Headers.TryAddWithoutValidation("Referer", "https://translate.google.com/");
 
         return await SendAndParseAsync(req, ParseTranslateHtml, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<(string[] Texts, string SourceLang)?> TryTranslateHtmlLinesAsync(
+        string[] lines, string targetLang, CancellationToken ct)
+    {
+        if (lines.Length == 0)
+            return null;
+
+        string payload = JsonSerializer.Serialize(new object[]
+        {
+            new object[] { lines, "auto", targetLang },
+            "te_lib",
+        });
+
+        using var req = new HttpRequestMessage(HttpMethod.Post,
+            "https://translate-pa.googleapis.com/v1/translateHtml");
+        req.Content = new StringContent(payload, Encoding.UTF8);
+        req.Content.Headers.ContentType = MediaTypeHeaderValue.Parse("application/json+protobuf");
+        req.Headers.TryAddWithoutValidation("X-Goog-Api-Key", KeyHtml);
+        req.Headers.TryAddWithoutValidation("Accept", "*/*");
+        req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+        req.Headers.TryAddWithoutValidation("Origin", "https://translate.google.com");
+        req.Headers.TryAddWithoutValidation("Referer", "https://translate.google.com/");
+
+        try
+        {
+            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct)
+                .ConfigureAwait(false);
+            string raw = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+                return null;
+            string[]? texts = ParseTranslateHtmlSegments(raw, out string sourceLang);
+            if (texts == null || texts.Length != lines.Length)
+                return null;
+            return (texts, sourceLang);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static async Task<TranslateResult?> TryTranslatePaAsync(
@@ -221,6 +366,55 @@ public sealed class GoogleTextTranslateClient
             }
 
             return new TranslateResult(text, sourceLang);
+        }
+    }
+
+    internal static string[]? ParseTranslateHtmlSegments(string raw, out string sourceLang)
+    {
+        sourceLang = "";
+        if (!TryParseJson(raw, out var doc))
+            return null;
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() == 0)
+                return null;
+
+            var texts = root[0];
+            if (texts.ValueKind != JsonValueKind.Array || texts.GetArrayLength() == 0)
+                return null;
+
+            var list = new List<string>();
+            foreach (var item in texts.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                    list.Add(UnescapeHtml(item.GetString() ?? "").Trim());
+                else if (item.ValueKind == JsonValueKind.Array
+                         && item.GetArrayLength() > 0
+                         && item[0].ValueKind == JsonValueKind.String)
+                    list.Add(UnescapeHtml(item[0].GetString() ?? "").Trim());
+                else
+                    return null;
+            }
+
+            if (root.GetArrayLength() > 1 && root[1].ValueKind == JsonValueKind.Array)
+            {
+                foreach (var lang in root[1].EnumerateArray())
+                {
+                    if (lang.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(lang.GetString()))
+                    {
+                        sourceLang = lang.GetString() ?? "";
+                        break;
+                    }
+                }
+            }
+            else if (root.GetArrayLength() > 1 && root[1].ValueKind == JsonValueKind.String)
+            {
+                sourceLang = root[1].GetString() ?? "";
+            }
+
+            return list.ToArray();
         }
     }
 
