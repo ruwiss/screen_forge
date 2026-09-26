@@ -19,11 +19,14 @@ public sealed class TrayIconService : IDisposable
     public event Action? CollageRequested;
     public event Action? ColorPickerRequested;
     public event Action? TrayUploadRequested;
+    public event Action? QuickTranslateRequested;
     public event Action? SettingsRequested;
     public event Action? AboutRequested;
     public event Action? ExitRequested;
     public event Action<bool>? PresenterEnabledChanged;
     public Func<bool>? GetPresenterEnabled { get; set; }
+    public event Action<bool>? SubtitleEnabledChanged;
+    public Func<bool>? GetSubtitleEnabled { get; set; }
 
     public TrayIconService()
     {
@@ -55,8 +58,10 @@ public sealed class TrayIconService : IDisposable
         menu.Items.Add(MenuItem("Serbest / Yerleştirme", () => CollageRequested?.Invoke()));
         menu.Items.Add(MenuItem("Renk Seçici", () => ColorPickerRequested?.Invoke()));
         menu.Items.Add(MenuItem("Yükleme Yap", () => TrayUploadRequested?.Invoke()));
+        menu.Items.Add(MenuItem("Hızlı Çeviri", () => QuickTranslateRequested?.Invoke()));
         menu.Items.Add(new Separator());
         menu.Items.Add(PresenterToggle());
+        menu.Items.Add(SubtitleToggle());
         menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Ayarlar", () => SettingsRequested?.Invoke()));
         menu.Items.Add(MenuItem("Hakkında", () => AboutRequested?.Invoke()));
@@ -65,8 +70,13 @@ public sealed class TrayIconService : IDisposable
 
         menu.Opened += (_, _) =>
         {
-            if (menu.Items.OfType<MenuItem>().FirstOrDefault(i => i.Tag as string == "presenter") is { } item)
-                item.IsChecked = GetPresenterEnabled?.Invoke() ?? true;
+            foreach (var item in menu.Items.OfType<MenuItem>())
+            {
+                if (item.Tag as string == "presenter")
+                    item.IsChecked = GetPresenterEnabled?.Invoke() ?? true;
+                if (item.Tag as string == "subtitle")
+                    item.IsChecked = GetSubtitleEnabled?.Invoke() ?? false;
+            }
         };
         return menu;
     }
@@ -82,6 +92,25 @@ public sealed class TrayIconService : IDisposable
         };
         item.Click += (_, _) => PresenterEnabledChanged?.Invoke(item.IsChecked == true);
         return item;
+    }
+
+    private MenuItem SubtitleToggle()
+    {
+        var item = new MenuItem
+        {
+            Header = "Canlı altyazı",
+            IsCheckable = true,
+            IsChecked = GetSubtitleEnabled?.Invoke() ?? false,
+            Tag = "subtitle",
+        };
+        item.Click += (_, _) => SubtitleEnabledChanged?.Invoke(item.IsChecked == true);
+        return item;
+    }
+
+    public void SetSubtitleChecked(bool on)
+    {
+        if (_icon.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault(i => i.Tag as string == "subtitle") is { } item)
+            item.IsChecked = on;
     }
 
     private static MenuItem MenuItem(string header, Action action, bool isDefault = false)

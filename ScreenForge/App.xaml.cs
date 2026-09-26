@@ -16,6 +16,7 @@ public partial class App : Application
     private TrayIconService? _tray;
     private HotkeyService? _hotkeys;
     private Presenter.PresenterService? _presenter;
+    private Subtitle.SubtitleService? _subtitle;
 
     public static AppSettings Settings { get; private set; } = new();
 
@@ -47,6 +48,8 @@ public partial class App : Application
         LoadEnvFile();
 
         Settings = AppSettings.Load(out bool isFirstRun);
+        Settings.Subtitle.Enabled = false;
+        Settings.Save();
         ScreenForge.Settings.StartupManager.SetEnabled(Settings.LaunchAtStartup);
 
         // ---- Tepsi ikonu ----
@@ -56,11 +59,15 @@ public partial class App : Application
         _tray.CollageRequested += OnCollage;
         _tray.ColorPickerRequested += OnColorPicker;
         _tray.TrayUploadRequested += OnTrayUpload;
+        _tray.QuickTranslateRequested += OnQuickTranslate;
         _tray.SettingsRequested += OnSettings;
         _tray.AboutRequested += OnAbout;
         _tray.ExitRequested += OnExit;
         _tray.GetPresenterEnabled = () => Settings.Presenter.Enabled;
         _tray.PresenterEnabledChanged += OnPresenterEnabledChanged;
+        _tray.GetSubtitleEnabled = () => Settings.Subtitle.Enabled;
+        _tray.SubtitleEnabledChanged += OnSubtitleEnabledChanged;
+        _subtitle = new Subtitle.SubtitleService(() => Settings, on => _tray?.SetSubtitleChecked(on));
 
         // ---- Global kısayollar ----
         _presenter = new Presenter.PresenterService(() => Settings);
@@ -107,6 +114,16 @@ public partial class App : Application
         if (!enabled)
             _presenter?.Cancel();
         RegisterHotkeys();
+    }
+
+    private void OnSubtitleEnabledChanged(bool enabled)
+    {
+        if (enabled && _captureInProgress)
+        {
+            _tray?.SetSubtitleChecked(false);
+            return;
+        }
+        _subtitle?.SetEnabled(enabled);
     }
 
     private void RegisterPresenterHotkeys()
@@ -341,6 +358,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _subtitle?.Dispose();
         _presenter?.Dispose();
         _hotkeys?.Dispose();
         _tray?.Dispose();

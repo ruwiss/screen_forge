@@ -42,6 +42,8 @@ public sealed class AppSettings
     // ---- Canlı sunum (ZoomIt-benzeri) ----
     public PresenterSettings Presenter { get; set; } = new();
 
+    public SubtitleSettings Subtitle { get; set; } = new();
+
     // ---- Çeviri ----
     /// <summary>Kaynak dil kodu; "auto" = otomatik algıla (görüntü çevirisi).</summary>
     public string TranslateSourceLanguage { get; set; } = "auto";
@@ -112,6 +114,8 @@ public sealed class AppSettings
 
         Presenter ??= new PresenterSettings();
         Presenter.Normalize();
+        Subtitle ??= new SubtitleSettings();
+        Subtitle.Normalize();
 
         if (string.IsNullOrWhiteSpace(TranslateNativeLanguage))
             TranslateNativeLanguage = TranslateLanguageDefaults.MapUiCulture(uiCulture);
@@ -234,6 +238,61 @@ public enum InkShapeConvertMode
     DrawAndHold = 0,
     Auto = 1,
     Disabled = 2,
+}
+
+public sealed class SubtitleSettings
+{
+    public bool Enabled { get; set; }
+    public int SourceX { get; set; }
+    public int SourceY { get; set; }
+    public int SourceW { get; set; }
+    public int SourceH { get; set; }
+    public int BoxX { get; set; }
+    public int BoxY { get; set; }
+    public int BoxW { get; set; }
+    public int BoxH { get; set; }
+    public string Theme { get; set; } = "gece";
+    public string BackColor { get; set; } = "#101218";
+    public string TextColor { get; set; } = "#FFFFFF";
+    public string BorderColor { get; set; } = "#FFFFFF";
+    public double Opacity { get; set; } = 0.82;
+    public double BorderThickness { get; set; }
+
+    [JsonIgnore]
+    public bool HasSource => SourceW >= 8 && SourceH >= 8;
+
+    [JsonIgnore]
+    public bool HasBox => BoxW >= 40 && BoxH >= 24;
+
+    public void SetSource(int x, int y, int w, int h)
+    {
+        SourceX = x;
+        SourceY = y;
+        SourceW = w;
+        SourceH = h;
+    }
+
+    public void SetBox(int x, int y, int w, int h)
+    {
+        BoxX = x;
+        BoxY = y;
+        BoxW = w;
+        BoxH = h;
+    }
+
+    public void Normalize()
+    {
+        if (SourceW < 0) SourceW = 0;
+        if (SourceH < 0) SourceH = 0;
+        if (BoxW < 0) BoxW = 0;
+        if (BoxH < 0) BoxH = 0;
+        Opacity = Math.Clamp(Opacity, 0.15, 1);
+        BorderThickness = Math.Clamp(BorderThickness, 0, 4);
+        if (string.IsNullOrWhiteSpace(Theme)) Theme = "gece";
+        if (string.IsNullOrWhiteSpace(BackColor)) BackColor = "#101218";
+        if (string.IsNullOrWhiteSpace(TextColor)) TextColor = "#FFFFFF";
+        if (string.IsNullOrWhiteSpace(BorderColor)) BorderColor = "#FFFFFF";
+    }
 }
 
 /// <summary>Canlı sunum katmanı tercihleri ve kısayolları.</summary>
