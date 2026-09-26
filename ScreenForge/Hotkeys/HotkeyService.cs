@@ -76,6 +76,34 @@ public sealed class HotkeyService : IDisposable
     /// <summary>Kayıt başarısız olan kısayollar (kullanıcı uyarısı için).</summary>
     public List<string> FailedRegistrations { get; } = new();
 
+    /// <summary>
+    /// Kısayol başka bir kayıt tarafından tutuluyor mu? Başarılı olursa hemen bırakır.
+    /// Ayarlar açıkken kendi kayıtlarımız kalkmış olur.
+    /// </summary>
+    internal static bool IsTakenByOtherApp(IntPtr hwnd, HotkeyConfig config)
+    {
+        if (hwnd == IntPtr.Zero || !config.IsValid || ShouldUseKeyboardHook(config.Key))
+            return false;
+
+        uint vk = KeyToVirtualKey(config.Key);
+        if (vk == 0)
+            return false;
+
+        uint mods = MOD_NOREPEAT;
+        if (config.Modifiers.HasFlag(SfModifierKeys.Alt)) mods |= MOD_ALT;
+        if (config.Modifiers.HasFlag(SfModifierKeys.Control)) mods |= MOD_CONTROL;
+        if (config.Modifiers.HasFlag(SfModifierKeys.Shift)) mods |= MOD_SHIFT;
+        if (config.Modifiers.HasFlag(SfModifierKeys.Windows)) mods |= MOD_WIN;
+
+        const int id = 0x5F21;
+        if (RegisterHotKey(hwnd, id, mods, vk))
+        {
+            UnregisterHotKey(hwnd, id);
+            return false;
+        }
+        return true;
+    }
+
     public HotkeyService()
     {
         // Mesaj-yalnız (message-only) görünmez pencere.

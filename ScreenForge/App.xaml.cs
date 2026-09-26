@@ -294,7 +294,7 @@ public partial class App : Application
     {
         if (_settingsWindow != null) { _settingsWindow.Activate(); return; }
         _hotkeys?.UnregisterAll();
-        _settingsWindow = new Windows.SettingsWindow(Settings, () => { });
+        _settingsWindow = new Windows.SettingsWindow(Settings, () => { }, () => _presenter?.Cancel());
         _settingsWindow.Closed += (_, _) => { _settingsWindow = null; RegisterHotkeys(); };
         _settingsWindow.Show();
         _settingsWindow.Activate();

@@ -5,6 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using ScreenForge.Hotkeys;
 using ScreenForge.Settings;
 using ScreenForge.Record;
 using SfModifierKeys = ScreenForge.Settings.ModifierKeys;
@@ -15,6 +16,7 @@ public partial class SettingsWindow : Window
 {
     private readonly AppSettings _settings;
     private readonly Action _onHotkeysChanged;
+    private readonly Action? _onPresenterDisabled;
     private bool _loading;
 
     // ── Hotkey recording state ──
@@ -32,15 +34,19 @@ public partial class SettingsWindow : Window
     private static readonly SolidColorBrush _hkActiveBg = new(Color.FromRgb(0x2A, 0x20, 0x10));
     private static readonly SolidColorBrush _hkActiveBorder = new(Color.FromRgb(0xEA, 0x6F, 0x12));
     private static readonly SolidColorBrush _hkDimFg = new(Color.FromRgb(0x9A, 0xA4, 0xB8));
+    private static readonly SolidColorBrush _hkWarn = new(Color.FromRgb(0xE8, 0xA0, 0x4A));
+    private readonly Dictionary<Border, (TextBlock Label, HotkeyConfig Config, TextBlock? Warn)> _hotkeyChrome = new();
 
-    public SettingsWindow(AppSettings settings, Action onHotkeysChanged)
+    public SettingsWindow(AppSettings settings, Action onHotkeysChanged, Action? onPresenterDisabled = null)
     {
         InitializeComponent();
         _settings = settings;
         _onHotkeysChanged = onHotkeysChanged;
+        _onPresenterDisabled = onPresenterDisabled;
         LoadValues();
         WireEvents();
         BuildHotkeyPanel();
+        BuildPresenterMaster();
         BuildPresenterTiles();
         Loaded += (_, _) => FixTabHeight();
         SourceInitialized += (_, e) =>
@@ -48,6 +54,7 @@ public partial class SettingsWindow : Window
             DarkTitleBar.Apply(this);
             _hwndSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             _hwndSource?.AddHook(WndProc);
+            RefreshHotkeyWarnings();
         };
         Closed += (_, _) =>
         {
@@ -202,17 +209,17 @@ public partial class SettingsWindow : Window
 
     private void BuildHotkeyPanel()
     {
-        var items = new (string title, string desc, HotkeyConfig config)[]
+        var items = new (string title, string desc, HotkeyConfig config, HotkeyConfig defaults)[]
         {
-            ("Bölge yakalama", "Seçili alanın ekran görüntüsünü al", _settings.RegionHotkey),
-            ("Tam ekran yakalama", "Tüm ekranın görüntüsünü al", _settings.FullScreenHotkey),
-            ("Anında yükleme", "Ekran görüntüsünü al ve yükle", _settings.FullScreenUploadHotkey),
-            ("Serbest / yerleştirme", "Kolaj ve serbest düzenleme modu", _settings.CollageHotkey),
-            ("Hızlı çeviri", "Seçili metni çevirir; seçim yoksa yazarak çeviri açılır", _settings.QuickTranslateHotkey),
+            ("Bölge yakalama", "Seçili alanın ekran görüntüsünü al", _settings.RegionHotkey, AppSettings.DefaultRegionHotkey()),
+            ("Tam ekran yakalama", "Tüm ekranın görüntüsünü al", _settings.FullScreenHotkey, AppSettings.UnassignedHotkey()),
+            ("Anında yükleme", "Ekran görüntüsünü al ve yükle", _settings.FullScreenUploadHotkey, AppSettings.UnassignedHotkey()),
+            ("Serbest / yerleştirme", "Kolaj ve serbest düzenleme modu", _settings.CollageHotkey, AppSettings.UnassignedHotkey()),
+            ("Hızlı çeviri", "Seçili metni çevirir; seçim yoksa yazarak çeviri açılır", _settings.QuickTranslateHotkey, AppSettings.DefaultQuickTranslateHotkey()),
         };
 
-        foreach (var (title, desc, config) in items)
-            AddHotkeyRow(HotkeyPanel, title, desc, config);
+        foreach (var (title, desc, config, defaults) in items)
+            AddHotkeyRow(HotkeyPanel, title, desc, config, defaults);
 
         var hint = new TextBlock
         {
@@ -220,7 +227,7 @@ public partial class SettingsWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(4, 2, 0, 0),
             FontSize = 11,
-            Text = "Tıklayıp tuş kombinasyonuna basın · ESC iptal",
+            Text = "Tıklayıp tuş kombinasyonuna basın · ESC iptal\nAyarlar açıkken kısayollar çalışmaz.",
         };
         HotkeyPanel.Children.Add(hint);
 
@@ -229,6 +236,31 @@ public partial class SettingsWindow : Window
         {
             if (_recConfig != null) FinishRecording(true);
         };
+    }
+
+    private void BuildPresenterMaster()
+    {
+        PresenterMasterRow.Children.Clear();
+        bool on = _settings.Presenter.Enabled;
+        PresenterTools.IsEnabled = on;
+        PresenterTools.Opacity = on ? 1 : 0.45;
+        var sw = MakeSwitch(on, v =>
+        {
+            _settings.Presenter.Enabled = v;
+            PresenterTools.IsEnabled = v;
+            PresenterTools.Opacity = v ? 1 : 0.45;
+            if (!v)
+                _onPresenterDisabled?.Invoke();
+            Apply(() => { });
+        });
+        DockPanel.SetDock(sw, Dock.Right);
+        PresenterMasterRow.Children.Add(sw);
+        PresenterMasterRow.Children.Add(new TextBlock
+        {
+            Text = "Sunum araçları",
+            Style = (Style)FindResource("Label"),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
     }
 
     private void BuildPresenterTiles()
@@ -361,6 +393,8 @@ public partial class SettingsWindow : Window
 
     private void FillPresenterDetail()
     {
+        foreach (var key in _hotkeyChrome.Where(kv => kv.Value.Warn == null).Select(kv => kv.Key).ToList())
+            _hotkeyChrome.Remove(key);
         PresenterDetailPanel.Children.Clear();
         if (_presenterSel == null)
         {
@@ -641,7 +675,7 @@ public partial class SettingsWindow : Window
         return dock;
     }
 
-    private void AddHotkeyRow(StackPanel panel, string title, string desc, HotkeyConfig config)
+    private void AddHotkeyRow(StackPanel panel, string title, string desc, HotkeyConfig config, HotkeyConfig defaults)
     {
         var cardStyle = (Style)FindResource("Card");
         var labelStyle = (Style)FindResource("Label");
@@ -693,15 +727,20 @@ public partial class SettingsWindow : Window
         var cfg = config;
         var lbl = hkLabel;
         var brd = hkBorder;
+        var warn = new TextBlock
+        {
+            Foreground = _hkWarn,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 0),
+            Visibility = Visibility.Collapsed,
+        };
+        _hotkeyChrome[brd] = (lbl, cfg, warn);
         resetBtn.Click += (_, _) =>
         {
             if (_recConfig == cfg) FinishRecording(true);
-            cfg.Key = "";
-            cfg.Modifiers = SfModifierKeys.None;
-            lbl.Text = cfg.ToString();
-            lbl.Foreground = Brushes.White;
-            brd.BorderBrush = _hkBorder;
-            brd.Background = _hkBg;
+            cfg.CopyFrom(defaults);
+            PaintHotkeyChrome(lbl, brd, cfg);
             Apply(() => { });
         };
 
@@ -709,6 +748,8 @@ public partial class SettingsWindow : Window
         infoStack.Children.Add(new TextBlock { Text = title, Style = labelStyle });
         if (!string.IsNullOrEmpty(desc))
             infoStack.Children.Add(new TextBlock { Text = desc, Style = mutedStyle, FontSize = 11, Margin = new Thickness(0, 1, 0, 0) });
+        infoStack.Children.Add(warn);
+        PaintHotkeyChrome(hkLabel, hkBorder, config);
 
         var dock = new DockPanel();
         DockPanel.SetDock(resetBtn, Dock.Right);
@@ -747,6 +788,8 @@ public partial class SettingsWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             ToolTip = "Tıkla: ata · sağ tık: sil",
         };
+        _hotkeyChrome[hkBorder] = (hkLabel, config, null);
+        PaintHotkeyChrome(hkLabel, hkBorder, config);
         hkBorder.MouseLeftButtonDown += (_, e) =>
         {
             BeginRecording(hkLabel, hkBorder, config);
@@ -757,11 +800,48 @@ public partial class SettingsWindow : Window
             if (_recConfig == config) FinishRecording(true);
             config.Key = "";
             config.Modifiers = SfModifierKeys.None;
-            hkLabel.Text = config.ToString();
+            PaintHotkeyChrome(hkLabel, hkBorder, config);
             Apply(() => { });
             e.Handled = true;
         };
         return hkBorder;
+    }
+
+    private void PaintHotkeyChrome(TextBlock label, Border border, HotkeyConfig config)
+    {
+        label.Text = config.ToString();
+        label.Foreground = Brushes.White;
+        string? warn = HotkeyWarning(config);
+        border.BorderBrush = warn == null ? _hkBorder : _hkWarn;
+        border.Background = _hkBg;
+        bool chip = true;
+        if (_hotkeyChrome.TryGetValue(border, out var row))
+        {
+            chip = row.Warn == null;
+            if (row.Warn != null)
+            {
+                row.Warn.Text = warn ?? "";
+                row.Warn.Visibility = string.IsNullOrEmpty(warn) ? Visibility.Collapsed : Visibility.Visible;
+            }
+        }
+        border.ToolTip = warn ?? (chip ? "Tıkla: ata · sağ tık: sil" : null);
+    }
+
+    private void RefreshHotkeyWarnings()
+    {
+        foreach (var (border, row) in _hotkeyChrome)
+            PaintHotkeyChrome(row.Label, border, row.Config);
+    }
+
+    private string? HotkeyWarning(HotkeyConfig config)
+    {
+        string? windows = WindowsReservedHotkeys.Describe(config);
+        if (windows != null)
+            return windows;
+        IntPtr hwnd = _hwndSource?.Handle ?? IntPtr.Zero;
+        if (hwnd != IntPtr.Zero && HotkeyService.IsTakenByOtherApp(hwnd, config))
+            return "Başka bir uygulama bu kısayolu kullanıyor olabilir.";
+        return null;
     }
 
     private void BeginRecording(TextBlock label, Border border, HotkeyConfig config)
@@ -787,10 +867,7 @@ public partial class SettingsWindow : Window
             _recConfig.Key = _recSavedKey;
             _recConfig.Modifiers = _recSavedMods;
         }
-        _recLabel.Text = _recConfig.ToString();
-        _recLabel.Foreground = Brushes.White;
-        _recBorder.BorderBrush = _hkBorder;
-        _recBorder.Background = _hkBg;
+        PaintHotkeyChrome(_recLabel, _recBorder, _recConfig);
         var didChange = !cancel;
         var recCfg = _recConfig;
         _recLabel = null;

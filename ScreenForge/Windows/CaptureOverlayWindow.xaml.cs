@@ -94,6 +94,12 @@ public partial class CaptureOverlayWindow : Window
     private WpfRect _windowClickBounds;
     private bool _selResizing;
     private int _selResizeEdge = -1; // 0=top,1=right,2=bottom,3=left,4=TL,5=TR,6=BR,7=BL
+    private bool _selMoving;
+    private bool _selMovePending;
+    private bool _selMoveCtrlClick;
+    private WpfPoint _selMoveGrab;
+    private FrameworkElement? _translateSplit;
+    private VisualTranslatePickerPopup? _translateMenu;
 
     private readonly Dictionary<EditorTool, ToggleButton> _toolButtons = new();
     private bool _toolbarDragging;
@@ -160,6 +166,8 @@ public partial class CaptureOverlayWindow : Window
         MouseLeftButtonDown += OnMouseDown;
         MouseMove += OnMouseMove;
         MouseLeftButtonUp += OnMouseUp;
+        PreviewMouseDown += OnPreviewSelectionMoveDown;
+        PreviewMouseUp += OnPreviewSelectionMoveUp;
         PreviewKeyDown += OnPreviewKeyDown;
         KeyDown += OnKeyDown;
 
@@ -395,9 +403,9 @@ public partial class CaptureOverlayWindow : Window
         {
             try
             {
-                var (tl, sl) = TranslateLanguageRouter.ImageRoute(_settings.TranslateNativeLanguage);
+                string tl = VisualTranslateRecents.DefaultCode(_settings);
                 _visualClient ??= new GoogleTranslateVisualClient();
-                await _visualClient.WarmupAsync(tl, sl).ConfigureAwait(true);
+                await _visualClient.WarmupAsync(tl, null).ConfigureAwait(true);
             }
             catch { /* sessiz — çeviri anında tekrar dener */ }
         }, System.Windows.Threading.DispatcherPriority.Background);
@@ -496,6 +504,7 @@ public partial class CaptureOverlayWindow : Window
     {
         // Çeviri sonucu açıkken veya kapatma tıklaması sürerken seçim/resize yok
         if (_translateViewOpen || _suspendCaptureInput) { e.Handled = true; return; }
+        if (_selMovePending || _selMoving) { e.Handled = true; return; }
         if (_mode != CaptureMode.Region) return;
 
         var pos = e.GetPosition(Root);
@@ -569,6 +578,15 @@ public partial class CaptureOverlayWindow : Window
         if (_translateViewOpen || _suspendCaptureInput)
         {
             if (_translateViewOpen) Cursor = Cursors.Arrow;
+            return;
+        }
+
+        if (_selMovePending || _selMoving)
+        {
+            if (_selMovePending && (Math.Abs(pos.X - _start.X) >= 4 || Math.Abs(pos.Y - _start.Y) >= 4))
+                BeginSelectionMove();
+            if (_selMoving)
+                MoveSelectionTo(pos);
             return;
         }
 
@@ -774,6 +792,118 @@ public partial class CaptureOverlayWindow : Window
         _selDip = new WpfRect(Math.Min(l, r), Math.Min(t, b), Math.Abs(r - l), Math.Abs(b - t));
         UpdateSelectionVisual(_selDip);
         QueuePositionPanels();
+    }
+
+    private void OnPreviewSelectionMoveDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_translateViewOpen || _suspendCaptureInput || _textEditing) return;
+        if (_mode != CaptureMode.Region || _phase != Phase.Edit) return;
+        if (_selResizing || _dragging || _selMoving || _selMovePending) return;
+        if (CropActionBar.Visibility == Visibility.Visible) return;
+
+        bool middle = e.ChangedButton == MouseButton.Middle;
+        bool ctrlLeft = e.ChangedButton == MouseButton.Left
+            && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+        if (!middle && !ctrlLeft) return;
+
+        var pos = e.GetPosition(Root);
+        if (IsOverlayChrome(e.OriginalSource as DependencyObject)) return;
+        if (!_selDip.Contains(pos) && HitSelectionEdge(pos) < 0) return;
+        if (ctrlLeft && HitSelectionEdge(pos) >= 0) return;
+
+        _selMovePending = true;
+        _selMoveCtrlClick = ctrlLeft;
+        _selMoving = false;
+        _start = pos;
+        _selMoveGrab = new WpfPoint(pos.X - _selDip.X, pos.Y - _selDip.Y);
+        Cursor = Cursors.SizeAll;
+        CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnPreviewSelectionMoveUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_selMovePending && !_selMoving) return;
+        if (e.ChangedButton is not (MouseButton.Left or MouseButton.Middle)) return;
+        FinishSelectionMove();
+        e.Handled = true;
+    }
+
+    private void BeginSelectionMove()
+    {
+        _selMovePending = false;
+        _selMoving = true;
+        EditHost.Visibility = Visibility.Collapsed;
+        Toolbar.Visibility = Visibility.Collapsed;
+        ActionBar.Visibility = Visibility.Collapsed;
+        OptionBar.Visibility = Visibility.Collapsed;
+        SelectionBorder.Opacity = 1.0;
+        Cursor = Cursors.SizeAll;
+    }
+
+    private void MoveSelectionTo(WpfPoint pos)
+    {
+        double nx = pos.X - _selMoveGrab.X;
+        double ny = pos.Y - _selMoveGrab.Y;
+        double maxX = Math.Max(0, ActualWidth - _selDip.Width);
+        double maxY = Math.Max(0, ActualHeight - _selDip.Height);
+        _selDip = new WpfRect(Math.Clamp(nx, 0, maxX), Math.Clamp(ny, 0, maxY), _selDip.Width, _selDip.Height);
+        UpdateSelectionVisual(_selDip);
+    }
+
+    private void FinishSelectionMove()
+    {
+        bool pending = _selMovePending;
+        bool moving = _selMoving;
+        bool ctrlClick = _selMoveCtrlClick;
+        var origin = _start;
+        _selMovePending = false;
+        _selMoving = false;
+        _selMoveCtrlClick = false;
+        try { if (IsMouseCaptured) ReleaseMouseCapture(); } catch { /* ignore */ }
+        Cursor = Cursors.Arrow;
+        if (!pending && !moving) return;
+        if (pending)
+        {
+            if (ctrlClick)
+                TryToggleSelectionAt(origin);
+            return;
+        }
+        if (!IsUsableSelection(_selDip))
+        {
+            LeaveEditPhase();
+            ResetSelection();
+            return;
+        }
+        _pixelRegion = ToPixelRegion(_selDip);
+        RebuildEditForNewRegion();
+    }
+
+    private void TryToggleSelectionAt(WpfPoint rootPos)
+    {
+        if (_canvas == null || _scene == null || !_canvas.IsVisible) return;
+        try
+        {
+            var local = Root.TransformToVisual(_canvas).Transform(rootPos);
+            var hit = _scene.HitTest(_canvas.PointToScene(local));
+            if (hit != null)
+                _canvas.ToggleSelection(hit);
+        }
+        catch { /* tuval hazır değil */ }
+    }
+
+    private bool IsOverlayChrome(DependencyObject? src)
+    {
+        while (src != null)
+        {
+            if (ReferenceEquals(src, Toolbar) || ReferenceEquals(src, ActionBar)
+                || ReferenceEquals(src, ToolActionBox) || ReferenceEquals(src, ExportActionBox)
+                || ReferenceEquals(src, OptionBar) || ReferenceEquals(src, ModeBar)
+                || ReferenceEquals(src, CropActionBar) || ReferenceEquals(src, HintBox))
+                return true;
+            src = VisualTreeHelper.GetParent(src);
+        }
+        return false;
     }
 
     private void LeaveEditPhase()
@@ -1515,7 +1645,8 @@ public partial class CaptureOverlayWindow : Window
     // ---- Üst aksiyon çubuğu (Kopyala/Kaydet/Yükle) ----
     private void BuildActionBar()
     {
-        ActionStack.Children.Clear();
+        ToolActionStack.Children.Clear();
+        ExportActionStack.Children.Clear();
         _recorderButton = null;
         if (_mode is CaptureMode.Region or CaptureMode.FullScreen
             && (_settings.Gif.Enabled || _settings.Video.Enabled))
@@ -1525,34 +1656,35 @@ public partial class CaptureOverlayWindow : Window
             string label = gif && video ? "Kaydedici" : gif ? "GIF Kaydet" : "Video Kaydet";
             string tip = gif && video ? "GIF veya ekran kaydı" : gif ? "GIF kaydı başlat" : "Video kaydı başlat";
             _recorderButton = MakeCmd("IconRecord", label, tip, OpenRecorderPicker);
-            ActionStack.Children.Add(_recorderButton);
+            ToolActionStack.Children.Add(_recorderButton);
         }
         // Çevir: seçili bölgeyi Google Lens ile çevirip aynı yerde göster
         if (_mode is CaptureMode.Region or CaptureMode.FullScreen)
         {
-            string tgt = string.IsNullOrWhiteSpace(_settings.TranslateNativeLanguage)
-                ? "tr" : _settings.TranslateNativeLanguage.Trim().ToUpperInvariant();
-            ActionStack.Children.Add(MakeCmd("IconTranslate", "Çevir",
-                $"Seçili alanı çevir → {tgt}  (kaynak: ayarlar)",
-                () => _ = DoTranslateAsync()));
-            ActionStack.Children.Add(MakeCmd("IconOcr", "Metin",
+            string pair = VisualTranslateRecents.DefaultCode(_settings);
+            string pairLabel = TranslateLanguageDefaults.Label(pair);
+            _translateSplit = MakeTranslateSplit(
+                $"Seçili alanı {pairLabel} diline çevir",
+                () => _ = DoTranslateAsync(null));
+            ToolActionStack.Children.Add(_translateSplit);
+            ToolActionStack.Children.Add(MakeCmd("IconOcr", "Metin",
                 "Seçili alandaki yazıyı panoya kopyala",
                 () => _ = DoExtractTextAsync()));
         }
-        _reverseSearchButton = MakeCmd("IconSearch", "Ters arama",
+        _reverseSearchButton = MakeCmd("IconSearch", "Tersten Ara",
             "Yandex Görseller veya Google Lens (varsayılan tarayıcı)",
             OpenReverseSearchPicker);
-        ActionStack.Children.Add(_reverseSearchButton);
-        ActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala",
+        ToolActionStack.Children.Add(_reverseSearchButton);
+        if (_mode == CaptureMode.Free)
+            ToolActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle (iç pano kalır)", DoClearScene));
+        ExportActionStack.Children.Add(MakeCmd("IconCopy", "Kopyala",
             _mode == CaptureMode.Free
                 ? "Dışa aktar / panoya kopyala · seçili öğe için Ctrl+C"
                 : "Kopyala (Ctrl+C)",
             DoCopy));
-        ActionStack.Children.Add(MakeCmd("IconSave", "Kaydet", "Kaydet (Ctrl+S)", DoSave));
-        ActionStack.Children.Add(MakeCmd("IconCloud", "Bulut", "Buluta Yükle", DoUpload, accent: true));
-        if (_mode == CaptureMode.Free)
-            ActionStack.Children.Add(MakeCmd("IconTrash", "Temizle", "Sahneyi temizle (iç pano kalır)", DoClearScene));
-        ActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
+        ExportActionStack.Children.Add(MakeCmd("IconSave", "Kaydet", "Kaydet (Ctrl+S)", DoSave));
+        ExportActionStack.Children.Add(MakeCmd("IconCloud", "Bulut", "Buluta Yükle", DoUpload, accent: true));
+        ExportActionStack.Children.Add(MakeCmd("IconClose", "Kapat", "Kapat (Esc)", () => Close()));
         ActionBar.Visibility = Visibility.Visible;
     }
 
@@ -1964,7 +2096,7 @@ public partial class CaptureOverlayWindow : Window
         return scaled;
     }
 
-    private async Task DoTranslateAsync()
+    private async Task DoTranslateAsync(string? targetCode)
     {
         if (_translateBusy || _phase != Phase.Edit) return;
         if (_mode == CaptureMode.Free)
@@ -1985,7 +2117,10 @@ public partial class CaptureOverlayWindow : Window
 
         try
         {
-            var (targetLang, sourceLang) = TranslateLanguageRouter.ImageRoute(_settings.TranslateNativeLanguage);
+            string targetLang = string.IsNullOrWhiteSpace(targetCode)
+                ? VisualTranslateRecents.DefaultCode(_settings)
+                : targetCode.Trim();
+            string? sourceLang = null;
 
             ShowBusyToast(FormatTranslatingMessage(targetLang));
 
@@ -2892,6 +3027,68 @@ public partial class CaptureOverlayWindow : Window
         });
     }
 
+    private FrameworkElement MakeTranslateSplit(string tip, Action onClick)
+    {
+        var main = MakeCmd("IconTranslate", "Görsel Çeviri", tip, onClick);
+        var chevron = new Button
+        {
+            Cursor = Cursors.Hand,
+            Width = 22,
+            Height = 34,
+            Margin = new Thickness(0, 0, 1, 0),
+            Padding = new Thickness(0),
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Style = TryFindResource("ActionChip") as Style,
+            ToolTip = "Çevrilecek dil",
+        };
+        chevron.Content = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M4 7 L8 11 L12 7"),
+            Stroke = System.Windows.Media.Brushes.White,
+            StrokeThickness = 1.6,
+            Width = 10,
+            Height = 10,
+            Stretch = Stretch.Uniform,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+        };
+        chevron.Click += (_, _) => ToggleVisualTranslateMenu();
+        var split = new StackPanel { Orientation = Orientation.Horizontal };
+        split.Children.Add(main);
+        split.Children.Add(chevron);
+        return split;
+    }
+
+    private void ToggleVisualTranslateMenu()
+    {
+        if (_translateMenu?.IsOpen == true)
+        {
+            _translateMenu.Close();
+            return;
+        }
+        if (_translateSplit == null || _translateBusy) return;
+        string def = VisualTranslateRecents.DefaultCode(_settings);
+        _translateMenu = new VisualTranslatePickerPopup(
+            _translateSplit,
+            this,
+            def,
+            VisualTranslateRecents.Visible(_settings),
+            code =>
+            {
+                if (!string.Equals(code, def, StringComparison.OrdinalIgnoreCase))
+                {
+                    VisualTranslateRecents.Remember(_settings, code);
+                    _settings.Save();
+                }
+                _ = DoTranslateAsync(code);
+            });
+        _translateMenu.Open();
+    }
+
     private Button MakeCmd(string icon, string label, string tip, Action onClick, bool accent = false)
     {
         var b = new Button
@@ -3081,29 +3278,13 @@ public partial class CaptureOverlayWindow : Window
     private void ApplyOverlayChromeScale()
     {
         double scale = OverlayChromeScale();
-        double tools = scale * SelectionToolScale();
-        bool snapTools = Math.Abs(SelectionToolScale() - 1) < 0.001;
-        ChromeScale.Apply(Toolbar, tools, snapTools);
-        ChromeScale.Apply(ActionBar, tools, snapTools);
+        ChromeScale.Apply(Toolbar, scale);
+        ChromeScale.Apply(ToolActionBox, scale);
+        ChromeScale.Apply(ExportActionBox, scale);
         ChromeScale.Apply(ModeBar, scale);
-        ChromeScale.Apply(CropActionBar, tools, snapTools);
-        ChromeScale.Apply(OptionBar, tools, snapTools);
+        ChromeScale.Apply(CropActionBar, scale);
+        ChromeScale.Apply(OptionBar, scale);
         ChromeScale.Apply(ToastBanner, scale);
-    }
-
-    private double SelectionToolScale()
-    {
-        if (_mode != CaptureMode.Region)
-            return 1;
-        int w = _pixelRegion.Width;
-        int h = _pixelRegion.Height;
-        if (w < 2 || h < 2)
-        {
-            var px = ToPixelRegion(_selDip);
-            w = px.Width;
-            h = px.Height;
-        }
-        return ChromeScale.ForSelection(w, h);
     }
 
     private double OverlayChromeScale()
@@ -3185,11 +3366,6 @@ public partial class CaptureOverlayWindow : Window
         }
 
         PositionActionBar(mon);
-        if (ActionBarAtMonitorTop(mon))
-        {
-            ChromeScale.Apply(ActionBar, OverlayChromeScale());
-            PositionActionBar(mon);
-        }
 
         if (CropActionBar.Visibility == Visibility.Visible)
             PositionCropActionBar(mon);
@@ -3223,22 +3399,63 @@ public partial class CaptureOverlayWindow : Window
     private void PositionActionBar(WpfRect mon)
     {
         const double gap = 8;
-        ActionBar.UpdateLayout();
-        var ab = ChromeScale.LayoutSize(ActionBar);
-        double abW = ab.Width;
-        double abH = ab.Height;
-        if (abW <= 0 || abH <= 0) return;
+        Canvas.SetLeft(ActionBar, 0);
+        Canvas.SetTop(ActionBar, 0);
+        ActionBar.Width = Math.Max(1, ActualWidth);
+        ActionBar.Height = Math.Max(1, ActualHeight);
 
-        bool hasLocalSel = _selDip.Width >= 2 && _selDip.Height >= 2
+        ToolActionBox.UpdateLayout();
+        ExportActionBox.UpdateLayout();
+        var tool = ChromeScale.LayoutSize(ToolActionBox);
+        var exp = ChromeScale.LayoutSize(ExportActionBox);
+        if (exp.Width <= 0 || exp.Height <= 0) return;
+
+        bool hasLocalSel = _mode == CaptureMode.Region
+            && _selDip.Width >= 2 && _selDip.Height >= 2
             && (_selDip.Width < ActualWidth - 2 || _selDip.Height < ActualHeight - 2);
+        var exportAtTop = TopCenterRect(mon, exp.Width, exp.Height, 18);
 
-        if (!(hasLocalSel && _mode == CaptureMode.Region))
+        double tx = 0, ty = 0;
+        bool dockTools = !hasLocalSel || tool.Width <= 0
+            || !TryPlaceToolsNearSelection(mon, tool.Width, tool.Height, gap, exportAtTop, out tx, out ty);
+
+        if (dockTools)
+            PlaceExportAndToolsAtTop(mon, tool.Width, tool.Height, exp.Width, exp.Height, gap);
+        else
         {
-            PlaceTopCenterOnMonitor(ActionBar, mon, topInset: 18);
-            return;
+            Canvas.SetLeft(ExportActionBox, exportAtTop.X);
+            Canvas.SetTop(ExportActionBox, exportAtTop.Y);
+            Canvas.SetLeft(ToolActionBox, Math.Round(tx));
+            Canvas.SetTop(ToolActionBox, Math.Round(ty));
         }
+    }
 
-        // Toolbar ve seçim ile çakışmayan aday konumlar (öncelik sırasıyla).
+    private void PlaceExportAndToolsAtTop(WpfRect mon, double toolW, double toolH, double expW, double expH, double gap)
+    {
+        double h = Math.Max(toolH, expH);
+        double pairW = toolW > 0 ? toolW + gap + expW : expW;
+        double x = Math.Clamp(
+            mon.Left + (mon.Width - pairW) / 2,
+            mon.Left + gap,
+            Math.Max(mon.Left + gap, mon.Right - pairW - gap));
+        double y = Math.Clamp(mon.Top + 18, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - h - gap));
+        if (toolW > 0)
+        {
+            Canvas.SetLeft(ToolActionBox, Math.Round(x));
+            Canvas.SetTop(ToolActionBox, Math.Round(y));
+            Canvas.SetLeft(ExportActionBox, Math.Round(x + toolW + gap));
+        }
+        else
+            Canvas.SetLeft(ExportActionBox, Math.Round(x));
+        Canvas.SetTop(ExportActionBox, Math.Round(y));
+    }
+
+    private bool TryPlaceToolsNearSelection(WpfRect mon, double w, double h, double gap, WpfRect exportAtTop, out double bestX, out double bestY)
+    {
+        bestX = mon.Left + gap;
+        bestY = mon.Top + 18;
+        if (w <= 0 || h <= 0) return false;
+
         WpfRect? tb = null;
         if (Toolbar.Visibility == Visibility.Visible && Toolbar.ActualWidth > 0)
         {
@@ -3246,65 +3463,68 @@ public partial class CaptureOverlayWindow : Window
             tb = new WpfRect(Canvas.GetLeft(Toolbar), Canvas.GetTop(Toolbar), tbSize.Width, tbSize.Height);
         }
 
-        double cx = _selDip.X + _selDip.Width / 2;
-        var candidates = new List<(double x, double y)>
+        double blockTop = _selDip.Y;
+        double blockBottom = _selDip.Bottom;
+        double blockLeft = _selDip.X;
+        double blockRight = _selDip.Right;
+        if (tb.HasValue)
         {
-            // 1) Seçimin üstü — ortalı
-            (cx - abW / 2, _selDip.Y - abH - gap),
-            // 2) Seçimin altı — ortalı
-            (cx - abW / 2, _selDip.Bottom + gap),
-            // 3) Seçimin solu (toolbar genelde sağda)
-            (_selDip.X - abW - gap, _selDip.Y),
-            // 4) Toolbar'ın karşı tarafı: toolbar sağdaysa seçimin solu zaten; sağa dene
-            (_selDip.Right + gap, _selDip.Y - abH - gap),
-            // 5) Monitör üstü — seçim X'ine hizalı (küçük alan / köşe yedek)
-            (cx - abW / 2, mon.Top + 18),
-            // 6) Monitör üst-orta (son çare)
-            (mon.Left + (mon.Width - abW) / 2, mon.Top + 18),
+            blockTop = Math.Min(blockTop, tb.Value.Y);
+            blockBottom = Math.Max(blockBottom, tb.Value.Bottom);
+            blockLeft = Math.Min(blockLeft, tb.Value.X);
+            blockRight = Math.Max(blockRight, tb.Value.Right);
+        }
+
+        double cx = _selDip.X + _selDip.Width / 2;
+        var candidates = new (double x, double y)[]
+        {
+            (cx - w / 2, blockTop - h - gap),
+            (_selDip.X, blockTop - h - gap),
+            (cx - w / 2, blockBottom + gap),
+            (_selDip.X, blockBottom + gap),
+            (blockLeft - w - gap, _selDip.Y),
+            (blockRight + gap, _selDip.Y),
         };
 
-        double bestX = mon.Left + (mon.Width - abW) / 2;
-        double bestY = mon.Top + 18;
         double bestScore = double.NegativeInfinity;
-
+        bool found = false;
         foreach (var (rawX, rawY) in candidates)
         {
-            double x = Math.Clamp(rawX, mon.Left + gap, Math.Max(mon.Left + gap, mon.Right - abW - gap));
-            double y = Math.Clamp(rawY, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - abH - gap));
-            var rect = new WpfRect(x, y, abW, abH);
+            double maxX = Math.Max(mon.Left + gap, mon.Right - w - gap);
+            double maxY = Math.Max(mon.Top + gap, mon.Bottom - h - gap);
+            bool fits = rawX >= mon.Left + gap - 1 && rawX <= maxX + 1
+                && rawY >= mon.Top + gap - 1 && rawY <= maxY + 1;
+            double x = Math.Clamp(rawX, mon.Left + gap, maxX);
+            double y = Math.Clamp(rawY, mon.Top + gap, maxY);
+            var rect = new WpfRect(x, y, w, h);
+            if (rect.IntersectsWith(_selDip)) continue;
+            if (tb.HasValue && rect.IntersectsWith(tb.Value)) continue;
+            if (rect.IntersectsWith(exportAtTop)) continue;
+            if (!fits) continue;
 
-            // Monitör dışına taşma (clamp sonrası neredeyse 0)
-            double score = 0;
-            if (tb.HasValue && rect.IntersectsWith(tb.Value))
-                score -= 1000;
-            if (rect.IntersectsWith(_selDip))
-                score -= 400;
-            // Seçime yakınlık (daha yakın biraz daha iyi, ama çakışma ağır cezalı)
             double dx = (rect.Left + rect.Width / 2) - cx;
             double dy = (rect.Top + rect.Height / 2) - (_selDip.Y + _selDip.Height / 2);
-            score -= Math.Sqrt(dx * dx + dy * dy) * 0.05;
-            // Üst adayları hafif tercih
-            if (rect.Bottom <= _selDip.Y + 1) score += 30;
-            if (rect.Top >= _selDip.Bottom - 1) score += 20;
+            double score = -Math.Sqrt(dx * dx + dy * dy);
+            if (rect.Bottom <= _selDip.Y + 1) score += 40;
+            else if (rect.Top >= blockBottom - 1) score += 24;
 
             if (score > bestScore)
             {
                 bestScore = score;
                 bestX = x;
                 bestY = y;
+                found = true;
             }
         }
-
-        Canvas.SetLeft(ActionBar, Math.Round(bestX));
-        Canvas.SetTop(ActionBar, Math.Round(bestY));
+        return found;
     }
 
-    private bool ActionBarAtMonitorTop(WpfRect mon)
+    private static WpfRect TopCenterRect(WpfRect mon, double w, double h, double topInset)
     {
-        if (ActionBar.Visibility != Visibility.Visible)
-            return false;
-        double top = Canvas.GetTop(ActionBar);
-        return !double.IsNaN(top) && top <= mon.Top + 28;
+        const double gap = 6;
+        double x = Math.Clamp(mon.Left + (mon.Width - w) / 2, mon.Left + gap, Math.Max(mon.Left + gap, mon.Right - w - gap));
+        double y = Math.Clamp(mon.Top + topInset, mon.Top + gap, Math.Max(mon.Top + gap, mon.Bottom - h - gap));
+        return new WpfRect(Math.Round(x), Math.Round(y), w, h);
     }
 
     private void PositionCropActionBar(WpfRect? monOpt = null)

@@ -25,6 +25,17 @@ internal static class TranslateLanguageDefaults
         ("hi", "हिन्दी"),
     ];
 
+    internal static string Label(string code)
+    {
+        code = code.Trim().ToLowerInvariant();
+        foreach (var (c, label) in Languages)
+        {
+            if (c == code)
+                return label;
+        }
+        return code;
+    }
+
     internal static bool IsKnown(string code)
     {
         code = code.Trim().ToLowerInvariant();

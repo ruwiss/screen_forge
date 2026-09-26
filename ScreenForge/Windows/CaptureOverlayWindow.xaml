@@ -74,15 +74,23 @@
             <StackPanel x:Name="ModeStack" Orientation="Horizontal" />
         </Border>
 
-        <!-- Üst-orta aksiyon çubuğu (düzenleme fazında; Kopyala/Kaydet/Yükle) -->
-        <Border x:Name="ActionBar" Visibility="Collapsed"
-                Background="#F21F2430" CornerRadius="6" Padding="3"
-                BorderBrush="#3A4254" BorderThickness="1">
-            <Border.Effect>
-                <DropShadowEffect Color="Black" BlurRadius="12" ShadowDepth="2" Opacity="0.45" />
-            </Border.Effect>
-            <StackPanel x:Name="ActionStack" Orientation="Horizontal" />
-        </Border>
+        <!-- Kayıt kutusu her zaman üstte; araç kutusu seçimin yanında, sıkışınca yanına gelir -->
+        <Canvas x:Name="ActionBar" Visibility="Collapsed">
+            <Border x:Name="ToolActionBox" Background="#F21F2430" CornerRadius="6" Padding="3"
+                    BorderBrush="#3A4254" BorderThickness="1">
+                <Border.Effect>
+                    <DropShadowEffect Color="Black" BlurRadius="12" ShadowDepth="2" Opacity="0.45" />
+                </Border.Effect>
+                <StackPanel x:Name="ToolActionStack" Orientation="Horizontal" />
+            </Border>
+            <Border x:Name="ExportActionBox" Background="#F21F2430" CornerRadius="6" Padding="3"
+                    BorderBrush="#3A4254" BorderThickness="1">
+                <Border.Effect>
+                    <DropShadowEffect Color="Black" BlurRadius="12" ShadowDepth="2" Opacity="0.45" />
+                </Border.Effect>
+                <StackPanel x:Name="ExportActionStack" Orientation="Horizontal" />
+            </Border>
+        </Canvas>
 
         <!-- Dikey araç şeridi (Faz 2) -->
         <Border x:Name="Toolbar" Visibility="Collapsed"

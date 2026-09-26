@@ -47,10 +47,12 @@ public sealed class AppSettings
     public string TranslateSourceLanguage { get; set; } = "auto";
     /// <summary>Eski JSON alanı; yeni kod ana dili kullanır.</summary>
     public string TranslateTargetLanguage { get; set; } = "tr";
-    /// <summary>Ana dil (görüntü çevirisi hedefi; hızlı çeviride varsayılan hedef).</summary>
+    /// <summary>Ana dil (hızlı çeviride varsayılan hedef).</summary>
     public string TranslateNativeLanguage { get; set; } = "";
-    /// <summary>Çevrilecek dil (kaynak zaten ana dilse hızlı çevirinin hedefi).</summary>
+    /// <summary>Çevrilecek dil. Görsel çeviri bunu varsayar.</summary>
     public string TranslatePairLanguage { get; set; } = "";
+    /// <summary>Görsel çeviri menüsünde varsayılandan farklı son seçilen diller.</summary>
+    public List<string> RecentVisualLanguages { get; set; } = [];
 
     // ===================== Kalıcılık =====================
 
@@ -116,6 +118,13 @@ public sealed class AppSettings
         if (string.IsNullOrWhiteSpace(TranslatePairLanguage))
             TranslatePairLanguage = TranslateLanguageDefaults.DefaultPair(TranslateNativeLanguage);
 
+        RecentVisualLanguages ??= [];
+        string pair = TranslatePairLanguage.Trim();
+        RecentVisualLanguages.RemoveAll(c =>
+            string.IsNullOrWhiteSpace(c)
+            || !TranslateLanguageDefaults.IsKnown(c)
+            || string.Equals(c.Trim(), pair, StringComparison.OrdinalIgnoreCase));
+
         if (SettingsRevision < 2)
         {
             if (!RegionHotkey.IsValid)
@@ -140,6 +149,12 @@ public sealed class AppSettings
             // Yazma hatası sessizce yutulur (disk dolu / izin vs.).
         }
     }
+
+    internal static HotkeyConfig DefaultRegionHotkey() => AltShift("S");
+
+    internal static HotkeyConfig DefaultQuickTranslateHotkey() => AltShift("T");
+
+    internal static HotkeyConfig UnassignedHotkey() => new();
 
     private static HotkeyConfig AltShift(string key) => new()
     {
@@ -414,6 +429,12 @@ public sealed class HotkeyConfig
     public string Key { get; set; } = "";
 
     public bool IsValid => !string.IsNullOrWhiteSpace(Key);
+
+    public void CopyFrom(HotkeyConfig other)
+    {
+        Key = other.Key;
+        Modifiers = other.Modifiers;
+    }
 
     public override string ToString()
     {
