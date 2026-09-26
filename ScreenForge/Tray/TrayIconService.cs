@@ -53,29 +53,29 @@ public sealed class TrayIconService : IDisposable
     {
         var menu = new ContextMenu();
 
-        menu.Items.Add(MenuItem("Bölge Yakala", () => CaptureRegionRequested?.Invoke(), isDefault: true));
-        menu.Items.Add(MenuItem("Tam Ekran Yakala", () => CaptureFullScreenRequested?.Invoke()));
-        menu.Items.Add(MenuItem("Serbest / Yerleştirme", () => CollageRequested?.Invoke()));
-        menu.Items.Add(MenuItem("Renk Seçici", () => ColorPickerRequested?.Invoke()));
-        menu.Items.Add(MenuItem("Yükleme Yap", () => TrayUploadRequested?.Invoke()));
-        menu.Items.Add(MenuItem("Hızlı Çeviri", () => QuickTranslateRequested?.Invoke()));
+        menu.Items.Add(MenuItem("Bölge Yakala", () => CaptureRegionRequested?.Invoke(), 0xE7A8, isDefault: true));
+        menu.Items.Add(MenuItem("Tam Ekran Yakala", () => CaptureFullScreenRequested?.Invoke(), 0xE740));
+        menu.Items.Add(MenuItem("Serbest / Yerleştirme", () => CollageRequested?.Invoke(), 0xE8B9));
+        menu.Items.Add(MenuItem("Renk Seçici", () => ColorPickerRequested?.Invoke(), 0xE790));
+        menu.Items.Add(MenuItem("Yükleme Yap", () => TrayUploadRequested?.Invoke(), 0xE898));
+        menu.Items.Add(MenuItem("Hızlı Çeviri", () => QuickTranslateRequested?.Invoke(), 0xE8C1));
         menu.Items.Add(new Separator());
         menu.Items.Add(PresenterToggle());
         menu.Items.Add(SubtitleToggle());
         menu.Items.Add(new Separator());
-        menu.Items.Add(MenuItem("Ayarlar", () => SettingsRequested?.Invoke()));
-        menu.Items.Add(MenuItem("Hakkında", () => AboutRequested?.Invoke()));
+        menu.Items.Add(MenuItem("Ayarlar", () => SettingsRequested?.Invoke(), 0xE713));
+        menu.Items.Add(MenuItem("Hakkında", () => AboutRequested?.Invoke(), 0xE946));
         menu.Items.Add(new Separator());
-        menu.Items.Add(MenuItem("Çıkış", () => ExitRequested?.Invoke()));
+        menu.Items.Add(MenuItem("Çıkış", () => ExitRequested?.Invoke(), 0xE711));
 
         menu.Opened += (_, _) =>
         {
             foreach (var item in menu.Items.OfType<MenuItem>())
             {
                 if (item.Tag as string == "presenter")
-                    item.IsChecked = GetPresenterEnabled?.Invoke() ?? true;
+                    PaintToggle(item, "Sunum araçları", GetPresenterEnabled?.Invoke() ?? true);
                 if (item.Tag as string == "subtitle")
-                    item.IsChecked = GetSubtitleEnabled?.Invoke() ?? false;
+                    PaintToggle(item, "Canlı altyazı", GetSubtitleEnabled?.Invoke() ?? false);
             }
         };
         return menu;
@@ -86,11 +86,16 @@ public sealed class TrayIconService : IDisposable
         var item = new MenuItem
         {
             Header = "Sunum araçları",
-            IsCheckable = true,
-            IsChecked = GetPresenterEnabled?.Invoke() ?? true,
+            Icon = Glyph(0xE70F),
             Tag = "presenter",
         };
-        item.Click += (_, _) => PresenterEnabledChanged?.Invoke(item.IsChecked == true);
+        PaintToggle(item, "Sunum araçları", GetPresenterEnabled?.Invoke() ?? true);
+        item.Click += (_, _) =>
+        {
+            bool next = !(GetPresenterEnabled?.Invoke() ?? true);
+            PresenterEnabledChanged?.Invoke(next);
+            PaintToggle(item, "Sunum araçları", next);
+        };
         return item;
     }
 
@@ -99,30 +104,52 @@ public sealed class TrayIconService : IDisposable
         var item = new MenuItem
         {
             Header = "Canlı altyazı",
-            IsCheckable = true,
-            IsChecked = GetSubtitleEnabled?.Invoke() ?? false,
+            Icon = Glyph(0xE7F0),
             Tag = "subtitle",
         };
-        item.Click += (_, _) => SubtitleEnabledChanged?.Invoke(item.IsChecked == true);
+        PaintToggle(item, "Canlı altyazı", GetSubtitleEnabled?.Invoke() ?? false);
+        item.Click += (_, _) =>
+        {
+            bool next = !(GetSubtitleEnabled?.Invoke() ?? false);
+            SubtitleEnabledChanged?.Invoke(next);
+            PaintToggle(item, "Canlı altyazı", next);
+        };
         return item;
     }
 
     public void SetSubtitleChecked(bool on)
     {
         if (_icon.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault(i => i.Tag as string == "subtitle") is { } item)
-            item.IsChecked = on;
+            PaintToggle(item, "Canlı altyazı", on);
     }
 
-    private static MenuItem MenuItem(string header, Action action, bool isDefault = false)
+    private static MenuItem MenuItem(string header, Action action, int glyph, bool isDefault = false)
     {
         var item = new MenuItem
         {
             Header = header,
+            Icon = Glyph(glyph),
             FontWeight = isDefault ? FontWeights.SemiBold : FontWeights.Normal,
         };
         item.Click += (_, _) => action();
         return item;
     }
+
+    private static void PaintToggle(MenuItem item, string title, bool on)
+    {
+        item.Header = on ? title + "  ✓" : title;
+    }
+
+    private static TextBlock Glyph(int code) => new()
+    {
+        Text = char.ConvertFromUtf32(code),
+        FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+        FontSize = 13,
+        Width = 16,
+        Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x93, 0xA6)),
+        TextAlignment = TextAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
 
     /// <summary>Tepsi balonu / kısa bildirim.</summary>
     public void ShowMessage(string title, string message)
