@@ -46,13 +46,15 @@ public partial class CaptureOverlayWindow : Window
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsHungAppWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     // DWM extended frame bounds — gölge hariç görünür çerçeve (Windows 10+)
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out WinRect pvAttribute, int cbAttribute);
+    [DllImport("dwmapi.dll")] private static extern int DwmFlush();
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
     private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    private const int DWMWA_CLOAK = 13;
     private const uint GA_ROOT = 2;
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct WinRect { public int Left, Top, Right, Bottom; }
@@ -60,8 +62,8 @@ public partial class CaptureOverlayWindow : Window
     private enum Phase { Select, Edit }
     private enum PendingFreeExportAction { Copy, Save, Upload }
 
-    private readonly Bitmap _screenshot;
-    private readonly Rectangle _virtualBounds;
+    private Bitmap _screenshot;
+    private Rectangle _virtualBounds;
     private readonly AppSettings _settings;
 
     private CaptureMode _mode;
@@ -95,7 +97,7 @@ public partial class CaptureOverlayWindow : Window
     private bool _windowHoverActive = true;
     private List<(IntPtr hwnd, WpfRect dip)> _visibleWindows = new();
     private WpfRect _hoveredWindowDip = WpfRect.Empty;
-    private readonly IntPtr _foregroundWindowAtOpen;
+    private IntPtr _foregroundWindowAtOpen;
     // Pencere tıklandı ama henüz commit edilmedi (sürüklemeye başlarsa iptal)
     private bool _windowClickPending;
     private WpfRect _windowClickBounds;
@@ -133,6 +135,9 @@ public partial class CaptureOverlayWindow : Window
     private byte[]? _lastTranslatedPng;
     private CancellationTokenSource? _copyFeedbackCts;
     private int _translateZoomAnim;
+    /// <summary>Ön gösterim (bkz. <see cref="PrepareForInstantShow"/>) sürüyor mu?</summary>
+    private bool _preparedPreview;
+    private TimeSpan? _preparedRenderingTime;
 
     private static System.Windows.Input.Cursor RegionCursor => WhiteCrossCursor.Instance;
 
@@ -155,6 +160,8 @@ public partial class CaptureOverlayWindow : Window
         SourceInitialized += OnSourceInitialized;
         Closed += async (_, _) =>
         {
+            // Ekran görüntüsü pencerenin malıdır: kapanınca bırakılır.
+            _screenshot?.Dispose();
             _translateCts?.Cancel();
             _translateCts?.Dispose();
             _copyFeedbackCts?.Cancel();
@@ -187,6 +194,115 @@ public partial class CaptureOverlayWindow : Window
         ToolbarGrip.MouseLeftButtonUp += OnToolbarGripUp;
         CropApplyButton.Click += (_, _) => CommitSceneCropUi();
         CropCancelButton.Click += (_, _) => CancelSceneCropUi();
+    }
+
+    /// <summary>Pencerenin yerleştiği sanal ekran sınırları (fiziksel piksel).</summary>
+    public Rectangle VirtualBounds => _virtualBounds;
+
+    /// <summary>Pencerenin gösterdiği tam ekran görüntüsü (kırpma/kaynak için).</summary>
+    public Bitmap CurrentScreenshot => _screenshot;
+
+    /// <summary>
+    /// Önceden hazırlanmış (bkz. <see cref="PrepareForInstantShow"/>) pencereye yeni
+    /// yakalamayı yükler. Pencere hattı hazır olduğundan Show() tek karede görünür.
+    /// Eski görüntü dispose edilir; sahiplik pencereye geçer.
+    /// </summary>
+    public void SetScreenshot(Bitmap screenshot, Rectangle virtualBounds, CaptureMode mode)
+    {
+        // Önce dönüşüm: hata olursa sahiplik ve görünüm değişmesin.
+        var source = ScreenCapture.ToBitmapSource(screenshot);
+
+        // Kısayol ön gösterim sürerken gelebilir. Önce onu bitir: eski render veya
+        // zaman aşımı callback'i yeni yakalamayı sonradan gizleyemesin.
+        FinishPreparedPreview();
+
+        if (!ReferenceEquals(_screenshot, screenshot))
+            _screenshot?.Dispose();
+        _screenshot = screenshot;
+        _foregroundWindowAtOpen = GetForegroundWindow();
+        if (_virtualBounds != virtualBounds)
+        {
+            _virtualBounds = virtualBounds;
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+                MoveWindow(hwnd, virtualBounds.X, virtualBounds.Y, virtualBounds.Width, virtualBounds.Height, false);
+        }
+        ScreenImage.Source = source;
+
+        if (_mode != mode)
+        {
+            _mode = mode;
+            ApplyMode();
+        }
+        else
+        {
+            // Aynı modda seçim durumu bozulmasın; yalnızca çubuklar imlecin
+            // monitörüne göre yerleştirilsin.
+            PositionTopBars();
+        }
+    }
+
+    /// <summary>
+    /// Pencereyi ekranda hiç görünmeden bir kez açıp kapatır: HWND, Loaded, ilk render
+    /// ve DWM hazırlanır. Ön gösterim DWM tarafından görünmez kılınır; bu desteklenmezse
+    /// ekran dışına taşınır. Her iki durumda da odak çalınmaz.
+    /// </summary>
+    public void PrepareForInstantShow()
+    {
+        ShowActivated = false;
+        var hwnd = new WindowInteropHelper(this).EnsureHandle();
+        // DWM cloak görünürlüğü tamamen kapatır; HWND monitör üzerindeyken WPF
+        // gerçekten GPU/render kaynaklarını hazırlar. Tamamen ekran dışındaki
+        // pencerenin render'ı sürücü tarafından atlanıp ilk basışa kalabiliyor.
+        int cloak = 1;
+        if (DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, ref cloak, sizeof(int)) != 0)
+            MoveWindow(hwnd, _virtualBounds.X - 100000, _virtualBounds.Y,
+                _virtualBounds.Width, _virtualBounds.Height, false);
+        _preparedPreview = true;
+        ContentRendered += OnPreparedRendered;
+        Show();
+        // Yedek: ContentRendered veya sonraki render turu gelmezse yine de geri alın.
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            await System.Threading.Tasks.Task.Delay(500);
+            FinishPreparedPreview();
+        });
+    }
+
+    private void OnPreparedRendered(object? sender, EventArgs e)
+    {
+        if (!_preparedPreview) return;
+        ContentRendered -= OnPreparedRendered;
+        CompositionTarget.Rendering += OnPreparedFrame;
+    }
+
+    /// <summary>İlk render komutlarıyla aynı turda gizlemek DWM ısınmasını iptal etmesin.</summary>
+    private void OnPreparedFrame(object? sender, EventArgs e)
+    {
+        if (!_preparedPreview) return;
+        if (e is not RenderingEventArgs frame) return;
+        if (_preparedRenderingTime == null) { _preparedRenderingTime = frame.RenderingTime; return; }
+        if (_preparedRenderingTime == frame.RenderingTime) return;
+        DwmFlush();
+        FinishPreparedPreview();
+    }
+
+    private void FinishPreparedPreview()
+    {
+        if (!_preparedPreview) return;
+        _preparedPreview = false;
+        ContentRendered -= OnPreparedRendered;
+        CompositionTarget.Rendering -= OnPreparedFrame;
+        _preparedRenderingTime = null;
+        Hide();
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+        {
+            MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y,
+                _virtualBounds.Width, _virtualBounds.Height, false);
+            int cloak = 0;
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, ref cloak, sizeof(int));
+        }
     }
 
     private void OnToolbarGripDown(object sender, MouseButtonEventArgs e)
@@ -311,7 +427,7 @@ public partial class CaptureOverlayWindow : Window
     }
 
     // ===================== Pencere algılama =====================
-    private void BuildWindowList()
+    internal void BuildWindowList()
     {
         if (_mode != CaptureMode.Region) return;
         var hwndSelf = new WindowInteropHelper(this).Handle;
@@ -411,7 +527,9 @@ public partial class CaptureOverlayWindow : Window
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         HwndSource.FromHwnd(hwnd)?.AddHook(OverlayInputHook);
-        MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y, _virtualBounds.Width, _virtualBounds.Height, true);
+        // bRepaint: false — pencere bu aşamada henüz görünmediği için repaint
+        // gereksiz ve tam sanal ekran boyutunda ~50-60 ms'lik senkron bir gecikme.
+        MoveWindow(hwnd, _virtualBounds.X, _virtualBounds.Y, _virtualBounds.Width, _virtualBounds.Height, false);
     }
 
     /// <summary>
@@ -427,8 +545,11 @@ public partial class CaptureOverlayWindow : Window
         return new IntPtr(MA_ACTIVATE);
     }
 
-    private void EnsureForeground()
+    internal void EnsureForeground()
     {
+        // Önce gönderilmiş WPF karesinin DWM turunu tamamla; odak işlemleri
+        // ilk görüntüyü bekletmesin.
+        DwmFlush();
         var hwnd = new WindowInteropHelper(this).Handle;
         IntPtr fore = GetForegroundWindow();
         uint foreThread = fore == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fore, out _);
@@ -440,7 +561,8 @@ public partial class CaptureOverlayWindow : Window
         {
             if (hwnd != IntPtr.Zero)
             {
-                BringWindowToTop(hwnd);
+                // Topmost pencere zaten önde; SetForegroundWindow etkinleştirip
+                // öne alır. Ek BringWindowToTop aynı işi senkron tekrar etmesin.
                 SetForegroundWindow(hwnd);
             }
             Activate();
@@ -461,8 +583,8 @@ public partial class CaptureOverlayWindow : Window
         UpdateDimRects(WpfRect.Empty);
         BuildModeBar();
         ApplyMode();
-        EnsureForeground();
-        BuildWindowList();
+        // Odak/öne getirme + pencere listesi App tarafından Show() sonrasına bırakılır
+        // (BringWindowToTop ~35 ms — ilk kareyi bloklamasın).
         // Çeviri ısınması seçim sırasında UI'yi kasmaması için edit fazına bırakıldı.
     }
 
@@ -4367,6 +4489,9 @@ public partial class CaptureOverlayWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _preparedPreview = false;
+        ContentRendered -= OnPreparedRendered;
+        CompositionTarget.Rendering -= OnPreparedFrame;
         _toastCts?.Cancel();
         _toastCts?.Dispose();
         _toastCts = null;

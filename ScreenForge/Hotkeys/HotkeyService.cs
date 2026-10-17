@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using ScreenForge.Settings;
 using SfModifierKeys = ScreenForge.Settings.ModifierKeys;
 
@@ -178,8 +179,9 @@ public sealed class HotkeyService : IDisposable
             if (_callbacks.TryGetValue(id, out var cb))
             {
                 handled = true;
-                // UI thread'de güvenli çalıştır.
-                Application.Current?.Dispatcher.BeginInvoke(cb);
+                // UI thread'de güvenli çalıştır. Send: kısayol basılınca beklemeden
+                // (diğer dispatcher işlerinin arkasına sıraya girmeden) çalışsın.
+                Application.Current?.Dispatcher.BeginInvoke(DispatcherPriority.Send, cb);
             }
         }
         return IntPtr.Zero;
@@ -244,7 +246,7 @@ public sealed class HotkeyService : IDisposable
                         break;
 
                     _lastHookTriggerTick = now;
-                    Application.Current?.Dispatcher.BeginInvoke(item.callback);
+                    Application.Current?.Dispatcher.BeginInvoke(DispatcherPriority.Send, item.callback);
                     break;
                 }
             }

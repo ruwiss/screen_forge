@@ -1,0 +1,66 @@
+Current: ScreenForge / erken başlangıç iyileştirildi; 150–200 ms hedefi açık / sonraki render gecikmesini azaltma
+Tarih: 2026-10-17 18:07 Europe/Istanbul
+
+Changed branch/field:
+App.OnStartup: Background ertelenmiş ısınma yerine kısayol kaydından önce başlatma.
+App.WarmupCapturePathAsync: captureWarmup = Task.Run(...); PrepareOverlay(); await captureWarmup.
+CaptureProbe.Program: inputIdleMs, hotkeyReadyMs, firstInputSinceStartMs; kısayol HWND + WM_NULL hazırlık doğrulaması.
+
+MODIFIED_FILE: C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/ScreenForge/App.xaml.cs
+MODIFIED_FILE snapshot: C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/MODIFIED_FILE.cs
+DIFF_FILE: C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/DIFF_FILE.diff
+VERIFICATION: C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/VERIFICATION.txt
+ROLLBACK: C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/ROLLBACK.sh
+Original App SHA256: e20afeb9183fc973a3f72a16635f1c4763a23a8466d72f051d0ff935a88b19d7
+Modified App SHA256: 7a0244b721f719396290e48c3b9d73f9588f9278aa648b73b41960b06528780a
+Original Program SHA256: 8715c0e4c2958e7b43adb222315eaa96c85fb0a4b79754b9d352a1bf048766b6
+Modified Program SHA256: ce43beff2d2b084abb410c91b1c22c5852ae3ff5a25cd2d91f838d8f9de97bcc
+
+BASELINE:
+Command: "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/tools/CaptureProbe/bin/Release/net9.0-windows10.0.19041.0/CaptureProbe.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/rollback-copy/ScreenForge/bin/Release/net9.0-windows10.0.19041.0/ScreenForge.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/early-hotkey-before.json" "0"
+Input: eski App akışı ayrı kopyada, güncel ölçüm aracı, Ctrl+Shift+S, 20 değişen renk, 20 basış, kopyala/kaydet.
+Literal output/result: "correctFrozenPixelMs": 514.5466; "freshnessPassed": 20; "overlayFresh": true; "copied": true; "saved": true; "error": null
+Exit status: 0
+Full literal output: rollback-probe.log
+Initial tests command (cwd=C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8): dotnet test ScreenForge.sln -c Release --no-restore --logger "trx;LogFileName=continuation-baseline.trx"
+Literal result: Başarılı!  - Başarısız:     0, Başarılı:   389, Atlanan:     0, Toplam:   389, Süre: 12 s - ScreenForge.Tests.dll (net9.0)
+Initial async command exit code was not captured; source-equivalent rollback tests below exited 0.
+
+MODIFIED:
+Command: "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/tools/CaptureProbe/bin/Release/net9.0-windows10.0.19041.0/CaptureProbe.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/ScreenForge/bin/Release/net9.0-windows10.0.19041.0/ScreenForge.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/early-hotkey-after.json" "0"
+Input: değişmiş App akışı, aynı araç/uyarıcı/kısayol ve 20 basış.
+Literal output/result: "correctFrozenPixelMs": 268.9526; "freshnessPassed": 20; "overlayFresh": true; "copied": true; "saved": true; "error": null
+Exit status: 0
+Full literal output: modified-probe.log
+Repeat command: "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/tools/CaptureProbe/bin/Release/net9.0-windows10.0.19041.0/CaptureProbe.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/ScreenForge/bin/Release/net9.0-windows10.0.19041.0/ScreenForge.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/early-hotkey-after-repeat.json" "0"
+Literal first result: "correctFrozenPixelMs": 283.4211; exit 0; full output modified-probe-repeat.log
+Warm command: "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/tools/CaptureProbe/bin/Release/net9.0-windows10.0.19041.0/CaptureProbe.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/ScreenForge/bin/Release/net9.0-windows10.0.19041.0/ScreenForge.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/warm-after-continuation.json" "2000"
+Literal first result: "correctFrozenPixelMs": 217.9351; exit 0; full output warm-probe.log
+Tests command (cwd=C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8): dotnet test ScreenForge.sln -c Release --no-restore --logger "trx;LogFileName=continuation-final.trx"
+Literal output: Başarılı!  - Başarısız:     0, Başarılı:   389, Atlanan:     0, Toplam:   389, Süre: 10 s - ScreenForge.Tests.dll (net9.0)
+Exit status: 0
+Full output: modified-tests.log
+
+ROLLBACK:
+Command: "C:/Program Files/Git/bin/bash.exe" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/ROLLBACK.sh" "C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/rollback-copy"
+Input: ayrı kopyaya önce değişmiş App.xaml.cs ve Program.cs yazıldı.
+Literal output: ROLLBACK: App.xaml.cs and Program.cs restored; byte comparison passed
+Exit status: 0
+Restored status: iki özgün SHA256 eşleşti; ana kaynak değişmiş kaldı.
+Tests command (cwd=C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/rollback-copy): dotnet test ScreenForge.sln -c Release --logger "trx;LogFileName=rollback.trx"
+Literal output: Başarılı!  - Başarısız:     0, Başarılı:   389, Atlanan:     0, Toplam:   389, Süre: 10 s - ScreenForge.Tests.dll (net9.0)
+Exit status: 0
+Restored behavior: aynı eski kaynakla üretilmiş ayrı uygulama yukarıdaki BASELINE deneyinde 514.5466 ms ve 20/20 tazelik verdi.
+Full output: rollback-script.log, rollback-tests.log, rollback-probe.log
+
+Limits:
+Erken ilk basış 269–283 ms: hedef sağlanmadı. Isınmış ilk basış 217.9351 ms.
+Sonraki basış medyanları: önce 189.9227 ms, sonra 177.2063 ve 179.1705 ms; ısınmış 181.1573 ms.
+Hazırlık başlangıca taşındı: kısayol hazır 658.272 -> 845.52 / 867.2869 ms.
+Süreç başlangıcı -> ilk donmuş piksel: 1195.2197 -> 1145.3334 / 1174.3442 ms.
+69 kapsam dışı kaynak/csproj dosyası devam başlangıcı kopyasıyla aynı SHA256.
+SAF BitBlt yolu korundu; PR açılmadı.
+
+Environment note:
+İlk derleme alt sürecinde APPDATA ve ProgramFiles eksikti; NuGet path1 hatası verdi.
+Yalnız alt sürece APPDATA=C:\Users\Samet\AppData\Roaming ve ProgramFiles=C:\Program Files sağlanınca derleme 0 uyarı/0 hata, çıkış 0 verdi; sistem ayarı değiştirilmedi.

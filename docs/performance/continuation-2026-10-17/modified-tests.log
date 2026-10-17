@@ -1,0 +1,11 @@
+  ScreenForge.WindowsAI -> C:\Users\Samet\Documents\Projeler\screen_forge-1.2.8\screen_forge-1.2.8\ScreenForge.WindowsAI\bin\Release\net9.0-windows10.0.19041.0\ScreenForge.WindowsAI.dll
+  ScreenForge -> C:\Users\Samet\Documents\Projeler\screen_forge-1.2.8\screen_forge-1.2.8\ScreenForge\bin\Release\net9.0-windows10.0.19041.0\ScreenForge.dll
+  ScreenForge.Tests -> C:\Users\Samet\Documents\Projeler\screen_forge-1.2.8\screen_forge-1.2.8\ScreenForge.Tests\bin\Release\net9.0-windows10.0.19041.0\ScreenForge.Tests.dll
+C:\Users\Samet\Documents\Projeler\screen_forge-1.2.8\screen_forge-1.2.8\ScreenForge.Tests\bin\Release\net9.0-windows10.0.19041.0\ScreenForge.Tests.dll (.NETCoreApp,Version=v9.0) için test çalıştırması
+Toplam 1 test dosyası belirtilen desenle eşleşti.
+Sonuç Dosyası: C:\Users\Samet\Documents\Projeler\screen_forge-1.2.8\screen_forge-1.2.8\ScreenForge.Tests\TestResults\continuation-final.trx
+
+Başarılı!  - Başarısız:     0, Başarılı:   389, Atlanan:     0, Toplam:   389, Süre: 10 s - ScreenForge.Tests.dll (net9.0)
+
+
+EXIT=0

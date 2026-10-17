@@ -1,0 +1,177 @@
+{
+  "utc": "2026-10-17T15:01:40.8554487Z",
+  "runtime": "9.0.8",
+  "captureAssembly": "C:\\Users\\Samet\\Documents\\Projeler\\screen_forge-1.2.8\\screen_forge-1.2.8\\ScreenForge\\bin\\Release\\net9.0-windows10.0.19041.0\\ScreenForge.dll",
+  "assemblySha256": "348248AD72BE13B20C8B071C12E111615AAEAF16DC573BADAC203F4FA15E241B",
+  "startupDelayMs": 0,
+  "inputIdleMs": 327.1113,
+  "firstInputSinceStartMs": 418.5271,
+  "bounds": {
+    "X": 0,
+    "Y": -1080,
+    "Width": 4480,
+    "Height": 2166
+  },
+  "freshnessPassed": 20,
+  "freshnessTotal": 20,
+  "trials": [
+    {
+      "trial": 1,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 69.7946
+    },
+    {
+      "trial": 2,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 49.3891
+    },
+    {
+      "trial": 3,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 51.8123
+    },
+    {
+      "trial": 4,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 52.9468
+    },
+    {
+      "trial": 5,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 47.0713
+    },
+    {
+      "trial": 6,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 49.9134
+    },
+    {
+      "trial": 7,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 51.5964
+    },
+    {
+      "trial": 8,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 49.6549
+    },
+    {
+      "trial": 9,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 50.2912
+    },
+    {
+      "trial": 10,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 49.9397
+    },
+    {
+      "trial": 11,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 51.0566
+    },
+    {
+      "trial": 12,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 55.2908
+    },
+    {
+      "trial": 13,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 56.4353
+    },
+    {
+      "trial": 14,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 50.2749
+    },
+    {
+      "trial": 15,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 47.2819
+    },
+    {
+      "trial": 16,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 50.8364
+    },
+    {
+      "trial": 17,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 47.9112
+    },
+    {
+      "trial": 18,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 52.6521
+    },
+    {
+      "trial": 19,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 47.5731
+    },
+    {
+      "trial": 20,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 50.3236
+    }
+  ],
+  "latency": [
+    {
+      "trial": 1,
+      "first": true,
+      "started": 7484377302969,
+      "sendInputMs": 2.5561,
+      "firstChangeMs": -1,
+      "correctFrozenPixelMs": -1,
+      "firstPixel": 9490496,
+      "expectedDim": 4942881,
+      "firstFrameFresh": false
+    }
+  ],
+  "overlayFresh": false,
+  "copied": false,
+  "saved": false,
+  "savedPath": null,
+  "error": "System.InvalidOperationException: 1. bas\u0131\u015Fta g\u00FCncel donmu\u015F piksel g\u00F6r\u00FCnmedi.\r\n   at CaptureProbe.Program.Main(String[] args) in C:\\Users\\Samet\\Documents\\Projeler\\screen_forge-1.2.8\\screen_forge-1.2.8\\tools\\CaptureProbe\\Program.cs:line 173"
+}

@@ -1,0 +1,549 @@
+using System.IO;
+using System.Threading;
+using System.Windows;
+using ScreenForge.Background;
+using ScreenForge.Hotkeys;
+using ScreenForge.Settings;
+using ScreenForge.Tray;
+using ScreenForge.Windows;
+using Velopack;
+
+namespace ScreenForge;
+
+public partial class App : Application
+{
+    private const string MutexName = "ScreenForge_SingleInstance_Mutex_8e0f7a12";
+    private Mutex? _instanceMutex;
+    private bool _ownsInstanceMutex;
+    private TrayIconService? _tray;
+    private HotkeyService? _hotkeys;
+    private Presenter.PresenterService? _presenter;
+    private Subtitle.SubtitleService? _subtitle;
+
+    public static AppSettings Settings { get; private set; } = new();
+
+    [STAThread]
+    public static void Main(string[] args)
+    {
+        VelopackApp.Build()
+            .SetArgs(args)
+            .Run();
+
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
+    }
+
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        // ---- Tek örnek kontrolü ----
+        var editPath = BackgroundFiles.ReadArgument(e.Args);
+        _instanceMutex = new Mutex(true, MutexName, out _ownsInstanceMutex);
+        if (!_ownsInstanceMutex)
+        {
+            if (editPath != null && BackgroundEditBridge.TrySend(editPath))
+            {
+                Shutdown();
+                return;
+            }
+
+            MessageBox.Show("ScreenForge zaten çalışıyor. Sistem tepsisini kontrol edin.",
+                "ScreenForge", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
+
+        base.OnStartup(e);
+        LoadEnvFile();
+
+        Settings = AppSettings.Load(out bool isFirstRun);
+        Settings.Subtitle.Enabled = false;
+        Settings.Save();
+        ScreenForge.Settings.StartupManager.SetEnabled(Settings.LaunchAtStartup);
+
+        // ---- Tepsi ikonu ----
+        _tray = new TrayIconService();
+        _tray.CaptureRegionRequested += OnCaptureRegion;
+        _tray.CaptureFullScreenRequested += OnCaptureFullScreen;
+        _tray.CollageRequested += OnCollage;
+        _tray.ColorPickerRequested += OnColorPicker;
+        _tray.TrayUploadRequested += OnTrayUpload;
+        _tray.QuickTranslateRequested += OnQuickTranslate;
+        _tray.BackgroundEditRequested += OnBackgroundEditPick;
+        _tray.SettingsRequested += OnSettings;
+        _tray.AboutRequested += OnAbout;
+        _tray.ExitRequested += OnExit;
+        _tray.GetPresenterEnabled = () => Settings.Presenter.Enabled;
+        _tray.PresenterEnabledChanged += OnPresenterEnabledChanged;
+        _tray.GetSubtitleEnabled = () => Settings.Subtitle.Enabled;
+        _tray.SubtitleEnabledChanged += OnSubtitleEnabledChanged;
+        _subtitle = new Subtitle.SubtitleService(() => Settings, on => _tray?.SetSubtitleChecked(on));
+
+        // XAML/HWND hazırlığı ilk kısayoldan önce başlasın; BitBlt ısınmasıyla
+        // paralel yürüsün. Arka plan yakalamasının devamını beklemek ilk basışı soğutur.
+        _ = WarmupCapturePathAsync();
+
+        // ---- Global kısayollar ----
+        _presenter = new Presenter.PresenterService(() => Settings);
+        _hotkeys = new HotkeyService();
+        RegisterHotkeys();
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+
+        // İlk açılışta bölge yakalama kısayolunu bildir
+        if (isFirstRun)
+        {
+            var regionKey = Settings.RegionHotkey.ToString();
+            _tray.ShowMessage("ScreenForge'a Hoş Geldiniz",
+                $"Bölge yakalamak için {regionKey} kısayolunu kullanabilirsiniz.");
+        }
+
+        _tray.GetAvailableUpdate = () => Updates.AutoUpdateService.AvailableVersion;
+        _tray.UpdateRequested += () => _ = Updates.AutoUpdateService.ApplyAvailableAsync();
+        Updates.AutoUpdateService.CheckOnStartup(() => Dispatcher.Invoke(Shutdown));
+
+        ShellBackgroundMenu.Register();
+        BackgroundEditBridge.StartServer(path => Dispatcher.BeginInvoke(() => OpenBackgroundEditor(path)));
+        if (editPath != null)
+            Dispatcher.BeginInvoke(() => OpenBackgroundEditor(editPath));
+
+    }
+
+    /// <summary>
+    /// Yakalama + overlay açılış hattını ekranda görünmeden ısıtır (JIT, XAML, GDI,
+    /// WPF pencere/render hattı) ve ilk kısayol için hazır pencereyi hazırlar.
+    /// </summary>
+    private async Task WarmupCapturePathAsync()
+    {
+        try
+        {
+            // SAF BitBlt + WPF dönüşümü ısınsın; hiçbir kare saklanmaz.
+            // UI thread'i bloklamaması için arka planda.
+            var captureWarmup = Task.Run(() => Capture.ScreenCapture.WarmupCapturePath());
+
+            // Overlay penceresi: XAML/JIT + HWND + ilk render + DWM ısınsın, sonraki
+            // kısayol tek karede açılsın.
+            PrepareOverlay();
+            await captureWarmup;
+        }
+        catch
+        {
+            // Isınma başarısız olursa kısayol yine çalışır; yalnızca ilk açılış yavaş kalır.
+        }
+    }
+
+    private void OnBackgroundEditPick()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Görüntüler|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.heic",
+            Title = "Arka planını kaldır",
+        };
+        if (dialog.ShowDialog() == true)
+            OpenBackgroundEditor(dialog.FileName);
+    }
+
+    private void OpenBackgroundEditor(string path)
+    {
+        if (!File.Exists(path))
+        {
+            _tray?.ShowMessage("ScreenForge", "Dosya bulunamadı.");
+            return;
+        }
+
+        var window = new BackgroundEditWindow(path);
+        window.Show();
+        window.Activate();
+    }
+
+    /// <summary>Ayarlardaki tüm kısayolları (yeniden) kaydeder.</summary>
+    public void RegisterHotkeys()
+    {
+        if (_hotkeys == null) return;
+        _hotkeys.UnregisterAll();
+        _hotkeys.Register(Settings.RegionHotkey, OnCaptureRegion, "Bölge yakalama");
+        _hotkeys.Register(Settings.FullScreenHotkey, OnCaptureFullScreen, "Tam ekran yakalama");
+        _hotkeys.Register(Settings.FullScreenUploadHotkey, OnCaptureFullScreenUpload, "Tam ekran anında yükleme");
+        _hotkeys.Register(Settings.CollageHotkey, OnCollage, "Kolaj / yerleştirme");
+        _hotkeys.Register(Settings.QuickTranslateHotkey, OnQuickTranslate, "Hızlı çeviri");
+        RegisterPresenterHotkeys();
+
+        if (_hotkeys.FailedRegistrations.Count > 0)
+        {
+            _tray?.ShowMessage("Kısayol uyarısı",
+                "Bazı kısayollar kaydedilemedi (başka uygulamada kullanılıyor olabilir):\n" +
+                string.Join("\n", _hotkeys.FailedRegistrations));
+        }
+    }
+
+    private void OnPresenterEnabledChanged(bool enabled)
+    {
+        Settings.Presenter.Enabled = enabled;
+        Settings.Save();
+        if (!enabled)
+            _presenter?.Cancel();
+        RegisterHotkeys();
+    }
+
+    private void OnSubtitleEnabledChanged(bool enabled)
+    {
+        if (enabled && _captureInProgress)
+        {
+            _tray?.SetSubtitleChecked(false);
+            return;
+        }
+        _subtitle?.SetEnabled(enabled);
+    }
+
+    private void RegisterPresenterHotkeys()
+    {
+        if (_hotkeys == null || _presenter == null) return;
+        var p = Settings.Presenter;
+        if (!p.Enabled) return;
+        var svc = _presenter;
+        if (p.PenEnabled)
+            _hotkeys.Register(p.PenHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Pen), "Kalem");
+        if (p.LaserEnabled)
+            _hotkeys.Register(p.LaserHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Laser), "Lazer");
+        if (p.RectangleEnabled)
+            _hotkeys.Register(p.RectangleHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Rectangle), "Dikdörtgen");
+        if (p.EllipseEnabled)
+            _hotkeys.Register(p.EllipseHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Ellipse), "Daire");
+        if (p.ArrowEnabled)
+            _hotkeys.Register(p.ArrowHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Arrow), "Ok");
+        if (p.LineEnabled)
+            _hotkeys.Register(p.LineHotkey, () => svc.ToggleTool(Presenter.PresenterTool.Line), "Çizgi");
+        if (p.SpotlightEnabled)
+            _hotkeys.Register(p.SpotlightHotkey, svc.ToggleSpotlight, "Spotlight");
+        if (p.CancelEnabled && !IsPresenterSessionEscape(p.CancelHotkey))
+            _hotkeys.Register(p.CancelHotkey, svc.Cancel, "Sunum iptal");
+        foreach (var bind in p.ColorBinds)
+        {
+            string hex = bind.Color;
+            _hotkeys.Register(bind.Hotkey, () => svc.ApplyColor(hex), "Kalem rengi");
+        }
+    }
+
+    private static bool IsPresenterSessionEscape(HotkeyConfig config) =>
+        config.IsValid
+        && config.Modifiers == ScreenForge.Settings.ModifierKeys.None
+        && string.Equals(config.Key, "Escape", StringComparison.OrdinalIgnoreCase);
+
+    private bool _captureInProgress;
+
+    /// <summary>
+    /// Kısayol anında Show() tek karede açılsın diye önceden hazırlanmış overlay
+    /// penceresi (HWND + Loaded + ilk render + DWM görünmez biçimde ısıtılmış).
+    /// </summary>
+    private ScreenForge.Windows.CaptureOverlayWindow? _preparedOverlay;
+
+    private void PrepareOverlay()
+    {
+        if (_preparedOverlay != null || _captureInProgress || Dispatcher.HasShutdownStarted) return;
+        System.Drawing.Bitmap? placeholder = null;
+        ScreenForge.Windows.CaptureOverlayWindow? win = null;
+        try
+        {
+            var bounds = Capture.ScreenCapture.VirtualScreenBounds;
+            // Yalnız boş içerikle ısın: hazır yüzeyde önceki ana/oturuma ait bir
+            // ekran görüntüsü bulunmamalı. Gerçek görüntü yalnız kısayolda alınır.
+            placeholder = new System.Drawing.Bitmap(bounds.Width, bounds.Height,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            // Tam saydam sıfır tamponu yerine opak, boş bir yüzey: gerçek yakalama
+            // gibi piksel yükleme/birleştirme hattı da ilk basıştan önce çalışsın.
+            using (var graphics = System.Drawing.Graphics.FromImage(placeholder))
+                graphics.Clear(System.Drawing.Color.FromArgb(64, 64, 64));
+            win = new ScreenForge.Windows.CaptureOverlayWindow(placeholder, bounds, Settings,
+                ScreenForge.Windows.CaptureMode.Region);
+            win.PrepareForInstantShow();
+            _preparedOverlay = win;
+        }
+        catch (Exception)
+        {
+            // Hazırlanamazsa kısayol yine çalışır; yalnızca normal hızda açılır.
+            if (win != null) { try { win.Close(); } catch { } }
+            else placeholder?.Dispose();
+            _preparedOverlay = null;
+        }
+    }
+
+    /// <summary>Monitör/DPI düzeni değişince yalnız bekleyen hazırlık penceresini yeniler.</summary>
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
+        {
+            var prepared = _preparedOverlay;
+            _preparedOverlay = null;
+            prepared?.Close();
+            if (!_captureInProgress) PrepareOverlay();
+        }));
+    }
+
+    // Serbest mod sahnesi — oturum boyunca bellekte hatırlanır.
+    private Editor.Scene? _freeScene;
+
+    /// <summary>System.Drawing.Bitmap → SKBitmap (sahne arka planı için).</summary>
+    private static SkiaSharp.SKBitmap ToSkBitmap(System.Drawing.Bitmap bmp)
+    {
+        var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            var info = new SkiaSharp.SKImageInfo(bmp.Width, bmp.Height, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Premul);
+            var sk = new SkiaSharp.SKBitmap(info);
+            unsafe
+            {
+                Buffer.MemoryCopy((void*)data.Scan0, (void*)sk.GetPixels(), sk.ByteCount, data.Stride * bmp.Height);
+            }
+            return sk;
+        }
+        finally { bmp.UnlockBits(data); }
+    }
+
+    private void OnCaptureRegion() => OpenCaptureOverlay(ScreenForge.Windows.CaptureMode.Region);
+
+    private void OnCaptureFullScreen() => OpenCaptureOverlay(ScreenForge.Windows.CaptureMode.FullScreen);
+
+    private void OnCollage() => OpenCaptureOverlay(ScreenForge.Windows.CaptureMode.Free);
+
+    private void OnColorPicker()
+    {
+        var picker = new Windows.ColorPickerOverlayWindow();
+        picker.Show();
+    }
+
+    private void OnTrayUpload()
+    {
+        var uploader = new Windows.FileDropUploadWindow();
+        uploader.Show();
+    }
+
+    /// <summary>
+    /// Lightshot tarzı birleşik ekran-üstü yakalama katmanını açar. Mod seçim çubuğundan da
+    /// değiştirilebilir. Ayrı editör penceresi açılmaz.
+    /// </summary>
+    private void OpenCaptureOverlay(ScreenForge.Windows.CaptureMode mode)
+    {
+        if (_captureInProgress) return;
+        _captureInProgress = true;
+        System.Drawing.Bitmap? captured = null;
+        ScreenForge.Windows.CaptureOverlayWindow? overlay = null;
+        try
+        {
+            var bounds = Capture.ScreenCapture.VirtualScreenBounds;
+            // Overlay görüntünün sahibi olur; kapanınca dispose eder.
+            var full = captured = Capture.ScreenCapture.CaptureVirtualScreen(Settings.ShowCursor);
+
+            // Hazır pencere varsa kullan: Show() tek karede görünür. Ekran düzeni
+            // değişmişse (monitör eklenmesi/çözünürlük) yenisi açılır.
+            overlay = _preparedOverlay;
+            _preparedOverlay = null;
+            if (overlay != null && overlay.VirtualBounds != bounds)
+            {
+                try { overlay.Close(); } catch { }
+                overlay = null;
+            }
+
+            if (overlay != null)
+            {
+                overlay.SetScreenshot(full, bounds, mode);
+                captured = null;
+            }
+            else
+            {
+                overlay = new ScreenForge.Windows.CaptureOverlayWindow(full, bounds, Settings, mode);
+                captured = null;
+                overlay.ShowActivated = false;
+                // HWND'yi Show()'dan önce oluştur: Show()'un ilk ~50 ms'lik pencere
+                // kaynağı maliyeti kalkar.
+                _ = new System.Windows.Interop.WindowInteropHelper(overlay).EnsureHandle();
+            }
+
+            // Serbest sahne oturum boyunca bellekte kalır (Esc sonrası korunur).
+            overlay.FreeSceneProvider = () => _freeScene;
+            overlay.FreeSceneSink = s => _freeScene = s;
+            overlay.Closed += (_, _) =>
+            {
+                // Görüntüyü pencere bırakır (bkz. CaptureOverlayWindow kapanışı).
+                _captureInProgress = false;
+                // Sonraki kısayol da anında açılsın.
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(PrepareOverlay));
+            };
+            // Yeniden gösterilen pencerede ContentRendered tekrar gelmeyebilir.
+            // Bu gösterimin render turundan sonra düşük öncelikle odaklan.
+            EventHandler? rendered = null;
+            TimeSpan? firstRender = null;
+            rendered = (_, args) =>
+            {
+                // Rendering çizimden önce bildirilir; aynı turun içinde odaklanma.
+                // Farklı bir render turu önceki karenin gönderilmesine fırsat verir.
+                if (args is System.Windows.Media.RenderingEventArgs frame)
+                {
+                    if (firstRender == null) { firstRender = frame.RenderingTime; return; }
+                    if (firstRender == frame.RenderingTime) return;
+                }
+                System.Windows.Media.CompositionTarget.Rendering -= rendered;
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, new Action(() =>
+                {
+                    if (!overlay.IsVisible) return;
+                    overlay.EnsureForeground();
+                    overlay.BuildWindowList();
+                }));
+            };
+            System.Windows.Media.CompositionTarget.Rendering += rendered;
+            overlay.Closed += (_, _) => System.Windows.Media.CompositionTarget.Rendering -= rendered;
+            overlay.Show();
+        }
+        catch (Exception ex)
+        {
+            // Kurulumun bir bölümü başarısızsa yarım pencere/ön gösterim kalmasın.
+            try { overlay?.Close(); } catch { }
+            _captureInProgress = false;
+            try { captured?.Dispose(); } catch { }
+            _tray?.ShowMessage("Hata", "Yakalama başarısız: " + ex.Message);
+        }
+    }
+
+    private async void OnCaptureFullScreenUpload()
+    {
+        if (_captureInProgress) return;
+        _captureInProgress = true;
+        Windows.UploadToastWindow? toast = null;
+        try
+        {
+            byte[] bytes;
+            string mime = "image/png";
+            using (var full = Capture.ScreenCapture.CaptureVirtualScreen(Settings.ShowCursor))
+            using (var sk = ToSkBitmap(full))
+            {
+                var upload = Editor.ImageExporter.EncodeForUpload(sk);
+                bytes = upload.Bytes;
+                mime = upload.MimeType;
+            }
+
+            toast = new Windows.UploadToastWindow();
+            toast.Show();
+
+            Upload.IUploadProvider provider = new Upload.LitterboxUploadProvider();
+            var result = await provider.UploadAsync(bytes, mime, toast.ReportProgress);
+
+            toast.ShowResult(result.Url);
+            if (Settings.AutoCopyLinkAfterUpload)
+            {
+                try { Clipboard.SetText(result.Url); toast.SetCopied(); }
+                catch (Exception ex) { _tray?.ShowMessage("Pano uyarısı", "Bağlantı yüklendi ancak kopyalanamadı: " + ex.Message); }
+            }
+            if (Settings.AutoCloseUploadWindow) toast.AutoCloseSoon();
+        }
+        catch (Exception ex)
+        {
+            toast?.Close();
+            _tray?.ShowMessage("Yükleme hatası", ex.Message);
+        }
+        finally
+        {
+            _captureInProgress = false;
+        }
+    }
+
+    private Windows.SettingsWindow? _settingsWindow;
+    private Windows.AboutWindow? _aboutWindow;
+    private Windows.QuickTranslateWindow? _quickTranslate;
+
+    private async void OnQuickTranslate()
+    {
+        string? selected = null;
+        try
+        {
+            selected = await Translate.ForegroundSelectionReader.TryCaptureAsync();
+        }
+        catch
+        {
+            selected = null;
+        }
+
+        try
+        {
+            if (_quickTranslate != null)
+            {
+                _quickTranslate.UseIncomingText(selected);
+                return;
+            }
+
+            _quickTranslate = new Windows.QuickTranslateWindow(Settings, selected);
+            _quickTranslate.Closed += (_, _) => _quickTranslate = null;
+            _quickTranslate.Show();
+            _quickTranslate.Activate();
+        }
+        catch
+        {
+            _quickTranslate?.Close();
+            _quickTranslate = null;
+        }
+    }
+
+    private void OnSettings()
+    {
+        if (_settingsWindow != null) { _settingsWindow.Activate(); return; }
+        _hotkeys?.UnregisterAll();
+        _settingsWindow = new Windows.SettingsWindow(Settings, () => { }, () => _presenter?.Cancel());
+        _settingsWindow.Closed += (_, _) => { _settingsWindow = null; RegisterHotkeys(); };
+        _settingsWindow.Show();
+        _settingsWindow.Activate();
+    }
+
+    private void OnAbout()
+    {
+        if (_aboutWindow != null) { _aboutWindow.Activate(); return; }
+        _aboutWindow = new Windows.AboutWindow();
+        _aboutWindow.Closed += (_, _) => _aboutWindow = null;
+        _aboutWindow.Show();
+        _aboutWindow.Activate();
+    }
+
+    private void OnExit()
+    {
+        Shutdown();
+    }
+
+    private static void LoadEnvFile()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir != null)
+        {
+            var envPath = Path.Combine(dir, ".env");
+            if (File.Exists(envPath))
+            {
+                foreach (var line in File.ReadAllLines(envPath, System.Text.Encoding.UTF8))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.Length == 0 || trimmed[0] == '#') continue;
+                    var eq = trimmed.IndexOf('=');
+                    if (eq <= 0) continue;
+                    var key = trimmed[..eq].Trim();
+                    var val = trimmed[(eq + 1)..].Trim();
+                    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+                        Environment.SetEnvironmentVariable(key, val);
+                }
+                return;
+            }
+            dir = Path.GetDirectoryName(dir);
+        }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        var prepared = _preparedOverlay;
+        _preparedOverlay = null;
+        prepared?.Close();
+        _subtitle?.Dispose();
+        _presenter?.Dispose();
+        _hotkeys?.Dispose();
+        _tray?.Dispose();
+        if (_ownsInstanceMutex)
+            _instanceMutex?.ReleaseMutex();
+        _instanceMutex?.Dispose();
+        base.OnExit(e);
+    }
+}

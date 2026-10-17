@@ -1,0 +1,163 @@
+{
+  "utc": "2026-10-17T14:42:55.6045093Z",
+  "runtime": "9.0.8",
+  "captureAssembly": "C:\\Users\\Samet\\AppData\\Local\\Temp\\opencode\\screenforge-before-20261017\\app\\ScreenForge.dll",
+  "assemblySha256": "3656810A88E208B0CD21079D3DAEB9A5DC765765CB93F177CDF033B9E3A15A93",
+  "startupDelayMs": 0,
+  "bounds": {
+    "X": 0,
+    "Y": -1080,
+    "Width": 4480,
+    "Height": 2166
+  },
+  "freshnessPassed": 8,
+  "freshnessTotal": 20,
+  "trials": [
+    {
+      "trial": 1,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 270.9586
+    },
+    {
+      "trial": 2,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 32.3595
+    },
+    {
+      "trial": 3,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 31.7692
+    },
+    {
+      "trial": 4,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 30.7689
+    },
+    {
+      "trial": 5,
+      "expected": -12529520,
+      "actual": -2072512,
+      "ok": false,
+      "captureMs": 30.6008
+    },
+    {
+      "trial": 6,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 32.4415
+    },
+    {
+      "trial": 7,
+      "expected": -2072512,
+      "actual": -10452752,
+      "ok": false,
+      "captureMs": 12.3085
+    },
+    {
+      "trial": 8,
+      "expected": -12529520,
+      "actual": -2072512,
+      "ok": false,
+      "captureMs": 31.888
+    },
+    {
+      "trial": 9,
+      "expected": -10452752,
+      "actual": -12529520,
+      "ok": false,
+      "captureMs": 32.626
+    },
+    {
+      "trial": 10,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 33.9591
+    },
+    {
+      "trial": 11,
+      "expected": -12529520,
+      "actual": -2072512,
+      "ok": false,
+      "captureMs": 33.4105
+    },
+    {
+      "trial": 12,
+      "expected": -10452752,
+      "actual": -12529520,
+      "ok": false,
+      "captureMs": 12.5842
+    },
+    {
+      "trial": 13,
+      "expected": -2072512,
+      "actual": -10452752,
+      "ok": false,
+      "captureMs": 34.09
+    },
+    {
+      "trial": 14,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 35.2657
+    },
+    {
+      "trial": 15,
+      "expected": -10452752,
+      "actual": -12529520,
+      "ok": false,
+      "captureMs": 32.9892
+    },
+    {
+      "trial": 16,
+      "expected": -2072512,
+      "actual": -10452752,
+      "ok": false,
+      "captureMs": 12.1043
+    },
+    {
+      "trial": 17,
+      "expected": -12529520,
+      "actual": -2072512,
+      "ok": false,
+      "captureMs": 33.6009
+    },
+    {
+      "trial": 18,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 34.2918
+    },
+    {
+      "trial": 19,
+      "expected": -2072512,
+      "actual": -10452752,
+      "ok": false,
+      "captureMs": 30.6408
+    },
+    {
+      "trial": 20,
+      "expected": -12529520,
+      "actual": -2072512,
+      "ok": false,
+      "captureMs": 11.8195
+    }
+  ],
+  "latency": [],
+  "overlayFresh": true,
+  "copied": false,
+  "saved": false,
+  "savedPath": null,
+  "error": null
+}

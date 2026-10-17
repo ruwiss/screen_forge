@@ -1,0 +1,390 @@
+{
+  "utc": "2026-10-17T15:03:40.335074Z",
+  "runtime": "9.0.8",
+  "captureAssembly": "C:\\Users\\Samet\\Documents\\Projeler\\screen_forge-1.2.8\\screen_forge-1.2.8\\docs\\performance\\continuation-2026-10-17\\rollback-copy\\ScreenForge\\bin\\Release\\net9.0-windows10.0.19041.0\\ScreenForge.dll",
+  "assemblySha256": "BE249718047720001D958DB313801CA265BE996443000E5A316BF839FC815C13",
+  "startupDelayMs": 0,
+  "inputIdleMs": 655.1316,
+  "hotkeyReadyMs": 658.272,
+  "firstInputSinceStartMs": 680.6731,
+  "bounds": {
+    "X": 0,
+    "Y": -1080,
+    "Width": 4480,
+    "Height": 2166
+  },
+  "freshnessPassed": 20,
+  "freshnessTotal": 20,
+  "trials": [
+    {
+      "trial": 1,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 124.6567
+    },
+    {
+      "trial": 2,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 67.2939
+    },
+    {
+      "trial": 3,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 71.3908
+    },
+    {
+      "trial": 4,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 74.7544
+    },
+    {
+      "trial": 5,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 76.6266
+    },
+    {
+      "trial": 6,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 65.5072
+    },
+    {
+      "trial": 7,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 67.184
+    },
+    {
+      "trial": 8,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 62.697
+    },
+    {
+      "trial": 9,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 62.9191
+    },
+    {
+      "trial": 10,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 69.6298
+    },
+    {
+      "trial": 11,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 73.3587
+    },
+    {
+      "trial": 12,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 73.8648
+    },
+    {
+      "trial": 13,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 74.3088
+    },
+    {
+      "trial": 14,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 72.6654
+    },
+    {
+      "trial": 15,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 74.0627
+    },
+    {
+      "trial": 16,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 77.3575
+    },
+    {
+      "trial": 17,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 71.9938
+    },
+    {
+      "trial": 18,
+      "expected": -10452752,
+      "actual": -10452752,
+      "ok": true,
+      "captureMs": 78.2259
+    },
+    {
+      "trial": 19,
+      "expected": -2072512,
+      "actual": -2072512,
+      "ok": true,
+      "captureMs": 67.0822
+    },
+    {
+      "trial": 20,
+      "expected": -12529520,
+      "actual": -12529520,
+      "ok": true,
+      "captureMs": 61.6846
+    }
+  ],
+  "latency": [
+    {
+      "trial": 1,
+      "first": true,
+      "started": 7485377939820,
+      "sendInputMs": 10.1493,
+      "firstChangeMs": 514.5451,
+      "correctFrozenPixelMs": 514.5466,
+      "firstPixel": 4943137,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 2,
+      "first": false,
+      "started": 7485392049409,
+      "sendInputMs": 3.3611,
+      "firstChangeMs": 237.0826,
+      "correctFrozenPixelMs": 237.0843,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 3,
+      "first": false,
+      "started": 7485403376348,
+      "sendInputMs": 2.7776,
+      "firstChangeMs": 195.7524,
+      "correctFrozenPixelMs": 195.7537,
+      "firstPixel": 2175605,
+      "expectedDim": 2175605,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 4,
+      "first": false,
+      "started": 7485414321453,
+      "sendInputMs": 2.8745,
+      "firstChangeMs": 202.082,
+      "correctFrozenPixelMs": 202.0825,
+      "firstPixel": 4942881,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 5,
+      "first": false,
+      "started": 7485425295924,
+      "sendInputMs": 3.3263,
+      "firstChangeMs": 188.1207,
+      "correctFrozenPixelMs": 188.121,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 6,
+      "first": false,
+      "started": 7485436111403,
+      "sendInputMs": 2.2336,
+      "firstChangeMs": 203.2932,
+      "correctFrozenPixelMs": 203.2937,
+      "firstPixel": 2175605,
+      "expectedDim": 2175605,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 7,
+      "first": false,
+      "started": 7485447092917,
+      "sendInputMs": 2.4783,
+      "firstChangeMs": 201.3834,
+      "correctFrozenPixelMs": 201.3839,
+      "firstPixel": 4942881,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 8,
+      "first": false,
+      "started": 7485458081524,
+      "sendInputMs": 3.2148,
+      "firstChangeMs": 190.462,
+      "correctFrozenPixelMs": 190.4627,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 9,
+      "first": false,
+      "started": 7485468923715,
+      "sendInputMs": 2.8617,
+      "firstChangeMs": 187.5798,
+      "correctFrozenPixelMs": 187.5804,
+      "firstPixel": 2175605,
+      "expectedDim": 2175605,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 10,
+      "first": false,
+      "started": 7485479759671,
+      "sendInputMs": 3.0154,
+      "firstChangeMs": 189.9222,
+      "correctFrozenPixelMs": 189.9227,
+      "firstPixel": 4942881,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 11,
+      "first": false,
+      "started": 7485490604470,
+      "sendInputMs": 1.8429,
+      "firstChangeMs": 190.8627,
+      "correctFrozenPixelMs": 190.863,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 12,
+      "first": false,
+      "started": 7485501470753,
+      "sendInputMs": 3.1358,
+      "firstChangeMs": 215.1634,
+      "correctFrozenPixelMs": 215.1639,
+      "firstPixel": 2175605,
+      "expectedDim": 2175605,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 13,
+      "first": false,
+      "started": 7485512596123,
+      "sendInputMs": 3.0898,
+      "firstChangeMs": 176.6673,
+      "correctFrozenPixelMs": 176.6677,
+      "firstPixel": 4942881,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 14,
+      "first": false,
+      "started": 7485523308371,
+      "sendInputMs": 2.6577,
+      "firstChangeMs": 176.4411,
+      "correctFrozenPixelMs": 176.4417,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 15,
+      "first": false,
+      "started": 7485534019948,
+      "sendInputMs": 3.0102,
+      "firstChangeMs": 174.5449,
+      "correctFrozenPixelMs": 174.5459,
+      "firstPixel": 2175605,
+      "expectedDim": 2175605,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 16,
+      "first": false,
+      "started": 7485544694744,
+      "sendInputMs": 3.1221,
+      "firstChangeMs": 226.0323,
+      "correctFrozenPixelMs": 226.0327,
+      "firstPixel": 4942881,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 17,
+      "first": false,
+      "started": 7485555916761,
+      "sendInputMs": 2.8149,
+      "firstChangeMs": 182.7671,
+      "correctFrozenPixelMs": 182.7776,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 18,
+      "first": false,
+      "started": 7485566720745,
+      "sendInputMs": 2.7427,
+      "firstChangeMs": 177.9065,
+      "correctFrozenPixelMs": 177.9069,
+      "firstPixel": 2175605,
+      "expectedDim": 2175605,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 19,
+      "first": false,
+      "started": 7485577463281,
+      "sendInputMs": 2.7874,
+      "firstChangeMs": 176.9287,
+      "correctFrozenPixelMs": 176.9294,
+      "firstPixel": 4942881,
+      "expectedDim": 4942881,
+      "firstFrameFresh": true
+    },
+    {
+      "trial": 20,
+      "first": false,
+      "started": 7485595744990,
+      "sendInputMs": 2.6534,
+      "firstChangeMs": 179.4851,
+      "correctFrozenPixelMs": 179.4854,
+      "firstPixel": 8209202,
+      "expectedDim": 8209202,
+      "firstFrameFresh": true
+    }
+  ],
+  "overlayFresh": true,
+  "copied": true,
+  "saved": true,
+  "savedPath": "C:\\Users\\Samet\\Documents\\Projeler\\screen_forge-1.2.8\\screen_forge-1.2.8\\docs\\performance\\selection-3104eaee50fe48eeb365fb470b1dca17.png",
+  "error": null
+}
+
+
+EXIT=0

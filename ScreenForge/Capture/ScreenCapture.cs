@@ -17,7 +17,7 @@ public static class ScreenCapture
     [DllImport("user32.dll")] private static extern IntPtr GetWindowDC(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
-    [DllImport("gdi32.dll")] private static extern bool BitBlt(IntPtr hdcDest, int x, int y, int w, int h, IntPtr hdcSrc, int x1, int y1, int rop);
+    [DllImport("gdi32.dll", SetLastError = true)] private static extern bool BitBlt(IntPtr hdcDest, int x, int y, int w, int h, IntPtr hdcSrc, int x1, int y1, int rop);
 
     [DllImport("user32.dll")] private static extern bool GetCursorInfo(ref CURSORINFO pci);
     [DllImport("user32.dll")] private static extern bool GetIconInfo(IntPtr hIcon, out ICONINFO piconinfo);
@@ -48,30 +48,62 @@ public static class ScreenCapture
         GetSystemMetrics(SM_CXVIRTUALSCREEN),
         GetSystemMetrics(SM_CYVIRTUALSCREEN));
 
+    /// <summary>
+    /// BitBlt ve WPF dönüşümünün ilk kullanım maliyetini ısıtır.
+    /// Görüntü hemen bırakılır; sonraki kısayola hiçbir kare saklanmaz.
+    /// </summary>
+    public static void WarmupCapturePath()
+    {
+        using var screenshot = CaptureVirtualScreen(false);
+        _ = ToBitmapSource(screenshot);
+    }
+
     /// <summary>Tüm ekranların birleşik görüntüsünü yakalar.</summary>
     public static Bitmap CaptureVirtualScreen(bool includeCursor)
     {
         var bounds = VirtualScreenBounds;
         var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+
+        try
+        {
+            CaptureWithBitBlt(bmp, bounds);
+            if (includeCursor)
+            {
+                using var g = Graphics.FromImage(bmp);
+                DrawCursor(g, bounds);
+            }
+            return bmp;
+        }
+        catch
+        {
+            bmp.Dispose();
+            throw;
+        }
+    }
+
+    private static void CaptureWithBitBlt(Bitmap bmp, Rectangle bounds)
+    {
         using (var g = Graphics.FromImage(bmp))
         {
             IntPtr desktop = GetDesktopWindow();
             IntPtr hdcSrc = GetWindowDC(desktop);
-            IntPtr hdcDest = g.GetHdc();
+            if (hdcSrc == IntPtr.Zero)
+                throw new InvalidOperationException("Masaüstü görüntü kaynağı alınamadı.");
             try
             {
-                BitBlt(hdcDest, 0, 0, bounds.Width, bounds.Height, hdcSrc, bounds.X, bounds.Y, SRCCOPY);
+                IntPtr hdcDest = g.GetHdc();
+                try
+                {
+                    if (!BitBlt(hdcDest, 0, 0, bounds.Width, bounds.Height, hdcSrc, bounds.X, bounds.Y, SRCCOPY))
+                        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                }
+                finally { g.ReleaseHdc(hdcDest); }
             }
             finally
             {
-                g.ReleaseHdc(hdcDest);
                 ReleaseDC(desktop, hdcSrc);
             }
-
-            if (includeCursor)
-                DrawCursor(g, bounds);
         }
-        return bmp;
     }
 
     internal static bool TryGetCursorPosition(out int x, out int y)

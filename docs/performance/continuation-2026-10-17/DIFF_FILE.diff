@@ -1,0 +1,115 @@
+diff --git a/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/App.xaml.cs.original b/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/ScreenForge/App.xaml.cs
+index 9f8c475..8ccbf97 100644
+--- a/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/App.xaml.cs.original
++++ b/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/ScreenForge/App.xaml.cs
+@@ -79,6 +79,10 @@ public partial class App : Application
+         _tray.SubtitleEnabledChanged += OnSubtitleEnabledChanged;
+         _subtitle = new Subtitle.SubtitleService(() => Settings, on => _tray?.SetSubtitleChecked(on));
+ 
++        // XAML/HWND hazırlığı ilk kısayoldan önce başlasın; BitBlt ısınmasıyla
++        // paralel yürüsün. Arka plan yakalamasının devamını beklemek ilk basışı soğutur.
++        _ = WarmupCapturePathAsync();
++
+         // ---- Global kısayollar ----
+         _presenter = new Presenter.PresenterService(() => Settings);
+         _hotkeys = new HotkeyService();
+@@ -102,10 +106,6 @@ public partial class App : Application
+         if (editPath != null)
+             Dispatcher.BeginInvoke(() => OpenBackgroundEditor(editPath));
+ 
+-        // Kısayol yolunu arka planda ısıt: ilk kısayol soğuk JIT/XAML maliyetiyle
+-        // saniyelerce gecikmesin, ilk basış da sonrakiler kadar hızlı açılsın.
+-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+-            new Action(() => _ = WarmupCapturePathAsync()));
+     }
+ 
+     /// <summary>
+@@ -118,11 +118,12 @@ public partial class App : Application
+         {
+             // SAF BitBlt + WPF dönüşümü ısınsın; hiçbir kare saklanmaz.
+             // UI thread'i bloklamaması için arka planda.
+-            await Task.Run(() => Capture.ScreenCapture.WarmupCapturePath());
++            var captureWarmup = Task.Run(() => Capture.ScreenCapture.WarmupCapturePath());
+ 
+             // Overlay penceresi: XAML/JIT + HWND + ilk render + DWM ısınsın, sonraki
+             // kısayol tek karede açılsın.
+             PrepareOverlay();
++            await captureWarmup;
+         }
+         catch
+         {
+
+diff --git a/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/Program.cs.original b/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/tools/CaptureProbe/Program.cs
+index 54d3016..b3beab7 100644
+--- a/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/docs/performance/continuation-2026-10-17/Program.cs.original
++++ b/C:/Users/Samet/Documents/Projeler/screen_forge-1.2.8/screen_forge-1.2.8/tools/CaptureProbe/Program.cs
+@@ -28,6 +28,8 @@ internal static class Program
+     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint hwnd);
+     [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out RECT rect);
++    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
++    [DllImport("user32.dll", SetLastError = true)] private static extern nint SendMessageTimeout(nint hwnd, uint message, nuint wParam, nint lParam, uint flags, uint timeout, out nuint result);
+     private delegate bool EnumProc(nint hwnd, nint data);
+     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+     [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint Type; public INPUTUNION Data; }
+@@ -75,6 +77,9 @@ internal static class Program
+         int fresh = 0;
+         bool copied = false, saved = false;
+         bool overlayFresh = true;
++        double? inputIdleMs = null;
++        double? firstInputSinceStartMs = null;
++        double? hotkeyReadyMs = null;
+         string? savedPath = null;
+         try
+         {
+@@ -108,11 +113,33 @@ internal static class Program
+                 Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+                 File.WriteAllText(settingsPath, config.ToJsonString());
+                 settingsChanged = true;
++                var startupClock = Stopwatch.StartNew();
+                 app = Process.Start(new ProcessStartInfo(Path.GetFullPath(args[0])) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+                 app.OutputDataReceived += (_, e) => { if (e.Data != null) Console.Error.WriteLine("app: " + e.Data); };
+                 app.ErrorDataReceived += (_, e) => { if (e.Data != null) Console.Error.WriteLine("app error: " + e.Data); };
+                 app.BeginOutputReadLine();
+                 app.BeginErrorReadLine();
++                // İlk kısayol kayıt edilmeden tuş göndermek gecikme ölçümü değildir.
++                // Sabit uyku yerine başlangıç mesaj kuyruğunun hazır olmasını bekle.
++                if (!app.WaitForInputIdle(10000))
++                    throw new InvalidOperationException("Uygulama giriş kuyruğu hazır olmadı.");
++                inputIdleMs = startupClock.Elapsed.TotalMilliseconds;
++                // WPF HWND kurulumu da input-idle bildirebilir; uygulamaya ait
++                // kısayol penceresini ve UI mesaj yanıtını ayrıca doğrula.
++                nint hotkeyWindow = 0;
++                while (startupClock.ElapsedMilliseconds < 10000)
++                {
++                    hotkeyWindow = FindWindowEx(new nint(-3), 0, null, "ScreenForgeHotkeyWindow");
++                    if (hotkeyWindow != 0)
++                    {
++                        GetWindowThreadProcessId(hotkeyWindow, out uint owner);
++                        if (owner == app.Id && SendMessageTimeout(hotkeyWindow, 0, 0, 0, 2, 1000, out _) != 0) break;
++                    }
++                    hotkeyWindow = 0;
++                    Pump(1);
++                }
++                if (hotkeyWindow == 0) throw new InvalidOperationException("Kısayol penceresi hazır olmadı.");
++                hotkeyReadyMs = startupClock.Elapsed.TotalMilliseconds;
+                 // Ölçüm saatine aracın kendi ilk LINQ/JIT/interop maliyetini katma.
+                 var hotkeyInputs = KeyInputs(0x11, 0x10, 0x53);
+                 int inputSize = Marshal.SizeOf<INPUT>();
+@@ -141,6 +168,7 @@ internal static class Program
+                         ReleaseDC(0, dc);
+                         throw new InvalidOperationException("Gecikme uyarıcısı ekranda sunulmadı.");
+                     }
++                    if (i == 0) firstInputSinceStartMs = startupClock.Elapsed.TotalMilliseconds;
+                     var clock = Stopwatch.StartNew();
+                     long started = Stopwatch.GetTimestamp();
+                     double sent = 0;
+@@ -243,7 +271,7 @@ internal static class Program
+ 
+         void Write(string? error)
+         {
+-            var result = new { utc = DateTime.UtcNow, runtime = Environment.Version.ToString(), captureAssembly, assemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(captureAssembly))), startupDelayMs = freshnessOnly ? 0 : args.Length > 2 ? int.Parse(args[2]) : 2000, bounds = new { bounds.X, bounds.Y, bounds.Width, bounds.Height }, freshnessPassed = fresh, freshnessTotal = 20, trials, latency, overlayFresh, copied, saved, savedPath, error };
++            var result = new { utc = DateTime.UtcNow, runtime = Environment.Version.ToString(), captureAssembly, assemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(captureAssembly))), startupDelayMs = freshnessOnly ? 0 : args.Length > 2 ? int.Parse(args[2]) : 2000, inputIdleMs, hotkeyReadyMs, firstInputSinceStartMs, bounds = new { bounds.X, bounds.Y, bounds.Width, bounds.Height }, freshnessPassed = fresh, freshnessTotal = 20, trials, latency, overlayFresh, copied, saved, savedPath, error };
+             string json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+             File.WriteAllText(output, json);
+             Console.WriteLine(json);

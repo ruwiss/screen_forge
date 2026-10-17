@@ -72,25 +72,29 @@ public sealed class AppSettings
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
-    public static AppSettings Load(out bool isFirstRun)
+    public static AppSettings Load(out bool isFirstRun) => Load(SettingsPath, out isFirstRun);
+
+    /// <summary>Ayarları verilen dosyadan okur (testler ayrı dosya kullanabilir).</summary>
+    internal static AppSettings Load(string path, out bool isFirstRun)
     {
         isFirstRun = false;
         try
         {
-            if (File.Exists(SettingsPath))
+            if (File.Exists(path))
             {
-                var json = File.ReadAllText(SettingsPath);
-                var loaded = Deserialize(json);
-                if (loaded != null)
-                {
-                    loaded.Normalize();
-                    return loaded;
-                }
+                // Paylaşımlı okuma: atomik rename okuyucu açıkken de yapılabilsin.
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream);
+                var json = reader.ReadToEnd();
+                var loaded = Deserialize(json) ?? throw new JsonException("Ayar dosyası boş bir nesne içeriyor.");
+                loaded.Normalize();
+                return loaded;
             }
         }
         catch
         {
-            // Bozuk dosya: varsayılanlara dön.
+            // Bozuk dosya: varsayılanlara dön. İyileştirme umuduyla yedeğini sakla.
+            try { File.Copy(path, path + ".corrupt", overwrite: true); } catch { }
         }
         isFirstRun = true;
         var created = new AppSettings();
@@ -139,18 +143,32 @@ public sealed class AppSettings
         }
     }
 
-    public void Save()
+    public void Save() => Save(SettingsPath);
+
+    /// <summary>Ayarları verilen dosyaya atomik biçimde yazar (testler ayrı dosya kullanabilir).</summary>
+    internal void Save(string path)
     {
+        string? tmp = null;
         try
         {
             Normalize();
-            Directory.CreateDirectory(SettingsDirectory);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var json = JsonSerializer.Serialize(this, JsonOptions);
-            File.WriteAllText(SettingsPath, json);
+            // Atomik yaz: iki örnek aynı anda yazarsa dosya yarım kalıp okunamaz
+            // hale gelmesin (Load okuyamazsa ayarlar varsayılanlara döner).
+            // Aynı süreçteki eşzamanlı kaydetmeler de ayrı dosya kullanmalı.
+            tmp = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, path, overwrite: true);
         }
         catch
         {
             // Yazma hatası sessizce yutulur (disk dolu / izin vs.).
+        }
+        finally
+        {
+            if (tmp != null)
+                try { File.Delete(tmp); } catch { }
         }
     }
 
